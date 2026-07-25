@@ -1,0 +1,149 @@
+name: axiom
+
+x-axiom-environment: &axiom-environment
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/axiom
+  SPRING_DATASOURCE_USERNAME: axiom
+  SPRING_DATASOURCE_PASSWORD: "${AXIOM_DB_PASSWORD:?copy .env.example to .env and set AXIOM_DB_PASSWORD}"
+  AXIOM_SECRETS_MASTER_KEY: "${AXIOM_SECRETS_MASTER_KEY:?set a base64-encoded 32-byte AXIOM_SECRETS_MASTER_KEY}"
+  IAM_FEDERATION_METADATA_ALLOWED_HOSTS: "${IAM_FEDERATION_METADATA_ALLOWED_HOSTS:-}"
+  SPRING_DATA_REDIS_HOST: redis
+  SPRING_DATA_REDIS_DATABASE: "0"
+  IAM_OAUTH2_AUTHORIZATION_STORE_REDIS_KEY_PREFIX: "axiom:oauth2"
+  AXIOM_REDIS_TENANT_NAMESPACE_PREFIX: "axiom:tenant:"
+  IAM_ISSUER_URL: "${AXIOM_ISSUER_URL:-http://localhost:8180}"
+  IAM_SIGNING_KEY_PATH: /app/keys/signing-key.json
+  IAM_AXIOM_ADMIN_REDIRECT_URI: "${AXIOM_ADMIN_REDIRECT_URI:-http://localhost:5182/callback}"
+  IAM_AXIOM_ADMIN_POST_LOGOUT_REDIRECT_URI: "${AXIOM_ADMIN_POST_LOGOUT_REDIRECT_URI:-http://localhost:5182/login}"
+  IAM_CORS_ALLOWED_ORIGINS: "http://localhost:${AXIOM_ADMIN_HOST_PORT:-5182},${AXIOM_CONSUMER_BROWSER_ORIGINS:-http://localhost:5173}"
+  ZAI_API_KEY: "${ZAI_API_KEY:-}"
+  IAM_POLICY_STUDIO_MODEL: "${IAM_POLICY_STUDIO_MODEL:-glm-4.6}"
+  IAM_POLICY_STUDIO_BASE_URL: "${IAM_POLICY_STUDIO_BASE_URL:-https://api.z.ai/api/paas/v4}"
+  IAM_POLICY_STUDIO_PROSE_MODEL: "${IAM_POLICY_STUDIO_PROSE_MODEL:-glm-4.6}"
+  IAM_POLICY_STUDIO_PROSE_BASE_URL: "${IAM_POLICY_STUDIO_PROSE_BASE_URL:-https://api.z.ai/api/paas/v4}"
+  CERBOS_HOST: platform-cerbos
+  CERBOS_PORT: "3593"
+  IAM_POLICY_STUDIO_BASE_BUNDLE_DIR: /app/platform-policy/policies
+  IAM_POLICY_STUDIO_RUNTIME_POLICIES_DIR: /app/runtime-policies
+  IAM_POLICY_STUDIO_PLATFORM_CONTRACT_PATH: /app/platform-contract/axiom-platform-contract.json
+  JAVA_TOOL_OPTIONS: "-Xmx384m"
+
+services:
+  postgres:
+    image: postgres:16@sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20
+    environment:
+      POSTGRES_USER: axiom
+      POSTGRES_PASSWORD: "${AXIOM_DB_PASSWORD:?copy .env.example to .env and set AXIOM_DB_PASSWORD}"
+      POSTGRES_DB: axiom
+    ports:
+      - "${AXIOM_POSTGRES_HOST_PORT:-5434}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U axiom -d axiom"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${AXIOM_REDIS_HOST_PORT:-6381}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  platform-cerbos:
+    image: ghcr.io/cerbos/cerbos:0.53.0@sha256:c3fe64202e3793b7e9c41c5cbfcf390a51fb28ebce0a7d70754155e70db839c4
+    command: ["server", "--config=/conf/config.yaml"]
+    volumes:
+      - ./platform-policy/config.yaml:/conf/config.yaml:ro
+      - ./platform-policy/policies:/policies/base:ro
+      - cerbos-runtime:/policies/runtime
+      - cerbos-audit:/var/log/cerbos
+    ports:
+      - "${AXIOM_CERBOS_HTTP_HOST_PORT:-3692}:3592"
+      - "${AXIOM_CERBOS_GRPC_HOST_PORT:-3693}:3593"
+    healthcheck:
+      test: ["CMD", "/cerbos", "healthcheck", "--config=/conf/config.yaml"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  bootstrap:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: axiom-server:local
+    command: ["--spring.main.web-application-type=none"]
+    volumes:
+      - signing-key:/app/keys
+      - cerbos-runtime:/app/runtime-policies
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      platform-cerbos:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      <<: *axiom-environment
+      AXIOM_BOOTSTRAP_ENABLED: "true"
+      AXIOM_BOOTSTRAP_TENANT_ID: "${AXIOM_TENANT_ID:-meridian}"
+      AXIOM_BOOTSTRAP_TENANT_NAME: "${AXIOM_TENANT_NAME:-Meridian}"
+      AXIOM_BOOTSTRAP_TENANT_SLUG: "${AXIOM_TENANT_SLUG:-meridian}"
+      AXIOM_BOOTSTRAP_ADMIN_ID: admin
+      AXIOM_BOOTSTRAP_ADMIN_USERNAME: admin
+      AXIOM_BOOTSTRAP_ADMIN_EMAIL: "admin@meridian.example"
+      AXIOM_BOOTSTRAP_ADMIN_PASSWORD: "${AXIOM_ADMIN_PASSWORD:?set AXIOM_ADMIN_PASSWORD}"
+      IAM_SIGNING_KEY_ALLOW_GENERATION: "true"
+
+  axiom:
+    image: axiom-server:local
+    environment:
+      <<: *axiom-environment
+      IAM_SIGNING_KEY_ALLOW_GENERATION: "false"
+    ports:
+      - "${AXIOM_HTTP_HOST_PORT:-8180}:8084"
+    volumes:
+      - signing-key:/app/keys
+      - cerbos-runtime:/app/runtime-policies
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8084/actuator/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  admin:
+    build:
+      context: .
+      dockerfile: admin/Dockerfile
+      args:
+        VITE_AXIOM_ISSUER: "${AXIOM_ISSUER_URL:-http://localhost:8180}"
+        VITE_AXIOM_API_URL: "${AXIOM_ISSUER_URL:-http://localhost:8180}"
+    ports:
+      - "${AXIOM_ADMIN_HOST_PORT:-5182}:80"
+    depends_on:
+      axiom:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+  signing-key:
+  cerbos-runtime:
+  cerbos-audit:
+
+networks:
+  default:
+    name: axiom-network

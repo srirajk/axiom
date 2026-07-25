@@ -1,0 +1,107 @@
+---
+# ═════════════════════════════════════════════════════════════════════════════
+# PolicyMetaAuthzTest  (Axiom Story C1 — policy-authoring meta-authz)
+# ═════════════════════════════════════════════════════════════════════════════
+# Proves the studio's trust surface (policy_studio_resource.yaml + policy_studio_derived_roles.yaml):
+#   * tenant isolation      — a tenant-A approver can neither approve nor read a tenant-B draft.
+#   * author≠approver SoD   — the last editor may not approve their own draft (P.id == last_editor_id).
+#   * platform_admin        — is NOT an auto-approver; approval needs an independent, in-tenant
+#                             policy_approver grant AND the SoD to pass.
+# Same-tenant ALLOW controls are included so the suite is not vacuously all-deny.
+# ═════════════════════════════════════════════════════════════════════════════
+name: PolicyMetaAuthzTest
+description: Tenant-scoped drafter/approver with structural author≠approver SoD; platform_admin is not an auto-approver.
+
+principals:
+  # tenant-A approver, and NOT the author of the tenant-A draft below (bob != alice).
+  approver_tenantA:
+    id: approver_tenantA
+    roles: [policy_approver]
+    attr: {tenant_id: tenantA}
+
+  # tenant-A approver who IS the last editor of their own draft (SoD subject).
+  author_approver_tenantA:
+    id: alice_tenantA
+    roles: [policy_approver]
+    attr: {tenant_id: tenantA}
+
+  # platform_admin with NO in-tenant policy_approver grant (the auto-approver trap).
+  platform_admin_only:
+    id: padmin
+    roles: [platform_admin]
+    attr: {tenant_id: tenantA}
+
+  # platform_admin who is ALSO independently granted policy_approver in tenant-A (and is not the author).
+  platform_admin_and_approver:
+    id: padmin_approver
+    roles: [platform_admin, policy_approver]
+    attr: {tenant_id: tenantA}
+
+resources:
+  # tenant-A draft last edited by alice_tenantA.
+  draft_tenantA:
+    kind: policy_draft
+    id: draft_tenantA
+    attr: {tenant_id: tenantA, last_editor_id: alice_tenantA}
+
+  # tenant-B draft last edited by someone in tenant B — the cross-tenant target.
+  draft_tenantB:
+    kind: policy_draft
+    id: draft_tenantB
+    attr: {tenant_id: tenantB, last_editor_id: carol_tenantB}
+
+tests:
+  # ── C1.1 tenant isolation: tenant-A approver cannot APPROVE a tenant-B draft ──
+  - name: approverCannotApproveOtherTenantDraft
+    input:
+      principals: [approver_tenantA]
+      resources: [draft_tenantB]
+      actions: [approve]
+    expected:
+      - {principal: approver_tenantA, resource: draft_tenantB, actions: {approve: EFFECT_DENY}}
+
+  # ── C1.1 tenant isolation: tenant-A approver cannot READ a tenant-B draft ──
+  - name: approverCannotReadOtherTenantDraft
+    input:
+      principals: [approver_tenantA]
+      resources: [draft_tenantB]
+      actions: [read]
+    expected:
+      - {principal: approver_tenantA, resource: draft_tenantB, actions: {read: EFFECT_DENY}}
+
+  # ── C1.2 author≠approver: the last editor may NOT approve their own draft ──
+  - name: authorCannotApproveOwnDraft
+    input:
+      principals: [author_approver_tenantA]
+      resources: [draft_tenantA]
+      actions: [approve]
+    expected:
+      - {principal: author_approver_tenantA, resource: draft_tenantA, actions: {approve: EFFECT_DENY}}
+
+  # ── C1.3 platform_admin is NOT an auto-approver of policy content ──
+  - name: platformAdminIsNotAutoApprover
+    input:
+      principals: [platform_admin_only]
+      resources: [draft_tenantA]
+      actions: [approve]
+    expected:
+      - {principal: platform_admin_only, resource: draft_tenantA, actions: {approve: EFFECT_DENY}}
+
+  # ── ALLOW control: an in-tenant approver who is NOT the author CAN approve the draft ──
+  - name: inTenantNonAuthorApproverCanApprove
+    input:
+      principals: [approver_tenantA]
+      resources: [draft_tenantA]
+      actions: [approve, read, list]
+    expected:
+      - {principal: approver_tenantA, resource: draft_tenantA, actions: {approve: EFFECT_ALLOW, read: EFFECT_ALLOW, list: EFFECT_ALLOW}}
+
+  # ── ALLOW control: platform_admin is not blocked outright — an INDEPENDENT in-tenant
+  #    policy_approver grant (and passing SoD, padmin_approver != alice) does allow approval. ──
+  - name: platformAdminWithSeparateApproverGrantCanApprove
+    input:
+      principals: [platform_admin_and_approver]
+      resources: [draft_tenantA]
+      actions: [approve]
+    expected:
+      - {principal: platform_admin_and_approver, resource: draft_tenantA, actions: {approve: EFFECT_ALLOW}}

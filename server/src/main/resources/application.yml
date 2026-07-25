@@ -1,0 +1,102 @@
+server:
+  port: 8084
+
+axiom:
+  redis:
+    tenant-namespace-prefix: ${AXIOM_REDIS_TENANT_NAMESPACE_PREFIX:axiom:tenant:}
+
+spring:
+  threads:
+    virtual:
+      enabled: true
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/axiom}
+    username: ${SPRING_DATASOURCE_USERNAME:axiom}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      database: ${SPRING_DATA_REDIS_DATABASE:0}
+      repositories:
+        enabled: false
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+    baseline-version: 0
+
+  security:
+    oauth2:
+      authorizationserver:
+        issuer: ${IAM_ISSUER_URL:http://localhost:8084}
+
+iam:
+  secrets:
+    master-key: ${AXIOM_SECRETS_MASTER_KEY:}
+  federation:
+    metadata:
+      # Empty is the secure default. Host entries are an explicit local-test escape hatch only.
+      allowed-hosts: ${IAM_FEDERATION_METADATA_ALLOWED_HOSTS:}
+  signing-key-allow-generation: ${IAM_SIGNING_KEY_ALLOW_GENERATION:false}
+  seed:
+    enabled: false
+  cerbos:
+    host: ${CERBOS_HOST:axiom-platform-cerbos}
+    port: ${CERBOS_PORT:3593}
+    authz-enabled: ${CERBOS_AUTHZ_ENABLED:true}
+  policy-studio:
+    cerbos-image: ${CERBOS_IMAGE:ghcr.io/cerbos/cerbos:0.53.0}
+    cerbos-version: ${CERBOS_VERSION:0.53.0}
+    base-bundle-dir: ${IAM_POLICY_STUDIO_BASE_BUNDLE_DIR:/app/platform-policy/policies}
+    compile-timeout-seconds: ${IAM_POLICY_STUDIO_COMPILE_TIMEOUT_SECONDS:60}
+  break-glass:
+    # Exact server-owned tenant|resourceKind|action triples. Empty is intentionally fail-closed;
+    # callers can never submit or widen this emergency surface in the API request.
+    allowed-grants: ${IAM_BREAK_GLASS_ALLOWED_GRANTS:}
+  oauth2:
+    authorization-store:
+      redis:
+        key-prefix: ${IAM_OAUTH2_AUTHORIZATION_STORE_REDIS_KEY_PREFIX:iam:oauth2}
+    axiom-admin:
+      redirect-uri: ${IAM_AXIOM_ADMIN_REDIRECT_URI:http://localhost:5180/callback}
+      post-logout-redirect-uri: ${IAM_AXIOM_ADMIN_POST_LOGOUT_REDIRECT_URI:http://localhost:5180/login}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+  health:
+    db:
+      enabled: true
+
+logging:
+  level:
+    com.openwolf.iam: INFO
+    org.springframework.security: WARN
+    org.hibernate.SQL: WARN

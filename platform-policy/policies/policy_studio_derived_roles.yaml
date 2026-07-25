@@ -1,0 +1,48 @@
+apiVersion: api.cerbos.dev/v1
+# ═════════════════════════════════════════════════════════════════════════════
+# POLICY-STUDIO DERIVED ROLES  (Axiom Story C1 — policy-authoring meta-authz)
+# ═════════════════════════════════════════════════════════════════════════════
+# The trust surface of the policy studio: who may DRAFT policy content and who may
+# APPROVE / DEPLOY it, both tenant-scoped. These derived roles are DELIBERATELY
+# distinct from iam_derived_roles.policy_drafter / policy_approver_role:
+#
+#   * iam's policy_approver_role lists platform_admin as a parentRole (the IAM admin
+#     API superuser). For the STUDIO the product rule is the opposite — C1 §"THE SPEC":
+#     "platform_admin is NOT an auto-approver of policy content." So studio_policy_approver
+#     lists ONLY the tenant-scoped policy_approver role. A cross-tenant delegation token
+#     carrying platform_admin (but not policy_approver in that tenant) matches NOTHING here
+#     and falls through to Cerbos' implicit deny.
+#
+#   * Both roles carry the tenant-equality backstop verbatim (modeled on
+#     iam_derived_roles.same_tenant): a tenant-A token can never activate a studio role
+#     against a tenant-B draft. The B3 equality lint (cerbos-allow-tenant-equality-lint.py)
+#     proves every studio ALLOW is gated by one of these.
+#
+# author≠approver separation of duties is NOT here (a derived role cannot see R.attr.last_editor_id
+# relative to P.id cleanly across actions) — it lives as an explicit EFFECT_DENY on the
+# approve/deploy rules in policy_studio_resource.yaml, where DENY overrides ALLOW.
+# ═════════════════════════════════════════════════════════════════════════════
+derivedRoles:
+  name: policy_studio_derived_roles
+  definitions:
+    # ── studio_policy_drafter: may author (create/read/list) policy content in-tenant ──
+    - name: studio_policy_drafter
+      parentRoles: ["policy_author"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: "P.attr.tenant_id != '' && R.attr.tenant_id != ''"
+              - expr: "P.attr.tenant_id == R.attr.tenant_id"
+
+    # ── studio_policy_approver: may approve/deploy/read/list policy content in-tenant ──
+    # parentRoles is policy_approver ONLY — platform_admin is intentionally absent so it is
+    # never an auto-approver of policy content (C1). tenant-equality backstop as above.
+    - name: studio_policy_approver
+      parentRoles: ["policy_approver"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: "P.attr.tenant_id != '' && R.attr.tenant_id != ''"
+              - expr: "P.attr.tenant_id == R.attr.tenant_id"

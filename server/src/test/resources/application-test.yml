@@ -1,0 +1,23 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=PostgreSQL;NON_KEYWORDS=VALUE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    database-platform: org.hibernate.dialect.H2Dialect
+
+  flyway:
+    enabled: false   # H2 doesn't support PostgreSQL-specific JSONB — DDL created by Hibernate
+
+iam:
+  seed:
+    enabled: false  # No seeding in tests — test data is created per test
+
+  cerbos:
+    authz-enabled: false  # Skip Cerbos in unit tests
+
+spring.security.oauth2.authorizationserver.issuer: http://localhost:8084

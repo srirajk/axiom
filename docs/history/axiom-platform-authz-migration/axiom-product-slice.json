@@ -1,0 +1,129 @@
+{
+  "schema_version": "axiom-product-slice.v1",
+  "repository": "/Users/srirajkadimisetty/projects/orchestrator-demo",
+  "branch": "conduit-platform-next",
+  "integration_commit": "df3f5dd056dd3d2de2f5f59aacab7f4740808cb8",
+  "components": [
+    {
+      "name": "iam-service",
+      "source": "iam-service",
+      "source_tree_hash": "40d7c9e9bb1c89d3e331a32a6772908b91259160",
+      "destination": "axiom",
+      "exclude_globs": [
+        "target/**",
+        ".wolf/**"
+      ],
+      "remove_in_probata_profile": [
+        "src/main/java/com/openwolf/iam/controller/PolicyController.java",
+        "src/main/java/com/openwolf/iam/service/PolicyService.java",
+        "src/main/java/com/openwolf/iam/service/LlmPolicyGenerationService.java"
+      ]
+    },
+    {
+      "name": "admin-ui",
+      "source": "admin-ui",
+      "source_tree_hash": "340ba34208f012754586f68491ef855ef98cf2a4",
+      "destination": "axiom-admin",
+      "exclude_globs": [
+        "dist/**",
+        "node_modules/**",
+        ".wolf/**"
+      ],
+      "remove_in_probata_profile": [
+        "src/pages/Policies.tsx",
+        "nginx.conf:/gateway-api"
+      ]
+    },
+    {
+      "name": "axiom-platform-policy",
+      "source": "infra/cerbos",
+      "source_tree_hash": "2ce99e20c5e0fb718bab64cba0995be10e9c2b8d",
+      "templates_tree_hash": "8aa406208403a14f022feaa50061433f5f3db6e6",
+      "policies_tree_hash": "dd3d8d272df410764a3021ec62e219bdefae2209",
+      "destination": "axiom-platform-policy",
+      "allowlist": [
+        {
+          "path": "config.yaml",
+          "blob": "61209aa5e67130b936b4eecc4c895e7660f3145f"
+        },
+        {
+          "path": "templates/tenant-deny-all.yaml",
+          "blob": "5d1981464001da570cf4ecd6823eda4ebe5c09de"
+        },
+        {
+          "path": "templates/break-glass-grant.yaml",
+          "blob": "a88cb17f5fdb8c96d1218316967ff5a3decd63e5"
+        },
+        {
+          "path": "policies/iam_resource.yaml",
+          "blob": "d8ec02f1283cf2b6934b5ac1d0f783a0c264e3f4"
+        },
+        {
+          "path": "policies/iam_derived_roles.yaml",
+          "blob": "3876d5a3ef233013d3244af49ca2439901fd2959"
+        },
+        {
+          "path": "policies/policy_draft_resource.yaml",
+          "blob": "9a350229f2c1ec76945b4b6f2de65f8d71ee78bd"
+        },
+        {
+          "path": "policies/policy_bundle_resource.yaml",
+          "blob": "d3b0f6962cf60a3a4006bb934b490291af7f029a"
+        },
+        {
+          "path": "policies/policy_approval_resource.yaml",
+          "blob": "157c6e7e962315f952c778fbe3a4b3bf22d2fbf3"
+        },
+        {
+          "path": "policies/policy_studio_derived_roles.yaml",
+          "blob": "2295fbcdac013a8333cb440aeea1dbc46e948b94"
+        },
+        {
+          "path": "policies/policy_meta_authz_test.yaml",
+          "blob": "cf0fb172909f51213d83da813a14e7793db84255"
+        }
+      ]
+    }
+  ],
+  "reference_only": [
+    {
+      "path": "docs/studio-api-contract.md",
+      "blob": "ba73780010b63d9d6edec9e9bdd51c3e5b1d938d"
+    },
+    {
+      "path": "iam-service/src/test/resources/policystudio",
+      "tree": "e7c10b0921aa269c19a09039cd044b1c2ca7a6fa"
+    }
+  ],
+  "global_deny_globs": [
+    "gateway/**",
+    "registry/**",
+    "apps/**",
+    "mock-agents/**",
+    "eval/**",
+    "demo-ready-scripts/**",
+    "**/target/**",
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/.wolf/**"
+  ],
+  "forbidden_policy_names": [
+    "agent_resource.yaml",
+    "domain_resource.yaml",
+    "relationship_resource.yaml",
+    "insights_resource.yaml",
+    "business_derived_roles.yaml",
+    "tenant_default_agent.yaml",
+    "tenant_default_domain.yaml",
+    "tenant_default_iam.yaml",
+    "tenant_default_relationship.yaml",
+    "tenant_default_insights.yaml"
+  ],
+  "required_overlays": [
+    "ProbataPlatformGroundingProvider",
+    "probata-platform Admin UI mode with no Gateway proxy",
+    "V1-V14 migration disposition with no demo/default/Meridian seed data",
+    "Probata-specific API/service provisioning",
+    "isolated Postgres, Redis, signing-key, Cerbos policy and Cerbos audit storage"
+  ]
+}

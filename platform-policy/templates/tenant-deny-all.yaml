@@ -1,0 +1,52 @@
+apiVersion: api.cerbos.dev/v1
+# ═════════════════════════════════════════════════════════════════════════════
+# TENANT DENY-ALL BOOTSTRAP TEMPLATE  (Axiom scope-posture, contract #2)
+# ═════════════════════════════════════════════════════════════════════════════
+# WHY THIS EXISTS — the empirically proven trap (cerbos 0.53.0):
+#   Under SCOPE_PERMISSIONS_REQUIRE_PARENTAL_CONSENT_FOR_ALLOWS a tenant (child)
+#   policy that is SILENT on a base-allowed (resource, action, role) tuple does NOT
+#   deny it — the tuple FALLS THROUGH and INHERITS the base ceiling's ALLOW.
+#   Proven: infra/cerbos/proof + docs/adr/ADR-axiom-scope-posture.md.
+#   Consequences:
+#     • An empty / stub tenant policy is FAIL-OPEN (inherits every base grant).
+#     • "ALLOW with a false condition = implicit deny" is ALSO fail-open (a
+#       non-matching rule is silence, and silence inherits the parent ALLOW).
+#   The ONLY safe deny-by-default is an EXPLICIT EFFECT_DENY for every ceiling tuple
+#   the tenant does not intend to grant. (EFFECT_DENY beats EFFECT_ALLOW in Cerbos,
+#   and a child DENY overrides the parent ceiling.)
+#
+# HOW TO USE — onboarding a tenant:
+#   1. Copy this file to infra/cerbos/policies/tenant_<TENANT_ID>_<RESOURCE>.yaml
+#      (one file per resource kind the tenant touches).
+#   2. Replace <TENANT_ID> and <RESOURCE_KIND>.
+#   3. Enumerate — in the WITHHELD bucket — EVERY base-ceiling (action, role) tuple
+#      for this resource. The totality lint (scripts/cerbos-tenant-totality-lint.py)
+#      fails CI if any base-allowed tuple is left uncovered.
+#   4. To GRANT a tuple: move it from the WITHHELD (DENY) bucket to the GRANTED
+#      (ALLOW) bucket. Never delete a tuple — that reopens the fall-through hole.
+#   5. Re-run the lint + `cerbos compile --test-output=junit infra/cerbos/policies`.
+#
+# The example below is a runnable placeholder (resource EXAMPLE_RESOURCE, ceiling
+# actions view/edit for role user). Replace it with the real ceiling of your resource.
+# ═════════════════════════════════════════════════════════════════════════════
+resourcePolicy:
+  version: "default"
+  resource: EXAMPLE_RESOURCE          # <-- replace with the locked iam-resource kind
+  scope: "EXAMPLE_TENANT"             # <-- tenant id; REQUIRE_PARENTAL_CONSENT lives here
+  scopePermissions: SCOPE_PERMISSIONS_REQUIRE_PARENTAL_CONSENT_FOR_ALLOWS
+
+  rules:
+    # ── GRANTED bucket ────────────────────────────────────────────────────────
+    # Explicit ALLOW. Effective only if the base ceiling also allows the tuple
+    # (parental consent). Start EMPTY — a fresh tenant grants nothing.
+    #
+    # - actions: ["view"]
+    #   effect: EFFECT_ALLOW
+    #   roles: ["user"]
+
+    # ── WITHHELD bucket ───────────────────────────────────────────────────────
+    # Explicit EFFECT_DENY for EVERY remaining base-ceiling (action, role) tuple,
+    # so none can fall through to the parent ALLOW. This is the deny-all default.
+    - actions: ["view", "edit"]       # <-- ALL base-ceiling actions for this role
+      effect: EFFECT_DENY
+      roles: ["user"]                 # <-- one WITHHELD rule per base-ceiling role

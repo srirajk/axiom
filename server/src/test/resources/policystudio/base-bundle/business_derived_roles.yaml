@@ -1,0 +1,61 @@
+apiVersion: api.cerbos.dev/v1
+# ═════════════════════════════════════════════════════════════════════════════
+# SHARED BUSINESS DERIVED ROLES  (Axiom Story B2)
+# ═════════════════════════════════════════════════════════════════════════════
+# The tenant-equality backstop, factored out of every gateway-facing resource policy
+# (agent / relationship / domain / insights). Modeled on iam_derived_roles.same_tenant
+# (the IAM side already carried this; B2 generalizes it for the runtime resources).
+#
+# WHY A DERIVED ROLE (not inline per rule):
+#   B2.3 requires that every ALLOW path is tenant-scoped — a raw-role ALLOW with no
+#   tenant condition is a cross-tenant bypass. Centralizing the equality in ONE module
+#   that every resource policy imports means the rule is authored (and audited) once,
+#   and scripts/cerbos-allow-tenant-equality-lint.py can prove no ALLOW bypasses it.
+#
+# PARITY-NEUTRAL for the current single-tenant world (B2.1, non-negotiable):
+#   The gateway (CerbosEntitlementAdapter) sends NO tenant_id on the principal and NO
+#   tenant_id on the resource today. So has(P.attr.tenant_id) and has(R.attr.tenant_id)
+#   are BOTH false, the guard evaluates TRUE, and every decision is byte-identical to the
+#   pre-migration policy. Proven empirically by scripts/cerbos-parity-matrix.py (before
+#   vs after, 0 diffs) and asserted in decision_parity_matrix_test.yaml.
+#
+# ACTIVE once A1 (token contract) stamps tenant_id onto BOTH the principal (JWT) and the
+# resource attributes: the guard then denies any cross-tenant tuple even inside a matched
+# tenant scope — defence-in-depth against a mislabeled scope (TenantEqualityBackstopTest).
+#
+# The one-line guard, reused verbatim by every definition below:
+#   (has(P.attr.tenant_id) && has(R.attr.tenant_id)) ? P.attr.tenant_id == R.attr.tenant_id : true
+# ═════════════════════════════════════════════════════════════════════════════
+derivedRoles:
+  name: business_derived_roles
+  definitions:
+    # ── tenant_chat_user: the runtime front door (chat_user), tenant-scoped ──
+    # relationship_manager kept as an alias during the chat_user migration, matching
+    # the raw-role lists it replaces across agent/relationship/domain.
+    - name: tenant_chat_user
+      parentRoles: ["chat_user", "relationship_manager"]
+      condition:
+        match:
+          expr: >
+            (has(P.attr.tenant_id) && has(R.attr.tenant_id))
+              ? P.attr.tenant_id == R.attr.tenant_id : true
+
+    # ── tenant_domain_admin: domain_admin, tenant-scoped ──
+    # The specific admin_domains / domain checks stay INLINE on each rule (they are the
+    # capability gate); this derived role only adds the tenant-equality backstop.
+    - name: tenant_domain_admin
+      parentRoles: ["domain_admin"]
+      condition:
+        match:
+          expr: >
+            (has(P.attr.tenant_id) && has(R.attr.tenant_id))
+              ? P.attr.tenant_id == R.attr.tenant_id : true
+
+    # ── tenant_conduit_admin: Conduit Insights administrator, tenant-scoped ──
+    - name: tenant_conduit_admin
+      parentRoles: ["conduit_admin"]
+      condition:
+        match:
+          expr: >
+            (has(P.attr.tenant_id) && has(R.attr.tenant_id))
+              ? P.attr.tenant_id == R.attr.tenant_id : true

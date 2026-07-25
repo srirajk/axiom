@@ -1,0 +1,6 @@
+{
+  "schema_version": "axiom-platform-contract.v1",
+  "resource_kind": "iam-resource",
+  "classifications": [],
+  "attributes": ["resource_type", "tenant_id", "domain_id", "owner_id"]
+}

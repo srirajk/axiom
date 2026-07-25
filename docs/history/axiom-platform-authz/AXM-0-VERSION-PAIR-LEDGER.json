@@ -1,0 +1,30 @@
+{
+  "schema_version": "probata-axiom-version-pair.v1",
+  "pair_id": "axm-0-baseline-2026-07-23",
+  "probata": {
+    "repository": "uac",
+    "branch": "feat/grg",
+    "commit": "b9a0712439c9a1b6aed1c7f6c77ac2a91f7e2a66"
+  },
+  "vendored_axiom": {
+    "subtree": "axiom",
+    "tree_hash": "3fb442960d44f8b0b5ef8891dc18f43047087c8b",
+    "state": "legacy_snapshot_not_authoritative_upstream_pin"
+  },
+  "upstream_axiom": {
+    "repository": "orchestrator-demo",
+    "branch": "conduit-platform-next",
+    "integration_commit": "df3f5dd056dd3d2de2f5f59aacab7f4740808cb8",
+    "iam_service_commit": "9fa1c948f6421b8605b467e456462b23319e8857",
+    "iam_service_tree_hash": "40d7c9e9bb1c89d3e331a32a6772908b91259160"
+  },
+  "contracts": {
+    "platform_authz_contract_version": "1.0",
+    "platform_authz_media_type": "application/vnd.probata.platform-authz.v1+json",
+    "golden_corpus_version": "code-matrix-golden.v1",
+    "golden_corpus_sha256": "0cc05811da5cf3fdf3b7d9138ef10e95e205b1a43d9b51bdeed7ac9be8431e03",
+    "gate_inventory_version": "axm-gate-inventory.v1",
+    "gate_inventory_sha256": "8773b5e2914d1d49eb1a20d5a3c51318dac01710e5dea311059be274ea8d06c6"
+  },
+  "compatibility_status": "AXM-0 contract lock only: upstream does not yet expose the subject-context or batch-decision API, so Java/Python wire execution compatibility is pending AXM-3."
+}

@@ -1,0 +1,32 @@
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+engine:
+  # ── Axiom scope-posture (contract #1), empirically pinned against cerbos 0.53.0 ──
+  # STRICT scope search: a request for a tenant scope that has NO policy must NOT walk
+  # up to an ancestor. Proven load-bearing — with lenientScopeSearch:true an absent
+  # tenant scope inherits the base ceiling's ALLOWs (fail-open on an unregistered
+  # tenant); with it false, an absent tenant scope hard-DENYs. See
+  # docs/adr/ADR-axiom-scope-posture.md and infra/cerbos/proof.
+  lenientScopeSearch: false
+storage:
+  driver: disk
+  disk:
+    # Immutable curated base and writable promoted runtime are separate mounts under one tree.
+    # Runtime publication never mutates the base package.
+    directory: /policies
+    watchForChanges: true
+audit:
+  enabled: true
+  backend: file
+  file:
+    # A6: this path is bind-mounted to a durable named volume (docker-compose `cerbos-audit`) so the
+    # decision log — the examiner's authorization chain, joined via cerbosCallId — survives a PDP
+    # restart / re-create. Config (B1) unchanged; the durability guarantee is the volume.
+    path: /var/log/cerbos/audit.log
+  accessLogsEnabled: true
+  # Decision logs are the audit trail for every authorization verdict (contract #1).
+  decisionLogsEnabled: true
+  decisionLogFilters:
+    checkResources:
+      ignoreAllowAll: false

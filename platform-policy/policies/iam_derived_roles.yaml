@@ -1,0 +1,58 @@
+apiVersion: api.cerbos.dev/v1
+derivedRoles:
+  name: iam_derived_roles
+  definitions:
+    # ── same_tenant: tenant_owner/admin in the same tenant ──
+    # parentRoles intentionally scoped — Cerbos ORs roles+derivedRoles in rules,
+    # so a wildcard here would grant same_tenant to every principal and allow
+    # auditors, policy_authors etc. to match tenant_admin CRUD rules.
+    - name: same_tenant
+      parentRoles: ["tenant_owner", "tenant_admin"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: "P.attr.tenant_id != '' && R.attr.tenant_id != ''"
+              - expr: "P.attr.tenant_id == R.attr.tenant_id"
+
+    # ── domain_scoped_admin: domain_admin within their own tenant and administered domains ──
+    - name: domain_scoped_admin
+      parentRoles: ["domain_admin"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: "P.attr.tenant_id == R.attr.tenant_id"
+              - expr: "R.attr.domain_id != '' && P.attr.admin_domains.exists(d, d == R.attr.domain_id)"
+
+    # ── own_resource: principal is the owner of the resource, in the same tenant ──
+    # Tenant equality is required in addition to the owner match: without it, a
+    # principal could read a same-id owner record that happens to live in another
+    # tenant. Owner match AND tenant match together scope this to the real self.
+    - name: own_resource
+      parentRoles: ["*"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: "R.attr.owner_id != '' && P.id == R.attr.owner_id"
+              - expr: "P.attr.tenant_id != '' && R.attr.tenant_id != ''"
+              - expr: "P.attr.tenant_id == R.attr.tenant_id"
+
+    # ── policy_drafter: policy authorship capability within tenant ──
+    - name: policy_drafter
+      parentRoles: ["policy_author", "tenant_admin", "platform_admin"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: "P.attr.tenant_id == R.attr.tenant_id"
+
+    # ── policy_approver_role: policy approval & deployment within tenant ──
+    - name: policy_approver_role
+      parentRoles: ["policy_approver", "tenant_admin", "platform_admin"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: "P.attr.tenant_id == R.attr.tenant_id"

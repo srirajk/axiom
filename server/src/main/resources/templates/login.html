@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Axiom Identity Platform</title>
+  <link rel="stylesheet" th:href="@{/css/axiom-login.css}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="page">
+
+  <div class="brand-panel">
+    <div class="axiom-logo">
+      <div class="axiom-mark" aria-hidden="true">Ax</div>
+      <div>
+        <div class="axiom-name">Axiom</div>
+        <div class="axiom-kicker">Identity Platform</div>
+      </div>
+    </div>
+
+    <div class="brand-body">
+      <h1 class="brand-headline">
+        Secure access for your organization.
+      </h1>
+      <p class="brand-sub">
+        Axiom verifies workforce identity and applies fine-grained platform entitlements.
+        workspace opens.
+      </p>
+    </div>
+
+    <div class="trust-stack" aria-label="Security assurances">
+      <div class="trust-item">
+        <span class="trust-dot" aria-hidden="true"></span>
+        Single sign-on
+      </div>
+      <div class="trust-item">
+        <span class="trust-dot" aria-hidden="true"></span>
+        OIDC protected
+      </div>
+      <div class="trust-item">
+        <span class="trust-dot" aria-hidden="true"></span>
+        Policy enforced
+      </div>
+    </div>
+  </div>
+
+  <div class="form-panel">
+    <main class="login-card" aria-labelledby="login-title">
+      <div class="mobile-logo">
+        <div class="axiom-mark" aria-hidden="true">Ax</div>
+        <div>
+          <div class="axiom-name">Axiom</div>
+          <div class="axiom-kicker">Identity Platform</div>
+        </div>
+      </div>
+
+      <div class="form-header">
+        <div class="for-label">Axiom Identity Platform</div>
+        <h2 class="form-title" id="login-title">Sign in with Axiom</h2>
+        <p class="form-subtitle">Use your organization credentials to continue securely.</p>
+      </div>
+
+      <div class="error-banner" id="login-error" role="alert" th:if="${loginError}">
+        <div class="error-icon" aria-hidden="true">!</div>
+        <div>
+          <p class="error-title">Incorrect username or password</p>
+          <p class="error-copy">Check your credentials and try again.</p>
+        </div>
+      </div>
+
+      <form th:action="@{/login}" method="post" class="login-form"
+            th:attr="aria-describedby=${loginError} ? 'login-error secure-note' : 'secure-note'">
+        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+
+        <div class="field">
+          <label for="username">Username</label>
+          <input id="username" name="username" type="text"
+                 placeholder="Username"
+                 autocomplete="username" autofocus required
+                 th:attr="aria-invalid=${loginError} ? 'true' : null">
+        </div>
+
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password"
+                 placeholder="Enter your password"
+                 autocomplete="current-password" required
+                 th:attr="aria-invalid=${loginError} ? 'true' : null">
+        </div>
+
+        <button type="submit" class="btn-sign-in">
+          <span>Sign in</span>
+          <span aria-hidden="true">&rarr;</span>
+        </button>
+      </form>
+
+      <p class="secure-note" id="secure-note">Secured by Axiom SSO.</p>
+    </main>
+  </div>
+
+</div>
+</body>
+</html>

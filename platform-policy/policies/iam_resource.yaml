@@ -1,0 +1,128 @@
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: "default"
+  resource: iam-resource
+  # ── Axiom Story B2: base scope ────────────────────────────────────────────────
+  # BASE scope (root) = ceiling; per-tenant narrowing lives in tenant_default_iam.yaml.
+  # scopePermissions unset ⇒ Cerbos default OVERRIDE_PARENT (root has no parent — ADR F0). The IAM rules already
+  # carry tenant-equality (via iam_derived_roles.same_tenant / own_resource / policy_* and the
+  # auditor's inline P.attr.tenant_id == R.attr.tenant_id), so B2 only adds the scope header
+  # here — decisions are byte-identical (B2.1). platform_admin stays the raw cross-tenant
+  # superuser (B2.3 allowlist), matching the runtime policies.
+  scope: ""
+  importDerivedRoles:
+    - iam_derived_roles
+
+  # Resource attributes expected in each CheckResources call:
+  #   R.attr.resource_type       — "user" | "role" | "group" | "policy" | "audit_log"
+  #   R.attr.tenant_id           — tenant identifier (scopes all access)
+  #   R.attr.domain_id           — domain identifier (optional, for domain_scoped_admin)
+  #   R.attr.owner_id            — principal who owns this resource (for own_resource)
+  #
+  # Principal attributes set by CerbosEntitlementAdapter:
+  #   P.attr.tenant_id           — principal's home tenant
+  #   P.attr.admin_domains       — list of domain IDs this principal administers
+  #   P.id                       — principal identifier (for own_resource match)
+
+  rules:
+
+    # ── platform_admin: unrestricted access across all IAM resources ────────
+    - actions: ["create", "read", "update", "delete", "list", "export", "approve_policy", "deploy_policy"]
+      effect: EFFECT_ALLOW
+      roles: ["platform_admin"]
+
+    # ── tenant_owner and tenant_admin (same_tenant): full CRUD on all resource types ──
+    # NOTE: roles intentionally omitted — Cerbos ORs roles+derivedRoles, so listing
+    # roles here would let any role bypass the tenant-isolation check in same_tenant.
+    # The same_tenant derived role already requires parentRole tenant_owner/tenant_admin
+    # AND P.attr.tenant_id == R.attr.tenant_id.
+    - actions: ["create", "read", "update", "delete", "list", "export"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["same_tenant"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: >
+                  R.attr.resource_type in ["user", "role", "group", "policy", "audit_log"]
+
+    # ── tenant_admin (same_tenant): policy approval and deployment ────────
+    - actions: ["approve_policy", "deploy_policy"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["same_tenant"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: "R.attr.resource_type == 'policy'"
+
+    # ── domain_scoped_admin: create, read, update, list for user and group within domain ──
+    # NOTE: roles field omitted — Cerbos ORs roles+derivedRoles.
+    # domain_scoped_admin derived role already requires domain_admin parentRole
+    # AND same tenant AND resource domain in P.attr.admin_domains.
+    - actions: ["create", "read", "update", "list"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["domain_scoped_admin"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: "R.attr.resource_type in ['user', 'group']"
+
+    # ── policy_drafter: create, read, list policies within tenant ──────────
+    # NOTE: roles field omitted — Cerbos ORs roles+derivedRoles, so listing
+    # roles:["policy_author"] here would let a policy_author draft policies in ANY
+    # tenant, bypassing the tenant match. The policy_drafter derived role already
+    # lists policy_author as a parentRole AND requires P.tenant_id == R.tenant_id.
+    - actions: ["create", "read", "list"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["policy_drafter"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: "R.attr.resource_type == 'policy'"
+
+    # ── policy_approver: approve, deploy, read, list policies within tenant ──
+    # NOTE: roles field omitted — Cerbos ORs roles+derivedRoles, so listing
+    # roles:["policy_approver"] here would let an approver approve/deploy policies in
+    # ANY tenant, bypassing the tenant match. The policy_approver_role derived role
+    # already lists policy_approver as a parentRole AND requires P.tenant_id == R.tenant_id.
+    - actions: ["approve_policy", "deploy_policy", "read", "list"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["policy_approver_role"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: "R.attr.resource_type == 'policy'"
+
+    # ── auditor: read, list, export audit logs only (same tenant, inline check) ──
+    # derivedRoles omitted — auditor is not in same_tenant.parentRoles (by design).
+    # Tenant isolation enforced via inline CEL condition instead.
+    - actions: ["read", "list", "export"]
+      effect: EFFECT_ALLOW
+      roles: ["auditor"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: "P.attr.tenant_id == R.attr.tenant_id"
+              - expr: "R.attr.resource_type == 'audit_log'"
+
+    # ── own_resource: users may read their own user resource ─────────────
+    # NOTE: roles field omitted — Cerbos ORs roles+derivedRoles, so listing
+    # roles:["user"] here would let ANY principal with the bare `user` role read
+    # EVERY user record in EVERY tenant (no owner/tenant scoping). The own_resource
+    # derived role already requires P.id == R.owner_id AND P.tenant_id == R.tenant_id.
+    - actions: ["read"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["own_resource"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: "R.attr.resource_type == 'user'"
+
+    # No explicit catch-all deny needed — Cerbos denies by default (implicit deny).
+    # An explicit DENY roles:["*"] would override every ALLOW rule including platform_admin.

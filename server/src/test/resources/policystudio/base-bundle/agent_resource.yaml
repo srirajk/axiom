@@ -1,0 +1,176 @@
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: "default"
+  resource: agent
+  # ── Axiom Story B2: base/tenant scoped model ──────────────────────────────────
+  # This is the BASE scope (root, scope: "") — the CEILING every tenant narrows from.
+  # scopePermissions is LEFT UNSET on the root: Cerbos's default for a root scope IS
+  # OVERRIDE_PARENT (the root has no parent; REQUIRE_PARENTAL_CONSENT on a root denies
+  # everything — ADR-axiom-scope-posture finding F0). Leaving it unset is also required
+  # empirically: Cerbos 0.53 raises a false "scope permission conflicts" error when MORE
+  # THAN ONE root-scoped resource policy sets scopePermissions explicitly, even to the
+  # same value (verified via cerbos compile). Unset = default OVERRIDE_PARENT = the exact
+  # pre-migration posture ⇒ decisions byte-identical (B2.1). Tenant children set
+  # REQUIRE_PARENTAL_CONSENT_FOR_ALLOWS (see tenant_default_agent.yaml) + the deny-all
+  # bootstrap template for fresh tenants.
+  scope: ""
+  # Shared tenant-equality backstop (B2.3) — every business-role ALLOW below references a
+  # derived role from here, so no ALLOW is a raw cross-tenant bypass. Parity-neutral today.
+  importDerivedRoles:
+    - business_derived_roles
+
+  # Resource attributes expected in each CheckResources call (set by CerbosEntitlementAdapter):
+  #   R.attr.domain              — business domain, e.g. "wealth-management" | "asset-servicing" | "insurance"
+  #   R.attr.audience            — "segment" (gated by segment membership + classification)
+  #                                | "enterprise" (open to all authenticated users; segment gate skipped)
+  #   R.attr.access_mode         — "read" | "write" (Phase 1 agents are read-only)
+  #   R.attr.data_classification — "internal" | "confidential" | "confidential-pii"
+  #
+  # Principal attributes set by CerbosEntitlementAdapter:
+  #   P.attr.segments      — MAP  segment -> the data-classification tier the principal holds
+  #                          IN that segment, e.g. {"wealth":"confidential-pii","servicing":"confidential"}.
+  #                          Membership = key present; ceiling = its value. (Replaces the old flat
+  #                          segment list + numeric clearance.)
+  #   P.attr.domains       — org domain membership (e.g. "wealth-private-banking")
+  #   P.attr.admin_domains — domains this principal administers (domain_admin only)
+  #
+  # DOMAIN -> SEGMENT MAPPING (B2.4 relocation): the authoritative declaration of the
+  # domain->segment mapping (wealth-management -> "wealth", asset-servicing -> "servicing",
+  # insurance -> "insurance") now lives in TENANT DEPLOYMENT CONFIG —
+  #   infra/cerbos/tenants/default/domain-segment-map.yaml
+  # — not in these policy comments. It was always deployment config (World B: the gateway
+  # carries zero domain knowledge); B2 promotes it from a free-text comment here to a
+  # structured per-tenant manifest, so onboarding a domain/tenant edits config, not this file.
+  # The base-ceiling ENFORCEMENT of the mapping remains the inline CEL in the rules below (it
+  # IS the ceiling; the mapping literals must stay in the compiled ceiling for byte-identical
+  # decisions — moving the *evaluation* onto the request path is a separate gateway story).
+
+  variables:
+    local:
+      accessIsRead:       R.attr.access_mode == "read"
+      audienceEnterprise: R.attr.audience == "enterprise"
+
+      # Sensitivity ladder: internal(1) < confidential(2) < confidential-pii(3). Unknown -> 0.
+      resourceRank: >
+        R.attr.data_classification == "confidential-pii" ? 3 :
+        (R.attr.data_classification == "confidential" ? 2 :
+        (R.attr.data_classification == "internal" ? 1 : 0))
+
+      # Resource-side fail-closed guard. A missing / typo'd / "public" (or any other
+      # unrecognised) data_classification ranks 0, and `wealthRank >= 0` is ALWAYS true —
+      # so without this guard an unclassified agent would be reachable by every segment
+      # member (fail-OPEN). The principal side already fails closed (rank 0 = not a member);
+      # this makes the resource side symmetric: an unrecognised classification is DENIED.
+      resourceClassRecognized: >
+        R.attr.data_classification in ["internal", "confidential", "confidential-pii"]
+
+      # Per-segment tier the principal holds, ranked on the same ladder. 0 = not a member of
+      # that segment (or an unrecognised tier) -> the classification gate can never clear.
+      wealthRank: >
+        "wealth" in P.attr.segments ?
+          (P.attr.segments["wealth"] == "confidential-pii" ? 3 :
+          (P.attr.segments["wealth"] == "confidential" ? 2 :
+          (P.attr.segments["wealth"] == "internal" ? 1 : 0))) : 0
+      servicingRank: >
+        "servicing" in P.attr.segments ?
+          (P.attr.segments["servicing"] == "confidential-pii" ? 3 :
+          (P.attr.segments["servicing"] == "confidential" ? 2 :
+          (P.attr.segments["servicing"] == "internal" ? 1 : 0))) : 0
+      insuranceRank: >
+        "insurance" in P.attr.segments ?
+          (P.attr.segments["insurance"] == "confidential-pii" ? 3 :
+          (P.attr.segments["insurance"] == "confidential" ? 2 :
+          (P.attr.segments["insurance"] == "internal" ? 1 : 0))) : 0
+
+  rules:
+
+    # ── platform_admin: unrestricted across all domains and classifications ────────
+    # CROSS-TENANT SUPERUSER (B2.3 allowlist): platform_admin is intentionally cross-tenant —
+    # it is the raw-role ALLOW that the tenant-equality lint exempts (see the CROSS_TENANT_
+    # SUPERUSER set in scripts/cerbos-allow-tenant-equality-lint.py). Same posture as
+    # iam_resource.platform_admin. Every OTHER ALLOW below references a business_derived_roles
+    # role whose condition carries the tenant-equality backstop.
+    - actions: ["invoke", "invoke_membership", "register", "deregister"]
+      effect: EFFECT_ALLOW
+      roles: ["platform_admin"]
+
+    # ── domain_admin: may invoke read-only agents whose domain maps from their administered org-domain
+    #    wealth-private-banking / intl-wealth  →  wealth-management agents
+    #    servicing-ops                         →  asset-servicing agents
+    - actions: ["invoke", "invoke_membership"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["tenant_domain_admin"]   # domain_admin + tenant-equality backstop (B2.3)
+      condition:
+        match:
+          any:
+            of:
+              - expr: >
+                  V.accessIsRead &&
+                  R.attr.domain == "wealth-management" &&
+                  P.attr.admin_domains.exists(d, d == "wealth-private-banking" || d == "intl-wealth")
+              - expr: >
+                  V.accessIsRead &&
+                  R.attr.domain == "asset-servicing" &&
+                  P.attr.admin_domains.exists(d, d == "servicing-ops")
+
+    # ── domain_admin: may register/deregister agents in their administered domain ─
+    - actions: ["register", "deregister"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["tenant_domain_admin"]   # domain_admin + tenant-equality backstop (B2.3)
+      condition:
+        match:
+          any:
+            of:
+              - expr: >
+                  R.attr.domain == "wealth-management" &&
+                  P.attr.admin_domains.exists(d, d == "wealth-private-banking" || d == "intl-wealth")
+              - expr: >
+                  R.attr.domain == "asset-servicing" &&
+                  P.attr.admin_domains.exists(d, d == "servicing-ops")
+
+    # ── chat_user: the runtime front door — ABAC over the agent's declared contract ─
+    #    Three gates, all must hold (evaluated left-to-right):
+    #      1. access_mode == "read"           (Phase 1 is read-only)
+    #      2a. audience == "enterprise"        → open to every authenticated user
+    #                                            (enterprise agents are internal by nature), OR
+    #      2b. segment membership + per-segment classification:
+    #            the agent's domain maps to a segment the principal holds, AND the tier the
+    #            principal holds IN that segment ranks >= the agent's data_classification.
+    #    Coverage (book-of-business) is a SEPARATE gate enforced downstream by the domain
+    #    coverage service — not here. (relationship_manager kept as an alias during the
+    #    chat_user migration so old and new tokens resolve to identical logic.)
+    - actions: ["invoke"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["tenant_chat_user"]   # chat_user/relationship_manager + tenant-equality backstop (B2.3)
+      condition:
+        match:
+          all:
+            of:
+              - expr: V.accessIsRead
+              - expr: >
+                  V.audienceEnterprise ||
+                  (V.resourceClassRecognized && R.attr.domain == "wealth-management" && V.wealthRank    > 0 && V.wealthRank    >= V.resourceRank) ||
+                  (V.resourceClassRecognized && R.attr.domain == "asset-servicing"   && V.servicingRank > 0 && V.servicingRank >= V.resourceRank) ||
+                  (V.resourceClassRecognized && R.attr.domain == "insurance"         && V.insuranceRank > 0 && V.insuranceRank >= V.resourceRank)
+
+    # ── chat_user: membership-only probe (glass-box explanation, NOT enforcement) ──
+    #    Same domain->segment mapping as `invoke` but WITHOUT the classification-rank
+    #    comparison. Lets the gateway tell a segment-membership miss apart from a
+    #    classification miss when it renders the per-gate authorization trace:
+    #      invoke_membership DENY               → segment gate denied (not in that segment)
+    #      invoke_membership ALLOW + invoke DENY → classification gate denied (tier too low)
+    #    The enforced decision is always `invoke`; this action only labels the trace. Keeps
+    #    the domain->segment mapping + rank ladder HERE in policy config (World B).
+    - actions: ["invoke_membership"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["tenant_chat_user"]   # chat_user/relationship_manager + tenant-equality backstop (B2.3)
+      condition:
+        match:
+          all:
+            of:
+              - expr: V.accessIsRead
+              - expr: >
+                  V.audienceEnterprise ||
+                  (R.attr.domain == "wealth-management" && V.wealthRank    > 0) ||
+                  (R.attr.domain == "asset-servicing"   && V.servicingRank > 0) ||
+                  (R.attr.domain == "insurance"         && V.insuranceRank > 0)

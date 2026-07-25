@@ -1,0 +1,63 @@
+apiVersion: api.cerbos.dev/v1
+# ═════════════════════════════════════════════════════════════════════════════
+# BREAK-GLASS EMERGENCY-ACCESS GRANT TEMPLATE  (Axiom Story C6)
+# ═════════════════════════════════════════════════════════════════════════════
+# WHAT THIS IS — a break-glass grant is a NORMAL scoped tenant policy whose ALLOW
+#   carries a CEL TIME CONDITION. Enforcement is therefore SELF-LIMITING INSIDE THE
+#   PDP: Cerbos evaluates the condition on every CheckResources, so once `expiresAt`
+#   passes the grant DENIES — even if the studio / control plane is down or air-gapped.
+#   Nothing external revokes it (NOT a cron, NOT a control-plane call).
+#
+# THE SELF-LIMITING IDIOM — a COMPLEMENTARY PAIR on the granted (action, role):
+#     ALLOW  <action>  <role>   when  now() <  timestamp("<EXPIRES_AT>")
+#     DENY   <action>  <role>   when  now() >= timestamp("<EXPIRES_AT>")
+#   A LONE conditional ALLOW is UNSAFE here: under REQUIRE_PARENTAL_CONSENT_FOR_ALLOWS
+#   a rule whose condition is false becomes SILENCE, and silence INHERITS the parent
+#   ALLOW (the proven fall-through trap — see tenant-deny-all.yaml). The complementary
+#   DENY makes expiry fail CLOSED (EFFECT_DENY beats EFFECT_ALLOW in Cerbos).
+#
+# HOW IT IS AUTHORED (never hand-written in prod) — the studio's EXPEDITED path:
+#   1. BOUNDS gate (BreakGlassValidator): expiresAt > issuedAt, TTL ≤ 60 min, action +
+#      resource on the approved allowlist, NO wildcard, tenant-scoped, justified.
+#   2. COMPILE (BreakGlassPolicyCompiler) → this shape, with a deny-all baseline over the
+#      REST of the base ceiling (totality — no fall-through hole).
+#   3. C2 gate (GeneratedPolicyValidator): shape / segment-wise scope containment (CANNOT
+#      name another tenant) / grounding / no-wildcard / totality.
+#   4. TWO-PERSON approval (author≠approver, studio approver role — same SoD as C1's
+#      policy_approval meta-authz). Grant issuance + every use are audited to the A6 partition.
+#
+# OPERATIONAL REQUIREMENT — because expiry is `now()` INSIDE the PDP, every PDP host MUST
+#   meet the clock-sync SLO (≤ 5s skew, NTP/chrony). Readiness FAILS outside that bound
+#   (BreakGlassClockReadiness) so a drifted host never honours an expired grant.
+#
+# The example below is a runnable placeholder. Replace <TENANT_ID>, <RESOURCE_KIND>,
+# <ACTION>, <ROLE>, the <EXPIRES_AT> RFC3339 instant, and the deny-all baseline with the
+# real ceiling. It requires a parent (root, scope: "") policy for <RESOURCE_KIND> that
+# allows the granted tuple (parental consent).
+# ═════════════════════════════════════════════════════════════════════════════
+resourcePolicy:
+  version: "default"
+  resource: EXAMPLE_RESOURCE            # <-- replace with the locked iam-resource kind
+  scope: "EXAMPLE_TENANT"               # <-- the tenant id; CANNOT name another tenant (C2 scope check)
+  scopePermissions: SCOPE_PERMISSIONS_REQUIRE_PARENTAL_CONSENT_FOR_ALLOWS
+
+  rules:
+    # ── THE GRANT — a complementary time-conditioned ALLOW/DENY on the emergency tuple ──
+    - actions: ["view"]                 # <-- the single approved emergency action (no wildcard)
+      effect: EFFECT_ALLOW
+      roles: ["user"]                   # <-- the single named role (no wildcard)
+      condition:
+        match:
+          expr: 'now() < timestamp("2026-01-01T01:00:00Z")'   # <-- issuedAt + TTL (≤ 60 min)
+    - actions: ["view"]
+      effect: EFFECT_DENY
+      roles: ["user"]
+      condition:
+        match:
+          expr: 'now() >= timestamp("2026-01-01T01:00:00Z")'  # <-- self-limit: fails CLOSED at expiry
+
+    # ── DENY-ALL BASELINE — explicit EFFECT_DENY for EVERY OTHER base-ceiling tuple, so the
+    #    tenant grants nothing except the one time-boxed emergency action (no fall-through). ──
+    - actions: ["edit"]                 # <-- all remaining base-ceiling actions for this role
+      effect: EFFECT_DENY
+      roles: ["user"]
