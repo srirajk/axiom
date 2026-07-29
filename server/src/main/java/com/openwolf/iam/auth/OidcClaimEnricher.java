@@ -55,7 +55,7 @@ public class OidcClaimEnricher {
                 .or(() -> principalRepository.findByUsername(subject))
                 .orElse(null);
 
-        if (principal == null) {
+        if (principal == null || !principal.isActive()) {
             throw new IllegalStateException("token subject is not an active Axiom principal");
         }
 
@@ -106,9 +106,8 @@ public class OidcClaimEnricher {
                 .or(() -> principalRepository.findByUsername(subject))
                 .orElse(null);
 
-        if (principal == null) {
-            log.warn("ID-token enrich: no principal for sub={} — only sub will be present", subject);
-            return claims;
+        if (principal == null || !principal.isActive()) {
+            throw new IllegalStateException("ID-token subject is not an active Axiom principal");
         }
 
         if (principal.getEmail() != null && !principal.getEmail().isBlank()) {

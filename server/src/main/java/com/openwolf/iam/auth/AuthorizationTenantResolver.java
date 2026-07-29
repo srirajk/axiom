@@ -21,8 +21,8 @@ public final class AuthorizationTenantResolver {
 
     public String resolve(String subject) {
         Set<String> candidates = new LinkedHashSet<>();
-        principals.findById(subject).map(Principal::getTenantId).ifPresent(candidates::add);
-        principals.findByUsername(subject).map(Principal::getTenantId).ifPresent(candidates::add);
+        principals.findById(subject).filter(Principal::isActive).map(Principal::getTenantId).ifPresent(candidates::add);
+        principals.findByUsername(subject).filter(Principal::isActive).map(Principal::getTenantId).ifPresent(candidates::add);
         applications.activeAuthority(subject)
                 .map(TenantApplicationService.ClientAuthority::tenantId)
                 .ifPresent(candidates::add);

@@ -54,6 +54,7 @@ import org.springframework.security.oauth2.server.authorization.settings.Authori
 import org.springframework.security.oauth2.server.authorization.settings.ClientSettings;
 import org.springframework.security.oauth2.server.authorization.settings.TokenSettings;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
@@ -66,6 +67,8 @@ import com.openwolf.iam.service.IamSessionService;
 import com.openwolf.iam.auth.SessionTokenValidator;
 import com.openwolf.iam.auth.RecoveryScopeFilter;
 import com.openwolf.iam.auth.SessionAwareIntrospectionAuthenticationProvider;
+import com.openwolf.iam.auth.AuthorizationCodeRedemptionLockFilter;
+import com.openwolf.iam.auth.OidcEndSessionCleanupFilter;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
 import org.springframework.web.cors.CorsConfiguration;
@@ -185,6 +188,8 @@ public class SecurityConfig {
     public SecurityFilterChain authorizationServerSecurityFilterChain(
             HttpSecurity http, RegisteredClientRepository registeredClients,
             OAuth2AuthorizationService authorizations,
+            AuthorizationCodeRedemptionLockFilter codeRedemptionLockFilter,
+            OidcEndSessionCleanupFilter endSessionCleanupFilter,
             @Qualifier("jwtDecoder") JwtDecoder localDecoder) throws Exception {
         // Build the authorization server configurer to get its endpoint matcher
         OAuth2AuthorizationServerConfigurer authorizationServerConfigurer =
@@ -213,13 +218,18 @@ public class SecurityConfig {
             )
             .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()))
             .formLogin(form -> form.loginPage("/login").permitAll())
+            .logout(logout -> logout
+                    .invalidateHttpSession(true)
+                    .clearAuthentication(true)
+                    .deleteCookies("JSESSIONID"))
             .oauth2Login(oauth -> oauth
                     .loginPage("/login")
                     .tokenEndpoint(token -> token.accessTokenResponseClient(federatedTokenClient))
                     .userInfoEndpoint(userInfo -> userInfo.oidcUserService(federatedOidcUserService))
                     .failureHandler(federatedAuthenticationFailureHandler))
-            .addFilterBefore(s256PkceEnforcementFilter,
-                    org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
+            .addFilterAfter(s256PkceEnforcementFilter, SecurityContextHolderFilter.class)
+            .addFilterBefore(codeRedemptionLockFilter, SecurityContextHolderFilter.class)
+            .addFilterBefore(endSessionCleanupFilter, SecurityContextHolderFilter.class);
 
         return http.build();
     }
@@ -252,6 +262,32 @@ public class SecurityConfig {
     @Bean
     public FilterRegistrationBean<ScimAuthenticationFilter> scimAuthenticationFilterRegistration() {
         FilterRegistrationBean<ScimAuthenticationFilter> registration = new FilterRegistrationBean<>(scimAuthenticationFilter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    /** Authorization-server filters belong only to its ordered Spring Security chain. */
+    @Bean
+    public FilterRegistrationBean<S256PkceEnforcementFilter> s256PkceEnforcementFilterRegistration(
+            S256PkceEnforcementFilter filter) {
+        FilterRegistrationBean<S256PkceEnforcementFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    @Bean
+    public FilterRegistrationBean<AuthorizationCodeRedemptionLockFilter> authorizationCodeRedemptionLockFilterRegistration(
+            AuthorizationCodeRedemptionLockFilter filter) {
+        FilterRegistrationBean<AuthorizationCodeRedemptionLockFilter> registration =
+                new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    @Bean
+    public FilterRegistrationBean<OidcEndSessionCleanupFilter> oidcEndSessionCleanupFilterRegistration(
+            OidcEndSessionCleanupFilter filter) {
+        FilterRegistrationBean<OidcEndSessionCleanupFilter> registration = new FilterRegistrationBean<>(filter);
         registration.setEnabled(false);
         return registration;
     }
