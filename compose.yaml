@@ -15,6 +15,10 @@ x-axiom-environment: &axiom-environment
   IAM_AXIOM_ADMIN_REDIRECT_URI: "${AXIOM_ADMIN_REDIRECT_URI:-http://localhost:5182/callback}"
   IAM_AXIOM_ADMIN_POST_LOGOUT_REDIRECT_URI: "${AXIOM_ADMIN_POST_LOGOUT_REDIRECT_URI:-http://localhost:5182/login}"
   IAM_CORS_ALLOWED_ORIGINS: "http://localhost:${AXIOM_ADMIN_HOST_PORT:-5182},${AXIOM_CONSUMER_BROWSER_ORIGINS:-http://localhost:5173}"
+  # Local demo only: keep the Conduit browser session alive for an eight-hour walkthrough.
+  # No production deployment receives this override unless it explicitly opts in.
+  IAM_LOCAL_DEMO_BROWSER_CLIENT_ID: "${AXIOM_LOCAL_DEMO_BROWSER_CLIENT_ID:-conduit-console}"
+  IAM_LOCAL_DEMO_BROWSER_TOKEN_TTL_SECONDS: "${AXIOM_LOCAL_DEMO_BROWSER_TOKEN_TTL_SECONDS:-28800}"
   ZAI_API_KEY: "${ZAI_API_KEY:-}"
   IAM_POLICY_STUDIO_MODEL: "${IAM_POLICY_STUDIO_MODEL:-glm-4.6}"
   IAM_POLICY_STUDIO_BASE_URL: "${IAM_POLICY_STUDIO_BASE_URL:-https://api.z.ai/api/paas/v4}"
