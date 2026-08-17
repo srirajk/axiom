@@ -9,6 +9,16 @@ separation of duties, and policy-backed authorization.
 This repository is under active construction. The local Compose environment is suitable for
 development, integration, and product evaluation. It is not yet certified for production use.
 
+## Start here
+
+- For a new local environment, follow
+  [Configure the local environment](#configure-the-local-environment), then
+  [Start Axiom](#start-axiom).
+- For an authenticated readiness check, follow [Verify the environment](#verify-the-environment).
+- For a Probata handoff, read [Probata consumer contract](#probata-consumer-contract).
+- Before preparing a team handoff or archive, follow
+  [DELETE-BEFORE-SHARING.md](DELETE-BEFORE-SHARING.md) on a copied export.
+
 ## Characteristics
 
 - One deployment serves one customer organization and may serve multiple applications.
@@ -63,6 +73,18 @@ Create the local environment file:
 ```bash
 cp .env.example .env
 ```
+
+Exact configuration files:
+
+- `.env`, copied from `.env.example`, owns local secrets, tenant identity, issuer, browser origins,
+  and host ports. It is gitignored and must contain only recipient-owned values.
+- `compose.yaml` is the single local runtime topology and named-volume contract.
+- `platform-contract/axiom-platform-contract.json` is the platform authorization contract.
+- `platform-policy/config.yaml`, `platform-policy/policies/`, and `platform-policy/templates/` contain
+  Axiom's Cerbos platform authorization package.
+- `seed/meridian_profile.py` contains the optional Axiom-owned reference directory profile.
+- `admin/.env.example` documents the Admin UI's optional local API override. Compose uses the
+  built-in proxy default unless that override is deliberately supplied.
 
 Set the following values in `.env` before starting Axiom:
 
@@ -155,6 +177,35 @@ Probata-specific registration is intentionally owned by the Probata repository. 
 operate without Probata, and Probata can reconcile its application access model against an existing
 Axiom deployment without resetting Axiom.
 
+## Probata consumer contract
+
+The supported local handoff uses separate sibling repositories:
+
+```text
+projects/
+  axiom/
+  uac/
+```
+
+Start and verify Axiom first. Then run `bash scripts/reset.sh` from the Probata repository. Probata
+uses Axiom's public administrative APIs to create or reconcile its application record, browser and
+service clients, roles, scopes, personas, and memberships. The operation is idempotent and does not
+require deleting Axiom volumes.
+
+The following values must agree across the two repositories:
+
+| Axiom configuration | Probata configuration | Contract |
+|---|---|---|
+| `AXIOM_ADMIN_PASSWORD` | `UAC_AXIOM_ADMIN_PASSWORD` | Probata may administer its own Axiom application records. |
+| `AXIOM_TENANT_ID` | `UAC_AXIOM_PROBATA_API_TENANT_ID` and `UAC_TENANT_ID` | Identity and governed data resolve to the same customer deployment. |
+| `AXIOM_HTTP_HOST_PORT` and `AXIOM_ISSUER_URL` | Probata's configured Axiom issuer and base URL | Browser discovery, token validation, and API authorization use one issuer. |
+| `AXIOM_CONSUMER_BROWSER_ORIGINS` | Probata browser origin | The OIDC redirect is accepted only from an explicitly allowed origin. |
+| `AXIOM_LOCAL_DEMO_BROWSER_CLIENT_ID` | Probata browser client ID | Both default to the public client `probata-spa`. |
+
+Axiom owns workforce identity and platform access decisions. Probata owns AI governance policy,
+evidence, workflows, and contextual clearance. Do not move Probata governance records into Axiom,
+and do not duplicate Axiom identity or platform policy inside Probata.
+
 ## Stop and restart
 
 Stop Axiom while preserving all data:
@@ -204,6 +255,11 @@ docker compose logs --tail 200
 
 If a configured host port is already in use, change the corresponding value in `.env` before
 starting the stack.
+
+If Probata returns to login or receives a 401, verify Axiom health and discovery first. Then confirm
+that the issuer, tenant, browser origin, and administrator password match the Probata configuration.
+Rerun the Probata reset to reconcile its application contract. Do not repair the relationship with
+raw database writes.
 
 ## Data ownership
 
