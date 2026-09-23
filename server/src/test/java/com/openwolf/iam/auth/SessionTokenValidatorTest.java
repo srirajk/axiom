@@ -40,6 +40,24 @@ class SessionTokenValidatorTest {
     }
 
     @Test
+    void delegatedTokenFailsWhenCustomerSubjectSessionIsRevoked() {
+        IamSessionService sessions = mock(IamSessionService.class);
+        UUID delegatedSession = UUID.randomUUID();
+        UUID subjectSession = UUID.randomUUID();
+        SessionTokenValidator validator = new SessionTokenValidator(sessions);
+        Jwt token = Jwt.withTokenValue("token").header("alg", "RS256").subject(UUID.randomUUID().toString())
+                .claim("tenant_id", "tenant-a").claim("sid", delegatedSession.toString())
+                .claim("subject_sid", subjectSession.toString())
+                .issuedAt(Instant.now().minusSeconds(5)).expiresAt(Instant.now().plusSeconds(60)).build();
+        when(sessions.active(org.mockito.ArgumentMatchers.eq(delegatedSession), org.mockito.ArgumentMatchers.eq("tenant-a"),
+                org.mockito.ArgumentMatchers.any(Instant.class))).thenReturn(true);
+        when(sessions.active(org.mockito.ArgumentMatchers.eq(subjectSession), org.mockito.ArgumentMatchers.eq("tenant-a"),
+                org.mockito.ArgumentMatchers.any(Instant.class))).thenReturn(false);
+
+        assertThat(validator.validate(token).hasErrors()).isTrue();
+    }
+
+    @Test
     void recoveryTokenUsesRecoverySessionMetadataBoundary() {
         IamSessionService sessions = mock(IamSessionService.class);
         UUID sessionId = UUID.randomUUID();

@@ -1,0 +1,81 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "axiom.fullname" . }}-bootstrap
+  labels:
+    {{- include "axiom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: bootstrap
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: {{ .Values.bootstrap.hookDeletePolicy | quote }}
+spec:
+  activeDeadlineSeconds: {{ .Values.bootstrap.activeDeadlineSeconds }}
+  backoffLimit: 2
+  ttlSecondsAfterFinished: {{ .Values.bootstrap.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "axiom.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: bootstrap
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          image: {{ include "axiom.serverImage" . | quote }}
+          imagePullPolicy: {{ .Values.server.image.pullPolicy }}
+          args: ["--spring.main.web-application-type=none"]
+          env:
+            {{- include "axiom.commonEnv" . | nindent 12 }}
+            - name: AXIOM_BOOTSTRAP_ENABLED
+              value: "true"
+            - name: AXIOM_BOOTSTRAP_TENANT_ID
+              value: {{ .Values.bootstrap.tenant.id | quote }}
+            - name: AXIOM_BOOTSTRAP_TENANT_NAME
+              value: {{ .Values.bootstrap.tenant.name | quote }}
+            - name: AXIOM_BOOTSTRAP_TENANT_SLUG
+              value: {{ .Values.bootstrap.tenant.slug | quote }}
+            - name: AXIOM_BOOTSTRAP_ADMIN_ID
+              value: {{ .Values.bootstrap.administrator.id | quote }}
+            - name: AXIOM_BOOTSTRAP_ADMIN_USERNAME
+              value: {{ .Values.bootstrap.administrator.username | quote }}
+            - name: AXIOM_BOOTSTRAP_ADMIN_EMAIL
+              value: {{ .Values.bootstrap.administrator.email | quote }}
+            - name: JAVA_TOOL_OPTIONS
+              value: {{ .Values.server.javaToolOptions | quote }}
+          resources:
+            {{- toYaml .Values.server.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            {{- include "axiom.serverVolumeMounts" . | nindent 12 }}
+      volumes:
+        {{- include "axiom.serverVolumes" . | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

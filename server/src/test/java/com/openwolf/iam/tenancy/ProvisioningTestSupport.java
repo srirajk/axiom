@@ -32,7 +32,7 @@ final class ProvisioningTestSupport {
 
     private ProvisioningTestSupport() {}
 
-    /** Resolve only the isolated Axiom platform-policy package. */
+    /** Resolve only the repository-owned Axiom platform-policy package. */
     static Path baseBundleDir() {
         return AxiomTestPolicyRoot.policies();
     }

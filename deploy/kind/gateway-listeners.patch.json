@@ -1,0 +1,66 @@
+[
+  {
+    "op": "add",
+    "path": "/spec/listeners/-",
+    "value": {
+      "name": "axiom-identity-http",
+      "hostname": "identity.meridian.com",
+      "port": 80,
+      "protocol": "HTTP",
+      "allowedRoutes": {
+        "kinds": [{"group": "gateway.networking.k8s.io", "kind": "HTTPRoute"}],
+        "namespaces": {"from": "Same"}
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/listeners/-",
+    "value": {
+      "name": "axiom-identity-https",
+      "hostname": "identity.meridian.com",
+      "port": 443,
+      "protocol": "HTTPS",
+      "tls": {
+        "mode": "Terminate",
+        "certificateRefs": [{"group": "", "kind": "Secret", "name": "axiom-identity-tls"}]
+      },
+      "allowedRoutes": {
+        "kinds": [{"group": "gateway.networking.k8s.io", "kind": "HTTPRoute"}],
+        "namespaces": {"from": "Same"}
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/listeners/-",
+    "value": {
+      "name": "axiom-admin-http",
+      "hostname": "identity-admin.meridian.com",
+      "port": 80,
+      "protocol": "HTTP",
+      "allowedRoutes": {
+        "kinds": [{"group": "gateway.networking.k8s.io", "kind": "HTTPRoute"}],
+        "namespaces": {"from": "Same"}
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/listeners/-",
+    "value": {
+      "name": "axiom-admin-https",
+      "hostname": "identity-admin.meridian.com",
+      "port": 443,
+      "protocol": "HTTPS",
+      "tls": {
+        "mode": "Terminate",
+        "certificateRefs": [{"group": "", "kind": "Secret", "name": "axiom-identity-tls"}]
+      },
+      "allowedRoutes": {
+        "kinds": [{"group": "gateway.networking.k8s.io", "kind": "HTTPRoute"}],
+        "namespaces": {"from": "Same"}
+      }
+    }
+  }
+]

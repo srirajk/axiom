@@ -47,6 +47,9 @@ public final class SessionAwareIntrospectionAuthenticationProvider implements Au
         }
         OAuth2TokenIntrospection claims = introspection.getTokenClaims();
         if (claims == null) return result;
+        if (claims.getClaims().containsKey("delegation_id") || claims.getClaims().containsKey("act")) {
+            return locallyIssued(introspection);
+        }
         Object rawSession = claims.getClaims().get("sid");
         Object rawTenant = claims.getClaims().get("tenant_id");
         boolean active = false;

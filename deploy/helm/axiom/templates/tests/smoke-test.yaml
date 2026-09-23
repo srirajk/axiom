@@ -1,0 +1,59 @@
+{{- if .Values.tests.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "axiom.fullname" . }}-smoke
+  labels:
+    {{- include "axiom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  serviceAccountName: {{ include "axiom.serviceAccountName" . }}
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  activeDeadlineSeconds: 120
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: smoke
+      image: {{ include "axiom.serverImage" . | quote }}
+      imagePullPolicy: {{ .Values.server.image.pullPolicy }}
+      command: ["/bin/sh", "-ec"]
+      args:
+        - |
+          wget -qO- http://{{ include "axiom.fullname" . }}:{{ .Values.service.serverPort }}/actuator/health/readiness | grep -q '"status":"UP"'
+          wget -qO- http://{{ include "axiom.fullname" . }}:{{ .Values.service.serverPort }}/.well-known/openid-configuration | grep -q {{ .Values.config.issuerUrl | trimSuffix "/" | quote }}
+          wget -qO- http://{{ include "axiom.fullname" . }}-admin:{{ .Values.service.adminPort }}/ | grep -q '<div id="root"></div>'
+          wget -qO- http://{{ include "axiom.fullname" . }}-admin:{{ .Values.service.adminPort }}/ | grep -q 'runtime-config.js'
+          wget -qO- http://{{ include "axiom.fullname" . }}-admin:{{ .Values.service.adminPort }}/runtime-config.js | grep -q {{ .Values.config.ciam.customerClientId | quote }}
+      resources:
+        requests: {cpu: 10m, memory: 32Mi}
+        limits: {cpu: 100m, memory: 64Mi}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+  {{- with .Values.nodeSelector }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.affinity }}
+  affinity:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.tolerations }}
+  tolerations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

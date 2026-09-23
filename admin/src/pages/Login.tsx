@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { beginAuthorization } from '../auth/oidc'
 import { Button } from '../components/ui/Button'
 import { LockKeyhole, ShieldCheck } from 'lucide-react'
+import { Link } from 'react-router-dom'
 
 export function Login() {
   const [error, setError]       = useState('')
@@ -72,6 +73,12 @@ export function Login() {
               Continue securely
             </Button>
             <p className="text-xs leading-5 text-ink-500">Authorization Code + S256 PKCE. This console never stores a browser client secret or password.</p>
+            <div className="border-t border-line pt-4 text-center text-sm text-ink-500">
+              Managing customer consent?{' '}
+              <Link to="/customer/sign-in" className="font-medium text-axiom-700 underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-300">
+                Open the customer portal
+              </Link>
+            </div>
           </div>
 
         </div>

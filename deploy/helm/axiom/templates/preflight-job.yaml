@@ -1,0 +1,95 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "axiom.fullname" . }}-preflight
+  labels:
+    {{- include "axiom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: preflight
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-20"
+    helm.sh/hook-delete-policy: {{ .Values.bootstrap.hookDeletePolicy | quote }}
+spec:
+  activeDeadlineSeconds: 120
+  backoffLimit: 0
+  ttlSecondsAfterFinished: {{ .Values.bootstrap.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "axiom.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: preflight
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: validate
+          image: {{ include "axiom.serverImage" . | quote }}
+          imagePullPolicy: {{ .Values.server.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              test -s /var/run/signing/signing-key.json
+              grep -Eq '"kty"[[:space:]]*:[[:space:]]*"RSA"' /var/run/signing/signing-key.json
+              grep -Eq '"alg"[[:space:]]*:[[:space:]]*"RS256"' /var/run/signing/signing-key.json
+              grep -Eq '"use"[[:space:]]*:[[:space:]]*"sig"' /var/run/signing/signing-key.json
+              grep -Eq '"kid"[[:space:]]*:' /var/run/signing/signing-key.json
+              grep -Eq '"d"[[:space:]]*:' /var/run/signing/signing-key.json
+              test -s /var/run/runtime/{{ .Values.runtimeSecret.keys.databasePassword }}
+              test -s /var/run/runtime/{{ .Values.runtimeSecret.keys.masterKey }}
+              test -s /var/run/runtime/{{ .Values.runtimeSecret.keys.adminPassword }}
+              {{- if .Values.redis.passwordEnabled }}
+              test -s /var/run/runtime/{{ .Values.runtimeSecret.keys.redisPassword }}
+              {{- end }}
+              {{- if and (eq .Values.policyRuntime.backend "s3") .Values.policyRuntime.s3.credentialsFromRuntimeSecret }}
+              test -s /var/run/runtime/{{ .Values.runtimeSecret.keys.s3AccessKey }}
+              test -s /var/run/runtime/{{ .Values.runtimeSecret.keys.s3SecretKey }}
+              {{- end }}
+              echo "Axiom prerequisite Secrets are structurally valid."
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: signing
+              mountPath: /var/run/signing
+              readOnly: true
+            - name: runtime
+              mountPath: /var/run/runtime
+              readOnly: true
+      volumes:
+        - name: signing
+          secret:
+            secretName: {{ .Values.signingKey.existingSecret | quote }}
+            items:
+              - key: {{ .Values.signingKey.privateJwkKey | quote }}
+                path: signing-key.json
+        - name: runtime
+          secret:
+            secretName: {{ .Values.runtimeSecret.existingSecret | quote }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

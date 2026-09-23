@@ -10,6 +10,8 @@ x-axiom-environment: &axiom-environment
   SPRING_DATA_REDIS_DATABASE: "0"
   IAM_OAUTH2_AUTHORIZATION_STORE_REDIS_KEY_PREFIX: "axiom:oauth2"
   AXIOM_REDIS_TENANT_NAMESPACE_PREFIX: "axiom:tenant:"
+  IAM_CIAM_LOCAL_DEMO_CHALLENGE_DISCLOSURE: "${IAM_CIAM_LOCAL_DEMO_CHALLENGE_DISCLOSURE:-true}"
+  IAM_OAUTH2_APPROVED_BUSINESS_SCOPES: "${IAM_OAUTH2_APPROVED_BUSINESS_SCOPES:-cards:incident.read,cards:freeze.propose}"
   IAM_ISSUER_URL: "${AXIOM_ISSUER_URL:-http://localhost:8180}"
   IAM_SIGNING_KEY_PATH: /app/keys/signing-key.json
   IAM_AXIOM_ADMIN_REDIRECT_URI: "${AXIOM_ADMIN_REDIRECT_URI:-http://localhost:5182/callback}"
@@ -134,6 +136,9 @@ services:
       args:
         VITE_AXIOM_ISSUER: "${AXIOM_ISSUER_URL:-http://localhost:8180}"
         VITE_AXIOM_API_URL: "${AXIOM_ISSUER_URL:-http://localhost:8180}"
+        VITE_CIAM_TENANT_ID: "${VITE_CIAM_TENANT_ID:-meridian}"
+        VITE_CIAM_CUSTOMER_CLIENT_ID: "${VITE_CIAM_CUSTOMER_CLIENT_ID:-ciam-card-customer-spa}"
+        VITE_CIAM_CUSTOMER_SCOPES: "${VITE_CIAM_CUSTOMER_SCOPES:-cards:incident.read}"
     ports:
       - "${AXIOM_ADMIN_HOST_PORT:-5182}:80"
     depends_on:

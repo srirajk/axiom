@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["server", "admin", "runtimeSecret", "signingKey", "bootstrap", "config", "postgresql", "redis", "cerbos", "policyRuntime"],
+  "properties": {
+    "server": {
+      "type": "object",
+      "properties": {"replicaCount": {"type": "integer", "const": 1}}
+    },
+    "admin": {
+      "type": "object",
+      "properties": {"replicaCount": {"type": "integer", "minimum": 1}}
+    },
+    "runtimeSecret": {
+      "type": "object",
+      "properties": {"existingSecret": {"type": "string", "minLength": 1}}
+    },
+    "signingKey": {
+      "type": "object",
+      "properties": {"existingSecret": {"type": "string", "minLength": 1}}
+    },
+    "policyRuntime": {
+      "type": "object",
+      "properties": {"backend": {"type": "string", "enum": ["s3", "pvc"]}}
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "issuerUrl": {"type": "string", "pattern": "^https?://"},
+        "adminPublicUrl": {"type": "string", "pattern": "^https?://"},
+        "policyStagingDir": {"type": "string", "pattern": "^/"}
+      }
+    }
+  }
+}

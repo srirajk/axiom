@@ -22,6 +22,9 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import com.openwolf.iam.auth.TokenExchangeConstants;
+import com.openwolf.iam.auth.BusinessScopeRegistry;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
 import org.springframework.security.oauth2.core.oidc.OidcScopes;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
@@ -60,14 +63,25 @@ public class TenantApplicationService {
     private final PasswordEncoder passwordEncoder;
     private final ExecutionTenant executionTenant;
     private final AuditService audit;
+    private final BusinessScopeRegistry businessScopes;
 
+    @Autowired
     public TenantApplicationService(TenantApplicationRepository applications, TenantApplicationClientRepository clients,
                                     TenantRepository tenants, ActiveTenantDirectory activeTenants, RegisteredClientRepository registeredClients,
                                     PasswordEncoder passwordEncoder,
-                                    ExecutionTenant executionTenant, AuditService audit) {
+                                    ExecutionTenant executionTenant, AuditService audit,
+                                    BusinessScopeRegistry businessScopes) {
         this.applications = applications; this.clients = clients; this.tenants = tenants; this.activeTenants = activeTenants;
         this.registeredClients = registeredClients; this.passwordEncoder = passwordEncoder;
-        this.executionTenant = executionTenant; this.audit = audit;
+        this.executionTenant = executionTenant; this.audit = audit; this.businessScopes = businessScopes;
+    }
+
+    /** Focused-test constructor with no deployment-approved business scopes. */
+    public TenantApplicationService(TenantApplicationRepository applications, TenantApplicationClientRepository clients,
+                                    TenantRepository tenants, ActiveTenantDirectory activeTenants, RegisteredClientRepository registeredClients,
+                                    PasswordEncoder passwordEncoder, ExecutionTenant executionTenant, AuditService audit) {
+        this(applications, clients, tenants, activeTenants, registeredClients, passwordEncoder, executionTenant, audit,
+                new BusinessScopeRegistry(""));
     }
 
     @Transactional(readOnly = true)
@@ -192,6 +206,15 @@ public class TenantApplicationService {
                 .map(app -> new ClientAuthority(app.getTenantId(), app.getAudience(), client.getClientType(), client.getAllowedScopes(), app.getId())));
     }
 
+    /** Server-owned resource-audience authority for exchange-route registration and token use. */
+    @Transactional(readOnly = true)
+    public boolean isActiveAudience(String tenantId, String audience) {
+        return applications.findByTenantIdAndAudience(tenantId, audience)
+                .filter(app -> activeTenants.isActive(app.getTenantId()))
+                .filter(app -> app.getStatus() == TenantApplication.Status.ACTIVE)
+                .isPresent();
+    }
+
     @Transactional(readOnly = true)
     public boolean knownButDisabled(String clientId) {
         return clients.findByClientId(clientId).map(client -> activeAuthority(clientId).isEmpty()).orElse(false);
@@ -273,6 +296,7 @@ public class TenantApplicationService {
             builder.clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
                     .clientSecret(passwordEncoder.encode(secret))
                     .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+                    .authorizationGrantType(TokenExchangeConstants.GRANT_TYPE)
                     .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build());
         }
         return builder.build();
@@ -282,7 +306,11 @@ public class TenantApplicationService {
         Set<String> scopes = new LinkedHashSet<>(requested == null ? Set.of() : requested);
         Set<String> allowed = type == TenantApplicationClient.Type.PUBLIC_BROWSER ? PUBLIC_SCOPES : SERVICE_SCOPES;
         if (scopes.isEmpty()) scopes.addAll(allowed);
-        if (!allowed.containsAll(scopes)) throw new IllegalArgumentException("Requested scopes are not approved for client posture");
+        for (String scope : scopes) {
+            if (!allowed.contains(scope) && !businessScopes.isApproved(scope)) {
+                throw new IllegalArgumentException("Requested scopes are not approved for client posture");
+            }
+        }
         if (type == TenantApplicationClient.Type.PUBLIC_BROWSER && !scopes.contains(OidcScopes.OPENID)) {
             throw new IllegalArgumentException("Public browser clients require openid scope");
         }

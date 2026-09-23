@@ -1,3 +1,5 @@
+import { runtimeValue } from '../runtimeConfig'
+
 const TRANSACTION_KEY = 'axiom-admin.pkce.transaction.v1'
 const CLIENT_ID = 'axiom-admin'
 
@@ -8,7 +10,7 @@ type Transaction = {
 }
 
 function issuer(): string {
-  return (import.meta.env.VITE_AXIOM_ISSUER || 'http://localhost:8085').replace(/\/$/, '')
+  return runtimeValue('issuer', import.meta.env.VITE_AXIOM_ISSUER, 'http://localhost:8085').replace(/\/$/, '')
 }
 
 function redirectUri(): string {

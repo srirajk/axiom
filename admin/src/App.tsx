@@ -18,6 +18,8 @@ import { SigningKeys } from './pages/SigningKeys'
 import { Sessions } from './pages/Sessions'
 import { IdentityControls } from './pages/IdentityControls'
 import { RecoveryOperators } from './pages/RecoveryOperators'
+import { CiamAdmin } from './pages/CiamAdmin'
+import { CustomerPortal, CustomerRecovery, CustomerRegistration, CustomerSignIn } from './pages/CustomerPortal'
 
 function Protected({ children }: { children: React.ReactNode }) {
   const { token, user, logout } = useAuth()
@@ -44,6 +46,11 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/callback" element={<OidcCallback />} />
+            <Route path="/customer" element={<Navigate to="/customer/sign-in" replace />} />
+            <Route path="/customer/register" element={<CustomerRegistration />} />
+            <Route path="/customer/sign-in" element={<CustomerSignIn />} />
+            <Route path="/customer/recover" element={<CustomerRecovery />} />
+            <Route path="/customer/portal" element={<CustomerPortal />} />
             <Route path="/recovery-operators/self" element={<RecoveryOperators selfOnly />} />
             <Route element={<Protected><Layout /></Protected>}>
               <Route index element={<PageBoundary><Dashboard /></PageBoundary>} />
@@ -56,6 +63,7 @@ function App() {
               <Route path="sessions" element={<PageBoundary><Sessions /></PageBoundary>} />
               <Route path="identity-controls" element={<PageBoundary><IdentityControls /></PageBoundary>} />
               <Route path="recovery-operators" element={<PageBoundary><RecoveryOperators /></PageBoundary>} />
+              <Route path="ciam" element={<PageBoundary><CiamAdmin /></PageBoundary>} />
               <Route path="roles"    element={<PageBoundary><Roles /></PageBoundary>} />
               <Route path="studio"   element={<PageBoundary><PolicyStudio /></PageBoundary>} />
               <Route path="audit"    element={<PageBoundary><AuditLog /></PageBoundary>} />

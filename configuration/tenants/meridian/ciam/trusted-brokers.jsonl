@@ -1,0 +1,1 @@
+{"applicationKey":"argus-gateway","clientId":"argus-gateway-broker","gatewayAudience":"argus-gateway","scopes":["cards:incident.read","wealth:review.invoke"],"kubernetesSecret":{"namespace":"argus-system","name":"argus-gateway-agent-exchange-oauth-client"}}

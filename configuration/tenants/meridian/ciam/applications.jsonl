@@ -1,0 +1,15 @@
+{"key":"card-assistance","displayName":"Card Assistance","description":"Customer lost-card assistance","audience":"cards-api"}
+{"key":"card-actions","displayName":"Card Actions","description":"Bounded propose-only card actions","audience":"card-actions-api"}
+{"key":"argus-gateway","displayName":"Argus Gateway","description":"Trusted policy enforcement and Agent routing gateway","audience":"argus-gateway"}
+{"key":"card-incident-records","displayName":"Card Incident Records","description":"Governed card-incident case resource","audience":"card-case-api"}
+{"key":"wealth-workforce","displayName":"Wealth Review Workforce","description":"Workforce entry and server-side ingress for Quarterly Portfolio Review","audience":"agent:meridian:wealth-entry-agent"}
+{"key":"wealth-orchestrator","displayName":"Wealth Orchestrator","description":"Coordinates the bounded Quarterly Portfolio Review workflow","audience":"agent:meridian:wealth-orchestrator"}
+{"key":"wealth-holdings-agent","displayName":"Wealth Holdings Agent","description":"Retrieves and summarizes governed client holdings","audience":"agent:meridian:wealth-holdings-agent"}
+{"key":"wealth-market-agent","displayName":"Wealth Market Agent","description":"Provides governed market context for a portfolio review","audience":"agent:meridian:wealth-market-agent"}
+{"key":"wealth-suitability-agent","displayName":"Wealth Suitability Agent","description":"Evaluates portfolio allocations against suitability constraints","audience":"agent:meridian:wealth-suitability-agent"}
+{"key":"wealth-drafting-agent","displayName":"Wealth Drafting Agent","description":"Produces the governed portfolio-review brief","audience":"agent:meridian:wealth-drafting-agent"}
+{"key":"wealth-decision-agent","displayName":"Wealth Decision Agent","description":"Provides separately governed Wealth decision support","audience":"agent:meridian:wealth-decision-agent"}
+{"key":"wealth-reports-agent","displayName":"Wealth Reports Agent","description":"Receives explicitly governed Wealth report work","audience":"agent:meridian:wealth-reports-agent"}
+{"key":"wealth-holdings-tool","displayName":"Wealth Holdings Tool","description":"First-party holdings resource used by the Holdings Agent","audience":"tool:meridian:wealth-holdings-tool"}
+{"key":"wealth-market-tool","displayName":"Wealth Market Tool","description":"First-party market resource used by the Market Agent","audience":"tool:meridian:wealth-market-tool"}
+{"key":"wealth-review-model","displayName":"Wealth Review Model","description":"Governed model resource used by Wealth specialist Agents","audience":"model:meridian:wealth-review-model"}

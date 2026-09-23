@@ -1,0 +1,535 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: axiom
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: axiom-policy-runtime
+  labels:
+    app.kubernetes.io/name: axiom-policy-runtime
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: axiom-kind-rwx
+  hostPath:
+    path: /var/local-path-provisioner/axiom-policy-runtime
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: [desktop-worker]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: axiom-policy-runtime
+  namespace: axiom
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: axiom-kind-rwx
+  volumeName: axiom-policy-runtime
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: axiom-cerbos-audit
+  namespace: axiom
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: axiom-postgresql
+  namespace: axiom
+  labels:
+    app.kubernetes.io/name: axiom-postgresql
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: axiom-postgresql
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: postgresql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: axiom-postgresql
+  namespace: axiom
+  labels:
+    app.kubernetes.io/name: axiom-postgresql
+spec:
+  serviceName: axiom-postgresql
+  replicas: 1
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: axiom-postgresql
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: axiom-postgresql
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: desktop-worker
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgresql
+          image: postgres:16
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgresql
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: axiom
+            - name: POSTGRES_DB
+              value: axiom
+            - name: POSTGRES_PASSWORD_FILE
+              value: /var/run/secrets/axiom/database-password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          startupProbe:
+            exec:
+              command: ["/bin/sh", "-ec", "pg_isready -U axiom -d axiom"]
+            periodSeconds: 3
+            failureThreshold: 40
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-ec", "pg_isready -U axiom -d axiom"]
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-ec", "pg_isready -U axiom -d axiom"]
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 3
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: "1", memory: 768Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: runtime-secret
+              mountPath: /var/run/secrets/axiom/database-password
+              subPath: spring.datasource.password
+              readOnly: true
+            - name: postgres-run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: runtime-secret
+          secret:
+            secretName: axiom-runtime
+        - name: postgres-run
+          emptyDir:
+            sizeLimit: 32Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 4Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: axiom-redis
+  namespace: axiom
+  labels:
+    app.kubernetes.io/name: axiom-redis
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: axiom-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: axiom-redis
+  namespace: axiom
+  labels:
+    app.kubernetes.io/name: axiom-redis
+spec:
+  serviceName: axiom-redis
+  replicas: 1
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: axiom-redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: axiom-redis
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: desktop-worker
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          command: ["redis-server", "--appendonly", "yes"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          startupProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 3
+            failureThreshold: 30
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: axiom-cerbos
+  namespace: axiom
+  labels:
+    app.kubernetes.io/name: axiom-cerbos
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: axiom-cerbos
+  ports:
+    - name: http
+      port: 3592
+      targetPort: http
+    - name: grpc
+      port: 3593
+      targetPort: grpc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: axiom-cerbos
+  namespace: axiom
+  labels:
+    app.kubernetes.io/name: axiom-cerbos
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: axiom-cerbos
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: axiom-cerbos
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: desktop-worker
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cerbos
+          image: ghcr.io/cerbos/cerbos:0.53.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CERBOS_NO_TELEMETRY
+              value: "1"
+          args: ["server", "--config=/conf/config.yaml"]
+          ports:
+            - name: http
+              containerPort: 3592
+            - name: grpc
+              containerPort: 3593
+          startupProbe:
+            exec:
+              command: ["/cerbos", "healthcheck", "--config=/conf/config.yaml"]
+            periodSeconds: 3
+            failureThreshold: 30
+          readinessProbe:
+            exec:
+              command: ["/cerbos", "healthcheck", "--config=/conf/config.yaml"]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["/cerbos", "healthcheck", "--config=/conf/config.yaml"]
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /conf/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: base-policies
+              mountPath: /policies/base
+              readOnly: true
+            - name: runtime-policies
+              mountPath: /policies/runtime
+            - name: audit
+              mountPath: /var/log/cerbos
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: axiom-cerbos-config
+        - name: base-policies
+          configMap:
+            name: axiom-platform-policies
+        - name: runtime-policies
+          persistentVolumeClaim:
+            claimName: axiom-policy-runtime
+        - name: audit
+          persistentVolumeClaim:
+            claimName: axiom-cerbos-audit
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: axiom
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: axiom
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-axiom-dependencies
+  namespace: axiom
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: axiom
+      app.kubernetes.io/instance: axiom
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: axiom-postgresql
+      ports:
+        - {protocol: TCP, port: 5432}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: axiom-redis
+      ports:
+        - {protocol: TCP, port: 6379}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: axiom-cerbos
+      ports:
+        - {protocol: TCP, port: 3592}
+        - {protocol: TCP, port: 3593}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: axiom
+              app.kubernetes.io/instance: axiom
+      ports:
+        - {protocol: TCP, port: 8084}
+        - {protocol: TCP, port: 8080}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgresql-from-axiom
+  namespace: axiom
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: axiom-postgresql
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: axiom
+              app.kubernetes.io/instance: axiom
+      ports:
+        - {protocol: TCP, port: 5432}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis-from-axiom
+  namespace: axiom
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: axiom-redis
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: axiom
+              app.kubernetes.io/instance: axiom
+      ports:
+        - {protocol: TCP, port: 6379}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cerbos-from-axiom
+  namespace: axiom
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: axiom-cerbos
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: axiom
+              app.kubernetes.io/instance: axiom
+      ports:
+        - {protocol: TCP, port: 3592}
+        - {protocol: TCP, port: 3593}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-and-clients
+  namespace: axiom
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: axiom
+      app.kubernetes.io/instance: axiom
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        # Local kind profile only: allow workloads from every namespace in this
+        # cluster to use Axiom's HTTP interfaces. The default Helm posture stays
+        # restrictive, and Axiom's data services remain namespace-private.
+        - namespaceSelector: {}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: axiom
+              app.kubernetes.io/instance: axiom
+      ports:
+        - {protocol: TCP, port: 8084}
+        - {protocol: TCP, port: 8080}

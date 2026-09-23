@@ -16,5 +16,11 @@ coverage/
 test-results/
 playwright-report/
 
+# Local-only generated demo credentials and publisher state.
+.local/
+
 __pycache__/
 *.py[cod]
+
+# Local review drafts produced during architecture sessions.
+Claude outputs/

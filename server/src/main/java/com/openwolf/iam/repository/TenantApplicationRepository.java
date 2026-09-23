@@ -9,5 +9,6 @@ import java.util.UUID;
 public interface TenantApplicationRepository extends JpaRepository<TenantApplication, UUID> {
     List<TenantApplication> findByTenantIdOrderByApplicationKey(String tenantId);
     Optional<TenantApplication> findByIdAndTenantId(UUID id, String tenantId);
+    Optional<TenantApplication> findByTenantIdAndAudience(String tenantId, String audience);
     boolean existsByTenantIdAndApplicationKey(String tenantId, String applicationKey);
 }

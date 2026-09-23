@@ -139,6 +139,14 @@ public class IamSessionService {
     @Transactional
     public void touch(UUID id, String tenantId, Instant now) { sessions.touch(id, tenantId, now, IamSession.Status.ACTIVE); }
 
+    /** Revokes every active token session for a subject as one security transaction. */
+    public int revokeAllForPrincipal(String tenantId, String principalId) {
+        List<IamSession> active = sessions.findActiveForPrincipalForUpdate(
+                tenantId, principalId, IamSession.Status.ACTIVE);
+        active.forEach(IamSession::revoke);
+        return active.size();
+    }
+
     private IamSession sessionForTenant(String tenantId, UUID id) {
         requireTenantAdmin(tenantId);
         return sessions.findByIdAndTenantId(id, tenantId).orElseThrow(() -> EntityNotFoundException.forId("Session", id));

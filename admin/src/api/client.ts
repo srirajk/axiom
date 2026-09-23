@@ -1,6 +1,7 @@
 import { clearAdminToken, notifyAuthLogout, readAdminToken } from '../auth/tokenStorage'
+import { runtimeValue } from '../runtimeConfig'
 
-const BASE = import.meta.env.VITE_AXIOM_API_URL || '/api'
+const BASE = runtimeValue('apiUrl', import.meta.env.VITE_AXIOM_API_URL, '/api').replace(/\/$/, '')
 
 /**
  * ABAC segments arrive from the backend as a {segment: data_classification} MAP
@@ -54,6 +55,23 @@ async function req<T>(method: string, path: string, body?: unknown, headers?: Re
   })
   if (!res.ok) {
     if (res.status === 401) broadcastLogout()
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(errorMessage(err, res.statusText || `Request failed (${res.status})`))
+  }
+  if (res.status === 204) return undefined as T
+  return res.json()
+}
+
+async function ciamReq<T>(method: string, path: string, body?: unknown, bearer?: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+    },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  })
+  if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(errorMessage(err, res.statusText || `Request failed (${res.status})`))
   }
@@ -182,6 +200,87 @@ export interface Stats {
   totalUsers: number
   totalRoles: number
   totalTeams: number
+}
+
+export type CustomerStatus = 'PENDING_VERIFICATION' | 'ACTIVE' | 'SUSPENDED' | 'CLOSED'
+export type AgentWorkloadStatus = 'ACTIVE' | 'REVOKED'
+export type DelegationGrantStatus = 'ACTIVE' | 'REVOKED' | 'EXPIRED'
+
+export interface CiamCustomer {
+  customerId: string
+  email: string
+  displayName: string
+  status: CustomerStatus
+  emailVerifiedAt?: string | null
+  createdAt: string
+  revision: number
+}
+
+export interface CiamChallengeAction {
+  kind: 'verification' | 'recovery'
+  token: string
+  expiresAt: string
+  delivery: 'LOCAL_DEMO'
+}
+
+export interface CiamRegistrationResponse {
+  customer: CiamCustomer
+  localDemoAction?: CiamChallengeAction | null
+}
+
+export interface CiamCustomerTokenResponse {
+  accessToken: string
+  tokenType: 'Bearer'
+  expiresIn: number
+  customerId: string
+  identityKind: 'customer'
+  clientId: string
+  scopes: string[]
+}
+
+export interface CiamAgentWorkload {
+  id: string
+  workloadRef: string
+  name: string
+  oauthClientId: string
+  status: AgentWorkloadStatus
+  createdAt: string
+  revokedAt?: string | null
+  revision: number
+}
+
+export interface CiamConsentOption {
+  id: string
+  workloadRef: string
+  name: string
+  audience: string
+  scopes: string[]
+}
+
+export interface CiamDelegationGrant {
+  id: string
+  customerId: string
+  agentWorkloadId: string
+  audience: string
+  scopes: string[]
+  purpose: string
+  status: DelegationGrantStatus
+  consentRecordedAt: string
+  expiresAt: string
+  revokedAt?: string | null
+  revocationReason?: string | null
+  revision: number
+}
+
+export interface CiamLifecycleEvent {
+  id: string
+  actorId?: string | null
+  eventType: string
+  subjectType: string
+  subjectId: string
+  details: string
+  correlationId?: string | null
+  occurredAt: string
 }
 
 export interface ClassificationTier {
@@ -641,6 +740,46 @@ export const sessionsApi = {
   },
   revoke: (tenantId: string, sessionId: string, expectedRevision: number) =>
     req<IamSession>('POST', `/admin/tenants/${encodeURIComponent(tenantId)}/sessions/${encodeURIComponent(sessionId)}/revoke`, { expectedRevision }),
+}
+
+// ── Customer identity and delegated-agent consent ───────────────────────────
+export const customerCiamApi = {
+  register: (tenantId: string, data: { email: string; displayName: string; password: string }) =>
+    ciamReq<CiamRegistrationResponse>('POST', `/ciam/tenants/${encodeURIComponent(tenantId)}/customers/registrations`, data),
+  verify: (tenantId: string, token: string) =>
+    ciamReq<CiamCustomer>('POST', `/ciam/tenants/${encodeURIComponent(tenantId)}/customers/verifications`, { token }),
+  requestRecovery: (tenantId: string, email: string) =>
+    ciamReq<{ accepted: boolean; localDemoAction?: CiamChallengeAction | null }>('POST', `/ciam/tenants/${encodeURIComponent(tenantId)}/customers/recovery-challenges`, { email }),
+  recover: (tenantId: string, token: string, newPassword: string) =>
+    ciamReq<CiamCustomer>('POST', `/ciam/tenants/${encodeURIComponent(tenantId)}/customers/recoveries`, { token, newPassword }),
+  signIn: (tenantId: string, data: { email: string; password: string; clientId: string; scopes: string[] }) =>
+    ciamReq<CiamCustomerTokenResponse>('POST', `/ciam/tenants/${encodeURIComponent(tenantId)}/customers/tokens`, data),
+  profile: (tenantId: string, customerId: string, bearer: string) =>
+    ciamReq<CiamCustomer>('GET', `/ciam/tenants/${encodeURIComponent(tenantId)}/customers/${encodeURIComponent(customerId)}`, undefined, bearer),
+  workloads: (tenantId: string, bearer: string) =>
+    ciamReq<CiamConsentOption[]>('GET', `/ciam/tenants/${encodeURIComponent(tenantId)}/agent-workloads`, undefined, bearer),
+  grants: (tenantId: string, customerId: string, bearer: string) =>
+    ciamReq<CiamDelegationGrant[]>('GET', `/ciam/tenants/${encodeURIComponent(tenantId)}/customers/${encodeURIComponent(customerId)}/delegation-grants`, undefined, bearer),
+  createGrant: (tenantId: string, customerId: string, bearer: string, data: {
+    agentWorkloadId: string; audience: string; scopes: string[]; purpose: string; expiresAt: string
+  }) => ciamReq<CiamDelegationGrant>('POST', `/ciam/tenants/${encodeURIComponent(tenantId)}/customers/${encodeURIComponent(customerId)}/delegation-grants`, data, bearer),
+  revokeGrant: (tenantId: string, customerId: string, grantId: string, bearer: string, reason: string) =>
+    ciamReq<CiamDelegationGrant>('POST', `/ciam/tenants/${encodeURIComponent(tenantId)}/customers/${encodeURIComponent(customerId)}/delegation-grants/${encodeURIComponent(grantId)}/revoke`, { reason }, bearer),
+}
+
+export const ciamAdminApi = {
+  customers: (tenantId: string) => req<CiamCustomer[]>('GET', `/admin/tenants/${encodeURIComponent(tenantId)}/ciam/customers`),
+  workloads: (tenantId: string) => req<CiamAgentWorkload[]>('GET', `/admin/tenants/${encodeURIComponent(tenantId)}/ciam/agent-workloads`),
+  grants: (tenantId: string) => req<CiamDelegationGrant[]>('GET', `/admin/tenants/${encodeURIComponent(tenantId)}/ciam/delegation-grants`),
+  events: (tenantId: string) => req<CiamLifecycleEvent[]>('GET', `/admin/tenants/${encodeURIComponent(tenantId)}/ciam/events`),
+  registerWorkload: (tenantId: string, data: { workloadRef: string; name: string; oauthClientId: string }) =>
+    req<CiamAgentWorkload>('POST', `/admin/tenants/${encodeURIComponent(tenantId)}/ciam/agent-workloads`, data),
+  revokeWorkload: (tenantId: string, workloadId: string) =>
+    req<CiamAgentWorkload>('POST', `/admin/tenants/${encodeURIComponent(tenantId)}/ciam/agent-workloads/${encodeURIComponent(workloadId)}/revoke`),
+  suspendCustomer: (tenantId: string, customerId: string) =>
+    req<CiamCustomer>('POST', `/admin/tenants/${encodeURIComponent(tenantId)}/ciam/customers/${encodeURIComponent(customerId)}/suspend`),
+  reactivateCustomer: (tenantId: string, customerId: string) =>
+    req<CiamCustomer>('POST', `/admin/tenants/${encodeURIComponent(tenantId)}/ciam/customers/${encodeURIComponent(customerId)}/reactivate`),
 }
 
 // ── Axiom Policy Studio ──────────────────────────────────────────────────────

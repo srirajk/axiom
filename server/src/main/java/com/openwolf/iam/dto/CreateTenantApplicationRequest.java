@@ -8,4 +8,4 @@ public record CreateTenantApplicationRequest(
         @NotBlank @Pattern(regexp = "[a-z][a-z0-9-]{1,62}") String applicationKey,
         @NotBlank String displayName,
         String description,
-        @NotBlank @Pattern(regexp = "[a-z][a-z0-9.-]{1,127}") String audience) {}
+        @NotBlank @Pattern(regexp = "[A-Za-z0-9][A-Za-z0-9._:/-]{1,254}") String audience) {}

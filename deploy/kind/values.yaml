@@ -1,0 +1,41 @@
+server:
+  image:
+    repository: axiom-server
+    tag: local
+    pullPolicy: IfNotPresent
+admin:
+  image:
+    repository: axiom-admin
+    tag: local
+    pullPolicy: IfNotPresent
+config:
+  issuerUrl: https://identity.meridian.com:8443
+  adminPublicUrl: https://identity-admin.meridian.com:8443
+  corsAllowedOrigins: https://identity-admin.meridian.com:8443,http://localhost:5182
+  approvedBusinessScopes: cards:incident.read,cards:freeze.propose,wealth:review.invoke
+  ciam:
+    localDemoChallengeDisclosure: true
+    tenantId: meridian
+    customerClientId: card-customer-web
+    customerScopes: cards:incident.read
+bootstrap:
+  tenant:
+    id: meridian
+    name: Meridian Bank
+    slug: meridian
+  administrator:
+    id: admin
+    username: admin
+    email: admin@meridian.com
+postgresql:
+  host: axiom-postgresql
+redis:
+  host: axiom-redis
+cerbos:
+  host: axiom-cerbos
+policyRuntime:
+  backend: pvc
+  pvc:
+    existingClaim: axiom-policy-runtime
+nodeSelector:
+  kubernetes.io/hostname: desktop-worker

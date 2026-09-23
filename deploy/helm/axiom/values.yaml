@@ -1,0 +1,131 @@
+nameOverride: ""
+fullnameOverride: ""
+
+imagePullSecrets: []
+
+server:
+  replicaCount: 1
+  image:
+    repository: axiom-server
+    tag: local
+    digest: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+  javaToolOptions: "-Xmx768m"
+  terminationGracePeriodSeconds: 45
+
+admin:
+  replicaCount: 1
+  image:
+    repository: axiom-admin
+    tag: local
+    digest: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+service:
+  serverPort: 8084
+  adminPort: 8080
+
+runtimeSecret:
+  # This Secret is operator-owned and must exist before helm install.
+  existingSecret: axiom-runtime
+  keys:
+    databasePassword: spring.datasource.password
+    masterKey: iam.secrets.master-key
+    adminPassword: axiom.bootstrap.admin-password
+    redisPassword: spring.data.redis.password
+    s3AccessKey: iam.policy-studio.runtime.s3.access-key
+    s3SecretKey: iam.policy-studio.runtime.s3.secret-key
+
+signingKey:
+  # Immutable Secret created before helm install. Helm never stores or rotates private key material.
+  existingSecret: axiom-signing-key
+  privateJwkKey: signing-key.json
+  publicJwksKey: jwks.json
+
+bootstrap:
+  tenant:
+    id: meridian
+    name: Meridian
+    slug: meridian
+  administrator:
+    id: admin
+    username: admin
+    email: admin@meridian.com
+  hookDeletePolicy: before-hook-creation,hook-succeeded
+  ttlSecondsAfterFinished: 3600
+  activeDeadlineSeconds: 900
+
+config:
+  issuerUrl: https://identity.meridian.com
+  adminPublicUrl: https://identity-admin.meridian.com
+  policyStagingDir: /tmp/tenant-policy-staging
+  corsAllowedOrigins: https://identity-admin.meridian.com
+  federationMetadataAllowedHosts: ""
+  approvedBusinessScopes: cards:incident.read,cards:freeze.propose
+  ciam:
+    localDemoChallengeDisclosure: false
+    tenantId: meridian
+    customerClientId: ciam-card-customer-spa
+    customerScopes: cards:incident.read
+
+postgresql:
+  host: axiom-postgresql
+  port: 5432
+  database: axiom
+  username: axiom
+
+redis:
+  host: axiom-redis
+  port: 6379
+  database: 0
+  passwordEnabled: false
+  authorizationKeyPrefix: "axiom:oauth2"
+  tenantNamespacePrefix: "axiom:tenant:"
+
+cerbos:
+  host: axiom-cerbos
+  grpcPort: 3593
+  image: ghcr.io/cerbos/cerbos:0.53.0
+  version: 0.53.0
+
+policyRuntime:
+  # s3 is recommended for Kubernetes. Cerbos must use the same bucket through its blob driver.
+  backend: s3
+  s3:
+    bucket: axiom-policy-runtime
+    prefix: runtime
+    endpoint: ""
+    region: us-east-1
+    pathStyle: false
+    credentialsFromRuntimeSecret: false
+  pvc:
+    # The disk alternative requires an existing RWX claim shared with Cerbos.
+    existingClaim: ""
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+tests:
+  enabled: true

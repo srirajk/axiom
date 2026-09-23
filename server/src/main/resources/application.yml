@@ -1,11 +1,15 @@
 server:
   port: 8084
+  shutdown: graceful
+  forward-headers-strategy: framework
 
 axiom:
   redis:
     tenant-namespace-prefix: ${AXIOM_REDIS_TENANT_NAMESPACE_PREFIX:axiom:tenant:}
 
 spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
   threads:
     virtual:
       enabled: true
@@ -53,6 +57,11 @@ spring:
         issuer: ${IAM_ISSUER_URL:http://localhost:8084}
 
 iam:
+  ciam:
+    challenge-ttl-seconds: ${IAM_CIAM_CHALLENGE_TTL_SECONDS:900}
+    customer-token-ttl-seconds: ${IAM_CIAM_CUSTOMER_TOKEN_TTL_SECONDS:300}
+    # Strictly local demo aid. Production default never returns verification or recovery secrets.
+    local-demo-challenge-disclosure: ${IAM_CIAM_LOCAL_DEMO_CHALLENGE_DISCLOSURE:false}
   secrets:
     master-key: ${AXIOM_SECRETS_MASTER_KEY:}
   federation:
@@ -76,6 +85,9 @@ iam:
     # callers can never submit or widen this emergency surface in the API request.
     allowed-grants: ${IAM_BREAK_GLASS_ALLOWED_GRANTS:}
   oauth2:
+    approved-business-scopes: ${IAM_OAUTH2_APPROVED_BUSINESS_SCOPES:}
+    token-exchange:
+      ttl: ${IAM_OAUTH2_TOKEN_EXCHANGE_TTL:PT5M}
     authorization-store:
       redis:
         key-prefix: ${IAM_OAUTH2_AUTHORIZATION_STORE_REDIS_KEY_PREFIX:iam:oauth2}
@@ -90,8 +102,14 @@ management:
         include: health,info
   endpoint:
     health:
-      show-details: always
+      show-details: when-authorized
+      probes:
+        enabled: true
   health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
     db:
       enabled: true
 

@@ -40,4 +40,10 @@ public interface IamSessionRepository extends JpaRepository<IamSession, UUID> {
     java.util.List<IamSession> findActiveRecoverySessionsForOperatorForUpdate(
             @Param("tenantId") String tenantId, @Param("operatorId") UUID operatorId,
             @Param("active") IamSession.Status active);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from IamSession s where s.tenantId = :tenantId and s.principalId = :principalId and s.status = :active")
+    java.util.List<IamSession> findActiveForPrincipalForUpdate(
+            @Param("tenantId") String tenantId, @Param("principalId") String principalId,
+            @Param("active") IamSession.Status active);
 }

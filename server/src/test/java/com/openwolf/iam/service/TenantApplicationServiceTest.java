@@ -79,7 +79,8 @@ class TenantApplicationServiceTest {
         assertThat(browser.client().createdAt()).isNotNull();
         assertThat(browser.client().updatedAt()).isNotNull();
         assertThat(machine.client().redirectUris()).isEmpty();
-        assertThat(machine.client().grantTypes()).containsExactly("client_credentials");
+        assertThat(machine.client().grantTypes()).containsExactly("client_credentials",
+                "urn:ietf:params:oauth:grant-type:token-exchange");
         assertThat(machine.client().pkceRequired()).isFalse();
     }
 

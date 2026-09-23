@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "axiom.fullname" . }}-admin
+  labels:
+    {{- include "axiom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+data:
+  runtime-config.js: |
+    window.__AXIOM_RUNTIME_CONFIG__ = {
+      apiUrl: "/api",
+      issuer: {{ .Values.config.issuerUrl | trimSuffix "/" | toJson }},
+      ciamTenantId: {{ .Values.config.ciam.tenantId | toJson }},
+      ciamCustomerClientId: {{ .Values.config.ciam.customerClientId | toJson }},
+      ciamCustomerScopes: {{ .Values.config.ciam.customerScopes | toJson }}
+    };
+  default.conf: |
+    server {
+      listen 8080;
+      root /usr/share/nginx/html;
+      index index.html;
+      gzip on;
+      gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
+
+      location /api/ {
+        rewrite ^/api/(.*)$ /$1 break;
+        proxy_pass http://{{ include "axiom.fullname" . }}:{{ .Values.service.serverPort }};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+      }
+
+      location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+      }
+
+      location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        expires -1;
+      }
+    }

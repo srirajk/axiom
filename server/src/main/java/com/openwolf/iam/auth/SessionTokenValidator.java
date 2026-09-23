@@ -32,6 +32,17 @@ public final class SessionTokenValidator implements OAuth2TokenValidator<Jwt> {
                     ? sessions.active(id, tenant, Instant.now(clock), true, recoveryScope)
                     : sessions.active(id, tenant, Instant.now(clock));
             if (!active) return OAuth2TokenValidatorResult.failure(INVALID);
+            Object rawSubjectSession = token.getClaims().get("subject_sid");
+            if (rawSubjectSession != null) {
+                if (!(rawSubjectSession instanceof String subjectSid)) {
+                    return OAuth2TokenValidatorResult.failure(INVALID);
+                }
+                UUID subjectSessionId = UUID.fromString(subjectSid);
+                if (subjectSessionId.equals(id) || !sessions.active(subjectSessionId, tenant, Instant.now(clock))) {
+                    return OAuth2TokenValidatorResult.failure(INVALID);
+                }
+                sessions.touch(subjectSessionId, tenant, Instant.now(clock));
+            }
             sessions.touch(id, tenant, Instant.now(clock));
             return OAuth2TokenValidatorResult.success();
         } catch (RuntimeException ex) {

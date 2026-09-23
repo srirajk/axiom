@@ -16,6 +16,9 @@ development, integration, and product evaluation. It is not yet certified for pr
   [Start Axiom](#start-axiom).
 - For an authenticated readiness check, follow [Verify the environment](#verify-the-environment).
 - For a Probata handoff, read [Probata consumer contract](#probata-consumer-contract).
+- For customer identity and Agent on-behalf-of authorization, read
+  [CIAM and Agent On-Behalf-Of Contract](docs/architecture/ciam-agent-delegation.md), then run the
+  [functional acceptance](docs/operations/ciam-agent-delegation-acceptance.md).
 - Before preparing a team handoff or archive, follow
   [DELETE-BEFORE-SHARING.md](DELETE-BEFORE-SHARING.md) on a copied export.
 

@@ -20,6 +20,8 @@ import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
@@ -69,7 +71,24 @@ import com.openwolf.iam.auth.RecoveryScopeFilter;
 import com.openwolf.iam.auth.SessionAwareIntrospectionAuthenticationProvider;
 import com.openwolf.iam.auth.AuthorizationCodeRedemptionLockFilter;
 import com.openwolf.iam.auth.OidcEndSessionCleanupFilter;
+import com.openwolf.iam.auth.TokenExchangeAuthenticationConverter;
+import com.openwolf.iam.auth.TokenExchangeAuthenticationProvider;
+import com.openwolf.iam.auth.TokenExchangeSubjectAuthorityValidator;
+import com.openwolf.iam.auth.AgentExchangeTokenAuthorityValidator;
+import com.openwolf.iam.service.AgentExchangeAuthorityService;
+import com.openwolf.iam.auth.TokenExchangeConstants;
+import com.openwolf.iam.auth.CustomUserDetailsService;
+import com.openwolf.iam.auth.DelegatedTokenAuthorityValidator;
+import com.openwolf.iam.auth.CustomerTokenAuthorityValidator;
+import com.openwolf.iam.auth.BusinessScopeRegistry;
+import com.openwolf.iam.repository.CustomerIdentityRepository;
+import com.openwolf.iam.service.AuditService;
+import com.openwolf.iam.service.CiamDelegationAuthorityService;
+import com.openwolf.iam.service.TenantApplicationService;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
+import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext;
+import org.springframework.security.oauth2.server.authorization.token.JwtGenerator;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenCustomizer;
 import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -190,7 +209,8 @@ public class SecurityConfig {
             OAuth2AuthorizationService authorizations,
             AuthorizationCodeRedemptionLockFilter codeRedemptionLockFilter,
             OidcEndSessionCleanupFilter endSessionCleanupFilter,
-            @Qualifier("jwtDecoder") JwtDecoder localDecoder) throws Exception {
+            @Qualifier("introspectionJwtDecoder") JwtDecoder localDecoder,
+            TokenExchangeAuthenticationProvider tokenExchangeProvider) throws Exception {
         // Build the authorization server configurer to get its endpoint matcher
         OAuth2AuthorizationServerConfigurer authorizationServerConfigurer =
                 new OAuth2AuthorizationServerConfigurer();
@@ -208,6 +228,12 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.ignoringRequestMatchers(endpointsMatcher))
             .with(authorizationServerConfigurer, configurer -> configurer
                     .oidc(Customizer.withDefaults())
+                    .authorizationServerMetadataEndpoint(endpoint -> endpoint
+                            .authorizationServerMetadataCustomizer(metadata ->
+                                    metadata.grantType(TokenExchangeConstants.GRANT_TYPE_VALUE)))
+                    .tokenEndpoint(endpoint -> endpoint
+                            .accessTokenRequestConverter(new TokenExchangeAuthenticationConverter())
+                            .authenticationProvider(tokenExchangeProvider))
                     .tokenIntrospectionEndpoint(endpoint -> endpoint.authenticationProviders(providers ->
                             providers.add(0, introspectionProvider))))
             .exceptionHandling(exceptions -> exceptions
@@ -313,11 +339,38 @@ public class SecurityConfig {
     }
 
     // =========================================================
-    // Filter Chain 4 — Resource Server (API endpoints)
+    // Filter Chain 4 — CIAM customer lifecycle and consent endpoints
     // =========================================================
 
     @Bean
     @Order(4)
+    public SecurityFilterChain ciamCustomerSecurityFilterChain(
+            HttpSecurity http,
+            @Qualifier("ciamCustomerJwtDecoder") JwtDecoder ciamCustomerJwtDecoder) throws Exception {
+        http
+                .securityMatcher(new AntPathRequestMatcher("/ciam/**"))
+                .csrf(csrf -> csrf.disable())
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(HttpMethod.POST,
+                                "/ciam/tenants/*/customers/registrations",
+                                "/ciam/tenants/*/customers/verifications",
+                                "/ciam/tenants/*/customers/recovery-challenges",
+                                "/ciam/tenants/*/customers/recoveries",
+                                "/ciam/tenants/*/customers/tokens").permitAll()
+                        .anyRequest().authenticated())
+                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt
+                        .decoder(ciamCustomerJwtDecoder)
+                        .jwtAuthenticationConverter(jwtAuthenticationConverter())));
+        return http.build();
+    }
+
+    // Filter Chain 5 — Resource Server (API endpoints)
+    // =========================================================
+
+    @Bean
+    @Order(5)
     public SecurityFilterChain apiSecurityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
@@ -633,6 +686,70 @@ public class SecurityConfig {
         return decoder;
     }
 
+    @Bean
+    public JwtDecoder tokenExchangeSubjectJwtDecoder(JWKSource<SecurityContext> jwkSource,
+                                                     CustomerIdentityRepository customers,
+                                                     TenantApplicationService applications,
+                                                     BusinessScopeRegistry businessScopes,
+                                                     AgentExchangeAuthorityService exchangeAuthority) {
+        NimbusJwtDecoder decoder = decoderFor(jwkSource);
+        CustomerTokenAuthorityValidator customerValidator =
+                new CustomerTokenAuthorityValidator(customers, applications, businessScopes);
+        decoder.setJwtValidator(iamSessions == null
+                ? new DelegatingOAuth2TokenValidator<>(JwtValidators.createDefaultWithIssuer(issuerUrl),
+                        new TokenExchangeSubjectAuthorityValidator(customerValidator, exchangeAuthority))
+                : new DelegatingOAuth2TokenValidator<>(JwtValidators.createDefaultWithIssuer(issuerUrl),
+                        new SessionTokenValidator(iamSessions),
+                        new TokenExchangeSubjectAuthorityValidator(customerValidator, exchangeAuthority)));
+        return decoder;
+    }
+
+    @Bean
+    public JwtDecoder ciamCustomerJwtDecoder(JWKSource<SecurityContext> jwkSource,
+                                             CustomerIdentityRepository customers,
+                                             TenantApplicationService applications,
+                                             BusinessScopeRegistry businessScopes) {
+        NimbusJwtDecoder decoder = decoderFor(jwkSource);
+        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+                JwtValidators.createDefaultWithIssuer(issuerUrl),
+                new SessionTokenValidator(iamSessions),
+                new CustomerTokenAuthorityValidator(customers, applications, businessScopes)));
+        return decoder;
+    }
+
+    @Bean
+    public JwtDecoder introspectionJwtDecoder(JWKSource<SecurityContext> jwkSource,
+                                              CiamDelegationAuthorityService delegationAuthority,
+                                              CustomerIdentityRepository customers,
+                                              TenantApplicationService applications,
+                                              BusinessScopeRegistry businessScopes,
+                                              AgentExchangeAuthorityService exchangeAuthority) {
+        NimbusJwtDecoder decoder = decoderFor(jwkSource);
+        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+                JwtValidators.createDefaultWithIssuer(issuerUrl),
+                new SessionTokenValidator(iamSessions),
+                new CustomerTokenAuthorityValidator(customers, applications, businessScopes, true),
+                new DelegatedTokenAuthorityValidator(delegationAuthority),
+                new AgentExchangeTokenAuthorityValidator(exchangeAuthority)));
+        return decoder;
+    }
+
+    @Bean
+    public TokenExchangeAuthenticationProvider tokenExchangeAuthenticationProvider(
+            OAuth2AuthorizationService authorizations,
+            JwtEncoder encoder,
+            OAuth2TokenCustomizer<JwtEncodingContext> jwtCustomizer,
+            @Qualifier("tokenExchangeSubjectJwtDecoder") JwtDecoder subjectDecoder,
+            TenantApplicationService applications,
+            AuditService audit,
+            AgentExchangeAuthorityService exchangeAuthority,
+            @Value("${iam.oauth2.token-exchange.ttl:PT5M}") Duration ttl) {
+        JwtGenerator generator = new JwtGenerator(encoder);
+        generator.setJwtCustomizer(jwtCustomizer);
+        return new TokenExchangeAuthenticationProvider(authorizations, generator, subjectDecoder,
+                applications, audit, exchangeAuthority, ttl);
+    }
+
     private NimbusJwtDecoder decoderFor(JWKSource<SecurityContext> jwkSource) {
         DefaultJWTProcessor<SecurityContext> processor = new DefaultJWTProcessor<>();
         processor.setJWSKeySelector(new JWSVerificationKeySelector<>(JWSAlgorithm.RS256, jwkSource));
@@ -673,7 +790,15 @@ public class SecurityConfig {
     // =========================================================
 
     @Bean
-    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
-        return config.getAuthenticationManager();
+    public DaoAuthenticationProvider workforceAuthenticationProvider(
+            CustomUserDetailsService userDetailsService, PasswordEncoder passwordEncoder) {
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider(userDetailsService);
+        provider.setPasswordEncoder(passwordEncoder);
+        return provider;
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(DaoAuthenticationProvider provider) {
+        return new ProviderManager(provider);
     }
 }

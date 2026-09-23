@@ -10,6 +10,7 @@ import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext;
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenCustomizer;
+import org.springframework.security.oauth2.jwt.Jwt;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -58,6 +59,54 @@ public class JwtClaimsCustomizer {
                 // matching media type as well as the Admin audience.
                 context.getJwsHeader().type("at+jwt");
                 String clientId = context.getRegisteredClient().getClientId();
+                if (TokenExchangeConstants.GRANT_TYPE.equals(context.getAuthorizationGrantType())) {
+                    TokenExchangeAuthenticationToken.AuthorityContext resolved =
+                            context.getAuthorizationGrant() instanceof TokenExchangeAuthenticationToken exchange
+                                    ? exchange.authorityContext() : null;
+                    Jwt subjectJwt = resolved == null ? context.get(TokenExchangeConstants.CONTEXT_SUBJECT) : resolved.subject();
+                    String audience = resolved == null ? context.get(TokenExchangeConstants.CONTEXT_AUDIENCE) : resolved.audience();
+                    String purpose = resolved == null ? context.get(TokenExchangeConstants.CONTEXT_PURPOSE) : resolved.purpose();
+                    String authorityProfile = resolved == null ? context.get(TokenExchangeConstants.CONTEXT_AUTHORITY_PROFILE) : resolved.authorityProfile();
+                    String authorityId = resolved == null ? context.get(TokenExchangeConstants.CONTEXT_AUTHORITY_ID) : resolved.authorityId();
+                    String delegationId = resolved == null ? context.get(TokenExchangeConstants.CONTEXT_DELEGATION_ID) : resolved.delegationId();
+                    String tokenUse = resolved == null ? context.get(TokenExchangeConstants.CONTEXT_TOKEN_USE) : resolved.tokenUse();
+                    String identityKind = resolved == null ? context.get(TokenExchangeConstants.CONTEXT_IDENTITY_KIND) : resolved.identityKind();
+                    String workloadId = resolved == null ? context.get(TokenExchangeConstants.CONTEXT_WORKLOAD_ID) : resolved.workloadId();
+                    String workloadRef = resolved == null ? context.get(TokenExchangeConstants.CONTEXT_WORKLOAD_REF) : resolved.workloadRef();
+                    String actorClientId = resolved == null ? context.get(TokenExchangeConstants.CONTEXT_ACTOR_CLIENT_ID) : resolved.actorClientId();
+                    if (subjectJwt == null || audience == null || purpose == null || authorityProfile == null
+                            || authorityId == null || tokenUse == null || identityKind == null
+                            || workloadId == null || workloadRef == null || actorClientId == null) {
+                        throw new IllegalStateException("token exchange authority context is incomplete");
+                    }
+                    TenantApplicationService.ClientAuthority actorAuthority = applications.activeAuthority(clientId)
+                            .filter(authority -> authority.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_SERVICE)
+                            .orElseThrow(() -> new IllegalStateException("token exchange actor is disabled or unknown"));
+                    String tenantId = TenantClaims.requireTenant(subjectJwt.getClaimAsString("tenant_id"));
+                    if (!actorAuthority.tenantId().equals(tenantId)) {
+                        throw new IllegalStateException("token exchange authority changed during issuance");
+                    }
+                    context.getClaims().subject(subjectJwt.getSubject());
+                    context.getClaims().audience(java.util.List.of(audience));
+                    context.getClaims().claim("tenant_id", tenantId);
+                    context.getClaims().claim("identity_kind", identityKind);
+                    context.getClaims().claim("client_id", clientId);
+                    context.getClaims().claim("azp", clientId);
+                    context.getClaims().claim("act", Map.of("sub", workloadRef, "client_id", actorClientId,
+                            "workload_id", workloadId));
+                    context.getClaims().claim("purpose", purpose);
+                    context.getClaims().claim("authority_profile", authorityProfile);
+                    context.getClaims().claim("authority_id", authorityId);
+                    context.getClaims().claim("token_use", tokenUse);
+                    if (delegationId != null) context.getClaims().claim("delegation_id", delegationId);
+                    String rootSession = subjectJwt.getClaimAsString("subject_sid");
+                    if (rootSession == null || rootSession.isBlank()) rootSession = subjectJwt.getClaimAsString("sid");
+                    if (rootSession != null && !rootSession.isBlank()) {
+                        context.getClaims().claim("subject_sid", rootSession);
+                    }
+                    addSession(context, tenantId, actorAuthority.applicationId(), clientId, subjectJwt.getSubject(), true);
+                    return;
+                }
                 Map<String, Object> enriched;
                 var applicationAuthority = applications == null ? java.util.Optional.<TenantApplicationService.ClientAuthority>empty()
                         : applications.activeAuthority(clientId);
@@ -67,7 +116,8 @@ public class JwtClaimsCustomizer {
                         if (authority.clientType() != TenantApplicationClient.Type.CONFIDENTIAL_SERVICE) {
                             throw new IllegalStateException("public application client cannot use client credentials");
                         }
-                        enriched = Map.of("tenant_id", TenantClaims.requireTenant(authority.tenantId()));
+                        enriched = Map.of("tenant_id", TenantClaims.requireTenant(authority.tenantId()),
+                                "identity_kind", "workload");
                     } else {
                         if (authority.clientType() != TenantApplicationClient.Type.PUBLIC_BROWSER) {
                             throw new IllegalStateException("service application client cannot mint a human token");
@@ -84,6 +134,7 @@ public class JwtClaimsCustomizer {
                             throw new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.INVALID_GRANT));
                         }
                         humanClaims.putAll(enricher.enrichIdToken(subject));
+                        humanClaims.put("identity_kind", "workforce");
                         enriched = humanClaims;
                     }
                     TenantClaims.requireTenant(String.valueOf(enriched.get("tenant_id")));
@@ -101,6 +152,7 @@ public class JwtClaimsCustomizer {
                 } else {
                     enriched = new HashMap<>(enricher.enrich(subject));
                     enriched.putAll(enricher.enrichIdToken(subject));
+                    enriched.put("identity_kind", "workforce");
                 }
                 TenantClaims.requireTenant(String.valueOf(enriched.get("tenant_id")));
                 enriched.forEach((key, value) -> context.getClaims().claim(key, value));

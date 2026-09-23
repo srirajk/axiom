@@ -61,3 +61,18 @@
 ::-webkit-scrollbar-track { @apply bg-transparent; }
 ::-webkit-scrollbar-thumb { @apply bg-slate-300 rounded-full; }
 ::-webkit-scrollbar-thumb:hover { @apply bg-slate-400; }
+
+/* CIAM inventory tables fit the supported desktop canvas without hiding the
+   final column. Long identifiers and audit details already wrap in-cell. */
+@media (min-width: 1280px) {
+  table[class*="min-w-[64rem]"] {
+    min-width: 52rem !important;
+    table-layout: fixed;
+  }
+
+  table[class*="min-w-[76rem]"],
+  table[class*="min-w-[78rem]"] {
+    min-width: 58rem !important;
+    table-layout: fixed;
+  }
+}

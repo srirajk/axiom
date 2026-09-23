@@ -1,0 +1,14 @@
+Axiom is installed in namespace {{ .Release.Namespace }}.
+
+The chart intentionally exposes ClusterIP Services only:
+  API:   {{ include "axiom.fullname" . }}:{{ .Values.service.serverPort }}
+  Admin: {{ include "axiom.fullname" . }}-admin:{{ .Values.service.adminPort }}
+
+Gateway resources are intentionally excluded until the cluster Gateway API contract is supplied.
+
+Verify the release:
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }} --logs
+  kubectl get deploy,po,svc,job -n {{ .Release.Namespace }}
+
+The server replica count is intentionally locked to one. Do not scale it until the remaining
+in-process session, Policy Studio, tenant-directory cache, and scheduled-work ownership are externalized.

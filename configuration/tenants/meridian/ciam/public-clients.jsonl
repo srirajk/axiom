@@ -1,0 +1,4 @@
+{"applicationKey":"card-assistance","clientId":"card-customer-web","redirectUris":["https://customers.meridian.com/callback"],"postLogoutRedirectUris":["https://customers.meridian.com/sign-in"],"scopes":["openid","profile","cards:incident.read"]}
+{"applicationKey":"card-assistance","clientId":"card-operator-web","redirectUris":["http://127.0.0.1:8765/callback"],"postLogoutRedirectUris":["http://127.0.0.1:8765/sign-in"],"scopes":["openid","profile","cards:incident.read"]}
+{"applicationKey":"wealth-workforce","clientId":"wealth-review-web","redirectUris":["http://localhost:9970/callback"],"postLogoutRedirectUris":["http://localhost:9970/"],"scopes":["openid","profile","email","wealth:review.invoke"]}
+{"applicationKey":"wealth-orchestrator","clientId":"wealth-customer-web","redirectUris":["http://localhost:9971/callback"],"postLogoutRedirectUris":["http://localhost:9971/"],"scopes":["openid","profile","email","wealth:review.invoke"]}

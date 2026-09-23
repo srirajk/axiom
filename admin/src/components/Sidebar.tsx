@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Users, Shield, UsersRound, GitCompare, LogOut, Clock, Boxes, Globe2, Link2, KeyRound, History, ClipboardCheck, UserRoundCheck } from 'lucide-react'
+import { LayoutDashboard, Users, Shield, UsersRound, GitCompare, LogOut, Clock, Boxes, Globe2, Link2, KeyRound, History, ClipboardCheck, UserRoundCheck, ContactRound } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useAuth } from '../hooks/useAuth'
 
@@ -15,6 +15,7 @@ const nav = [
   { to: '/identity-controls', label: 'Identity Controls', icon: ClipboardCheck },
   { to: '/recovery-operators', label: 'Recovery Operators', icon: UserRoundCheck },
   { to: '/recovery-operators/self', label: 'My recovery access', icon: UserRoundCheck },
+  { to: '/ciam', label: 'Customer Identity', icon: ContactRound },
   { to: '/roles',   label: 'Roles',     icon: Shield },
   { to: '/studio',  label: 'Policy Studio', icon: GitCompare },
   { to: '/audit',   label: 'Audit Log', icon: Clock },
@@ -39,7 +40,7 @@ export function Sidebar() {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-3 py-4 space-y-1">
+      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
         {nav.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
