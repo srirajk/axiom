@@ -137,6 +137,15 @@ def main() -> int:
     mcp = exchange(agent_gateway, "argus-gateway-broker", AUDIENCES["mcp"])
     check("Gateway to MCP Server", mcp, AUDIENCES["mcp"], "argus-gateway-broker",
           "delegated_access", REFERENCES["agent"])
+    delegated_worker = exchange(agent_gateway, "argus-gateway-broker", AUDIENCES["worker"])
+    check("quickstart Agent to Worker Agent", delegated_worker, AUDIENCES["worker"],
+          "argus-gateway-broker", "exchange_subject", REFERENCES["agent"])
+    delegated_worker_gateway = exchange(delegated_worker, "quickstart-worker-agent", AUDIENCES["gateway"])
+    check("delegated Worker Agent to Gateway", delegated_worker_gateway, AUDIENCES["gateway"],
+          "quickstart-worker-agent", "gateway_authorization", REFERENCES["worker"])
+    delegated_task = exchange(delegated_worker_gateway, "argus-gateway-broker", AUDIENCES["task"])
+    check("delegated Worker Agent to Task Agent", delegated_task, AUDIENCES["task"],
+          "argus-gateway-broker", "exchange_subject", REFERENCES["worker"])
     direct_tool = exchange(gateway, "argus-gateway-broker", AUDIENCES["tool"])
     check("entry to tool", direct_tool, AUDIENCES["tool"], "argus-gateway-broker",
           "delegated_access", REFERENCES["entry"])
@@ -166,6 +175,12 @@ def main() -> int:
     service_direct_tool = exchange(service_agent_gateway, "argus-gateway-broker", AUDIENCES["tool"])
     check("Gateway to tool from existing quickstart Agent", service_direct_tool, AUDIENCES["tool"],
           "argus-gateway-broker", "delegated_access", REFERENCES["agent"], subject="quickstart-service")
+    service_task = exchange(service_gateway, "argus-gateway-broker", AUDIENCES["task"])
+    check("service to Task Agent", service_task, AUDIENCES["task"], "argus-gateway-broker",
+          "exchange_subject", REFERENCES["service"], subject="quickstart-service")
+    service_task_gateway = exchange(service_task, "quickstart-task-agent", AUDIENCES["gateway"])
+    check("service Task Agent to Gateway", service_task_gateway, AUDIENCES["gateway"],
+          "quickstart-task-agent", "gateway_authorization", REFERENCES["task"], subject="quickstart-service")
 
     worker = mint("quickstart-worker-agent")
     check("Worker Agent client credentials", worker, AUDIENCES["worker"], "quickstart-worker-agent",
@@ -182,10 +197,10 @@ def main() -> int:
     service_tool = exchange(task_gateway, "argus-gateway-broker", AUDIENCES["tool"])
     check("Gateway to tool from Task Agent", service_tool, AUDIENCES["tool"], "argus-gateway-broker",
           "delegated_access", REFERENCES["task"], subject="quickstart-worker-agent")
-    skipped_agent = exchange(service_gateway, "argus-gateway-broker", AUDIENCES["task"], 400)
+    skipped_agent = exchange(service_gateway, "argus-gateway-broker", AUDIENCES["worker"], 400)
     COMMON.expect(skipped_agent in {"invalid_target", "invalid_grant"},
                   "service bypassed the approved quickstart Agent")
-    print("PASS service cannot jump directly to the Task Agent")
+    print("PASS service cannot jump directly to the Worker Agent")
     print("AXIOM QUICKSTART EXCHANGE PASS")
     return 0
 
