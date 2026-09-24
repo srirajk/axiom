@@ -21,3 +21,4 @@
 {"key":"quickstart-service","displayName":"Argus Quickstart Service","description":"Autonomous service workload that starts the expanded Argus quickstart","audience":"agent:meridian:quickstart-service"}
 {"key":"quickstart-worker-agent","displayName":"Argus Quickstart Worker Agent","description":"Worker Agent that performs the bounded quickstart task","audience":"agent:meridian:quickstart-worker-agent"}
 {"key":"quickstart-task-agent","displayName":"Argus Quickstart Task Agent","description":"Task Agent that invokes the approved quickstart tool","audience":"agent:meridian:quickstart-task-agent"}
+{"key":"quickstart-python-agent","displayName":"Argus Quickstart Python Agent","description":"Python Agent workload for the Agent-to-LLM quickstart","audience":"agent:meridian:quickstart-python-agent"}

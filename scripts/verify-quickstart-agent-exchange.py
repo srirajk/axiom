@@ -30,6 +30,7 @@ AUDIENCES = {
     "service": "agent:meridian:quickstart-service",
     "worker": "agent:meridian:quickstart-worker-agent",
     "task": "agent:meridian:quickstart-task-agent",
+    "python": "agent:meridian:quickstart-python-agent",
 }
 REFERENCES = {
     "entry": "agent:quickstart-entry:development",
@@ -37,6 +38,7 @@ REFERENCES = {
     "service": "agent:quickstart-service:development",
     "worker": "agent:quickstart-worker-agent:development",
     "task": "agent:quickstart-task-agent:development",
+    "python": "agent:quickstart-python-agent:development",
 }
 SECRETS = {
     "quickstart-entry": ("quickstart", "quickstart-entry-workload-oauth-client"),
@@ -45,6 +47,7 @@ SECRETS = {
     "quickstart-service": ("quickstart", "quickstart-service-workload-oauth-client"),
     "quickstart-worker-agent": ("quickstart", "quickstart-worker-agent-workload-oauth-client"),
     "quickstart-task-agent": ("quickstart", "quickstart-task-agent-workload-oauth-client"),
+    "quickstart-python-agent": ("quickstart", "quickstart-python-agent-workload-oauth-client"),
     "argus-gateway-broker": ("argus-system", "argus-gateway-agent-exchange-oauth-client"),
 }
 
@@ -146,6 +149,12 @@ def main() -> int:
     delegated_task = exchange(delegated_worker_gateway, "argus-gateway-broker", AUDIENCES["task"])
     check("delegated Worker Agent to Task Agent", delegated_task, AUDIENCES["task"],
           "argus-gateway-broker", "exchange_subject", REFERENCES["worker"])
+    python_agent = exchange(gateway, "argus-gateway-broker", AUDIENCES["python"])
+    check("Gateway to Python Agent", python_agent, AUDIENCES["python"], "argus-gateway-broker",
+          "exchange_subject", REFERENCES["entry"])
+    python_gateway = exchange(python_agent, "quickstart-python-agent", AUDIENCES["gateway"])
+    check("Python Agent to Gateway", python_gateway, AUDIENCES["gateway"], "quickstart-python-agent",
+          "gateway_authorization", REFERENCES["python"])
     direct_tool = exchange(gateway, "argus-gateway-broker", AUDIENCES["tool"])
     check("entry to tool", direct_tool, AUDIENCES["tool"], "argus-gateway-broker",
           "delegated_access", REFERENCES["entry"])
@@ -156,6 +165,9 @@ def main() -> int:
     wrong = mint("quickstart-wrong-audience")
     check("wrong-audience client", wrong, AUDIENCES["wrong"], "quickstart-wrong-audience",
           None, None, subject="quickstart-wrong-audience")
+    python_original = mint("quickstart-python-agent")
+    check("Python Agent client credentials", python_original, AUDIENCES["python"],
+          "quickstart-python-agent", None, None, subject="quickstart-python-agent")
     denial = exchange(gateway, "argus-gateway-broker", "agent:meridian:wealth-orchestrator", 400)
     COMMON.expect(denial in {"invalid_target", "invalid_grant"}, "unreviewed route did not fail closed")
     print("PASS unreviewed cross-use-case route denied")
