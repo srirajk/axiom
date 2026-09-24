@@ -4,3 +4,4 @@
 {"id":"meridian-1020","username":"aisha.rahman","email":"aisha.rahman@meridian.com","displayName":"Aisha Rahman","department":"Wealth Technology","passwordEnv":"AXIOM_SEED_USER_PASSWORD"}
 {"id":"rm_jane","username":"rm_jane","email":"rm.jane@meridian.com","displayName":"Jane Kowalski","department":"Wealth Relationship Management","passwordEnv":"AXIOM_SEED_USER_PASSWORD"}
 {"id":"rm_marco","username":"rm_marco","email":"rm.marco@meridian.com","displayName":"Marco Rossi","department":"Wealth Relationship Management","passwordEnv":"AXIOM_SEED_USER_PASSWORD"}
+{"id":"quickstart_user","username":"quickstart_user","email":"quickstart.user@meridian.com","displayName":"Taylor Morgan","department":"Agent Platform Engineering","passwordEnv":"AXIOM_SEED_USER_PASSWORD"}

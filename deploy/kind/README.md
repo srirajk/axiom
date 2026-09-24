@@ -95,6 +95,19 @@ AXIOM_ISSUER=https://identity.meridian.com:8443 \
 python3 scripts/verify-quickstart-agent-exchange.py
 ```
 
+The split-client human quickstart uses public client `quickstart-human-web` with exact callback
+`http://localhost:18085/callback`, plus the independently authenticated `quickstart-bff` workload.
+After publication, verify the real Authorization Code, S256 PKCE, BFF, Gateway, and Agent chain:
+
+```bash
+AXIOM_BASE_URL=http://127.0.0.1:8180 \
+AXIOM_ISSUER=https://identity.meridian.com:8443 \
+python3 scripts/verify-quickstart-human-exchange.py
+```
+
+The verifier reads `AXIOM_SEED_USER_PASSWORD` from its process environment and never prints the
+password, OAuth client secret, authorization code, or token.
+
 The verifier proves client credentials, Gateway-mediated Agent continuation, MCP and tool resource
 exchange, and fail-closed bypass and cross-use-case cases. It validates Axiom's identity contract. It
 does not claim that a Gateway or MCP server is deployed or that network traffic reached either one.
