@@ -144,6 +144,28 @@ class AgentExchangeAuthorityServiceTest {
     }
 
     @Test
+    void originalWorkloadSubjectRequiresActiveBindingAndExactRegisteredAudience() {
+        Jwt workload = token(SOURCE_CLIENT, SOURCE_AUDIENCE, Map.of(
+                "tenant_id", TENANT,
+                "identity_kind", "workload",
+                "client_id", SOURCE_CLIENT,
+                "scope", SCOPE));
+        service.requireValidNonCustomerSubject(workload);
+
+        Jwt wrongAudience = token(SOURCE_CLIENT, "other-agent-api", Map.of(
+                "tenant_id", TENANT,
+                "identity_kind", "workload",
+                "client_id", SOURCE_CLIENT,
+                "scope", SCOPE));
+        assertThatThrownBy(() -> service.requireValidNonCustomerSubject(wrongAudience))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+
+        source.revoke(NOW);
+        assertThatThrownBy(() -> service.requireValidNonCustomerSubject(workload))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+    }
+
+    @Test
     void trustedGatewayMintsOnlyTheApprovedDestinationAgentSubject() {
         Jwt gatewaySubject = gatewayAuthorization(TENANT);
 

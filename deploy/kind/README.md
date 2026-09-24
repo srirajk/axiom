@@ -8,6 +8,11 @@ The profile is local-only. PostgreSQL, Redis, Cerbos, and the policy-runtime vol
 make the Docker Desktop cluster self-contained. Production deployments should use managed storage,
 a registry, a trusted certificate, and the normal Helm values described in the chart README.
 
+The local policy-runtime claim uses the cluster's dynamic `ReadWriteOnce` storage. Axiom and Cerbos
+are deliberately pinned to the same worker, so both pods can mount that claim on the one node. This
+is a local profile exception. Production continues to require S3-compatible storage or a true RWX
+claim as documented by the Helm chart.
+
 ## Public names
 
 - Issuer: `https://identity.meridian.com:8443`
@@ -20,7 +25,7 @@ standard ports 80 and 443.
 
 ## Install
 
-1. Load `axiom-server:local` and `axiom-admin:local` into the Docker Desktop Kubernetes nodes.
+1. Load the server and admin images named in `deploy/kind/values.yaml` into the Docker Desktop Kubernetes nodes.
 2. Create the `axiom-runtime` Secret and the immutable signing-key Secret as described in
    [the chart README](../helm/axiom/README.md).
 3. Create the Cerbos ConfigMaps from `platform-policy/config.yaml` and `platform-policy/policies`.
@@ -68,6 +73,36 @@ Then run the existing Gateway exposure script from the Kubernetes demo repositor
 
 Use the separate package described in [configuration/README.md](../../configuration/README.md). It
 publishes through Axiom's public APIs and is not a Helm hook.
+
+For the Argus quickstart greenfield proof, the checked-in Kind values select PostgreSQL database
+`axiom_quickstart` and Redis database `1`. The original PostgreSQL `axiom` database and Redis database
+`0` are not deleted. Create the empty `axiom_quickstart` database under the Axiom PostgreSQL owner
+before the Helm upgrade, then run the canonical configuration publisher after the Axiom bootstrap
+job succeeds. The publisher provisions new reveal-once OAuth credentials directly into its declared
+Kubernetes Secrets, including the Argus Gateway broker and quickstart workload Secrets. Restart
+consumers that read those Secrets through environment variables after publication.
+
+The checked-in Meridian package also declares the quickstart service, worker Agent, task Agent, MCP
+resource audience, and their reviewed exchange routes. After publishing, prove the exact identity
+contract against the live Axiom API without printing credentials:
+
+```bash
+set -a
+source .env
+set +a
+AXIOM_BASE_URL=http://127.0.0.1:8180 \
+AXIOM_ISSUER=https://identity.meridian.com:8443 \
+python3 scripts/verify-quickstart-agent-exchange.py
+```
+
+The verifier proves client credentials, Gateway-mediated Agent continuation, MCP and tool resource
+exchange, and fail-closed bypass and cross-use-case cases. It validates Axiom's identity contract. It
+does not claim that a Gateway or MCP server is deployed or that network traffic reached either one.
+
+Do not treat a Helm rollback to the old database as a credential rollback. The publisher replaces
+the broker and workload Secrets, and their previous plaintext values cannot be read back from Axiom.
+A rollback must include a fresh, source-driven client/Secret reseed or a separately protected Secret
+backup. Avoid direct broker-row updates or a second configuration authority.
 
 ## Call Axiom from the local cluster
 

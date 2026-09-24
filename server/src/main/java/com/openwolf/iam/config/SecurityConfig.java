@@ -73,6 +73,7 @@ import com.openwolf.iam.auth.AuthorizationCodeRedemptionLockFilter;
 import com.openwolf.iam.auth.OidcEndSessionCleanupFilter;
 import com.openwolf.iam.auth.TokenExchangeAuthenticationConverter;
 import com.openwolf.iam.auth.TokenExchangeAuthenticationProvider;
+import com.openwolf.iam.auth.TokenExchangeSessionValidator;
 import com.openwolf.iam.auth.TokenExchangeSubjectAuthorityValidator;
 import com.openwolf.iam.auth.AgentExchangeTokenAuthorityValidator;
 import com.openwolf.iam.service.AgentExchangeAuthorityService;
@@ -699,7 +700,7 @@ public class SecurityConfig {
                 ? new DelegatingOAuth2TokenValidator<>(JwtValidators.createDefaultWithIssuer(issuerUrl),
                         new TokenExchangeSubjectAuthorityValidator(customerValidator, exchangeAuthority))
                 : new DelegatingOAuth2TokenValidator<>(JwtValidators.createDefaultWithIssuer(issuerUrl),
-                        new SessionTokenValidator(iamSessions),
+                        new TokenExchangeSessionValidator(iamSessions),
                         new TokenExchangeSubjectAuthorityValidator(customerValidator, exchangeAuthority)));
         return decoder;
     }

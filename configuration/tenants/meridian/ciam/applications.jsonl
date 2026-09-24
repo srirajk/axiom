@@ -13,3 +13,11 @@
 {"key":"wealth-holdings-tool","displayName":"Wealth Holdings Tool","description":"First-party holdings resource used by the Holdings Agent","audience":"tool:meridian:wealth-holdings-tool"}
 {"key":"wealth-market-tool","displayName":"Wealth Market Tool","description":"First-party market resource used by the Market Agent","audience":"tool:meridian:wealth-market-tool"}
 {"key":"wealth-review-model","displayName":"Wealth Review Model","description":"Governed model resource used by Wealth specialist Agents","audience":"model:meridian:wealth-review-model"}
+{"key":"quickstart-entry","displayName":"Argus Quickstart Entry","description":"Autonomous entry workload for the Argus quickstart","audience":"agent:meridian:quickstart-entry"}
+{"key":"quickstart-agent","displayName":"Argus Quickstart Agent","description":"Destination Agent workload for the Argus quickstart","audience":"agent:meridian:quickstart-agent"}
+{"key":"quickstart-tool","displayName":"Argus Quickstart Tool","description":"First-party tool resource for the Argus quickstart","audience":"tool:meridian:quickstart-tool"}
+{"key":"quickstart-mcp","displayName":"Argus Quickstart MCP Server","description":"First-party MCP resource exposed to the approved quickstart Agent","audience":"tool:meridian:quickstart-mcp"}
+{"key":"quickstart-wrong-audience","displayName":"Argus Quickstart Wrong Audience","description":"Isolated negative-test workload for Gateway audience refusal","audience":"agent:meridian:quickstart-wrong-audience"}
+{"key":"quickstart-service","displayName":"Argus Quickstart Service","description":"Autonomous service workload that starts the expanded Argus quickstart","audience":"agent:meridian:quickstart-service"}
+{"key":"quickstart-worker-agent","displayName":"Argus Quickstart Worker Agent","description":"Worker Agent that performs the bounded quickstart task","audience":"agent:meridian:quickstart-worker-agent"}
+{"key":"quickstart-task-agent","displayName":"Argus Quickstart Task Agent","description":"Task Agent that invokes the approved quickstart tool","audience":"agent:meridian:quickstart-task-agent"}
