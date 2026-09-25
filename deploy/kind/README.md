@@ -1,8 +1,9 @@
 # Axiom on the local Meridian Kubernetes cluster
 
-This profile installs Axiom in the `axiom` namespace and attaches it to the existing
-`gateway-demo/meridian-edge` Gateway. It reuses the `meridian-gateway` GatewayClass and the
-installed Envoy Gateway controller. It does not create another GatewayClass, controller, or edge.
+This profile installs Axiom in the `axiom` namespace and owns the local identity edge. The
+replay-safe installer ensures the pinned Envoy Gateway controller, `meridian-gateway` GatewayClass,
+and `gateway-demo/meridian-edge` Gateway exist when missing. It validates and reuses matching
+resources and fails on ownership conflicts. The separate Agent Gateway installation is untouched.
 
 The profile is local-only. PostgreSQL, Redis, Cerbos, and the policy-runtime volume are included to
 make the Docker Desktop cluster self-contained. Production deployments should use managed storage,
@@ -29,37 +30,29 @@ standard ports 80 and 443.
 2. Create the `axiom-runtime` Secret and the immutable signing-key Secret as described in
    [the chart README](../helm/axiom/README.md).
 3. Create the Cerbos ConfigMaps from `platform-policy/config.yaml` and `platform-policy/policies`.
-4. Apply the local dependencies and install Axiom atomically:
+4. Apply the local dependencies, install Axiom atomically, and ensure its Envoy identity edge:
 
 ```bash
-kubectl apply -f deploy/kind/dependencies.yaml
-
-helm upgrade --install axiom deploy/helm/axiom \
-  --namespace axiom \
-  --values deploy/kind/values.yaml \
-  --atomic --wait --timeout 15m
-
-helm test axiom --namespace axiom
+./deploy/kind/install.sh
 ```
 
-## Attach the existing Gateway
+`install.sh` is the canonical local entry point. Every replay verifies the Axiom prerequisites,
+reconciles the Helm release, runs the in-cluster smoke test, and calls `ensure-envoy-gateway.sh`.
+The edge installer installs Envoy Gateway v1.9.1 only when release `eg` is absent.
 
-Create `gateway-demo/axiom-identity-tls` with a certificate whose SANs contain both Meridian hostnames.
-The private key belongs only in that Kubernetes Secret.
+## Local Gateway ownership
 
-Add the four listeners once, then apply Axiom's routes and cross-namespace Service grant:
+The identity TLS private keys are generated only when `gateway-demo/axiom-identity-tls` or
+`gateway-demo/axiom-admin-tls` is absent and are stored only in those Kubernetes Secrets. A replay
+validates each Secret type and exact Meridian SAN; it does not rotate a healthy certificate.
+
+To reconcile only the Axiom edge without reinstalling the application:
 
 ```bash
-kubectl patch gateway meridian-edge \
-  --namespace gateway-demo \
-  --type json \
-  --patch-file deploy/kind/gateway-listeners.patch.json
-
-kubectl apply -f deploy/kind/gateway-routes.yaml
+./deploy/kind/ensure-envoy-gateway.sh
 ```
 
-Do not replay the listener patch when those listener names already exist. Route application is safe to
-replay.
+The script never changes `agentgateway`, its controller, or its GatewayClass.
 
 For local browser resolution, add this host entry with administrator privileges:
 
@@ -67,7 +60,11 @@ For local browser resolution, add this host entry with administrator privileges:
 127.0.0.1 identity.meridian.com identity-admin.meridian.com
 ```
 
-Then run the existing Gateway exposure script from the Kubernetes demo repository.
+Then expose the Axiom-owned edge locally:
+
+```bash
+./deploy/kind/expose-local.sh
+```
 
 ## Configure the reviewed tenant estate
 

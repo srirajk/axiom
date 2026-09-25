@@ -213,7 +213,15 @@ routes through the governed Admin API. It never writes graph edges directly to P
 
 ### 1. Start Axiom
 
-For Kubernetes, install Axiom with the Helm chart and wait for the release proof to pass:
+For the local Docker Desktop Kubernetes profile, use the canonical installer. It reconciles the Helm
+release, runs its smoke test, and ensures the pinned Axiom-owned Envoy identity edge exists:
+
+```bash
+./deploy/kind/install.sh
+```
+
+For another Kubernetes environment, install the chart after its platform-owned edge contract is
+available and wait for the release proof to pass:
 
 ```bash
 helm upgrade --install axiom deploy/helm/axiom \
