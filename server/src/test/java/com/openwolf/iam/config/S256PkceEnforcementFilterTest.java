@@ -160,6 +160,25 @@ class S256PkceEnforcementFilterTest {
         assertTrue(proceeded[0]);
     }
 
+    @Test
+    void aConsentSubmissionIsNotAnAuthorizationRequestButAGetWithoutResponseTypeStillNeedsPkce() throws Exception {
+        when(clients.findByClientId("sample-portal")).thenReturn(publicClient("sample-portal"));
+        MockHttpServletRequest consent = new MockHttpServletRequest("POST", S256PkceEnforcementFilter.AUTHORIZATION_ENDPOINT);
+        consent.setParameter("client_id", "sample-portal");
+        consent.setParameter("state", "consent-state");
+        consent.setParameter("scope", "openid");
+        boolean[] proceeded = {false};
+        filter.doFilter(consent, new MockHttpServletResponse(), (ignoredRequest, ignoredResponse) -> proceeded[0] = true);
+        assertTrue(proceeded[0], "the consent POST (no response_type) reaches the authorization server");
+
+        MockHttpServletRequest get = authorizationRequest("sample-portal", null);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        filter.doFilter(get, response, (ignoredRequest, ignoredResponse) -> {
+            throw new AssertionError("a GET without PKCE must not reach the authorization server");
+        });
+        assertEquals(400, response.getStatus());
+    }
+
     private static MockHttpServletRequest authorizationRequest(String clientId, String method) {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", S256PkceEnforcementFilter.AUTHORIZATION_ENDPOINT);
         request.setParameter("client_id", clientId);

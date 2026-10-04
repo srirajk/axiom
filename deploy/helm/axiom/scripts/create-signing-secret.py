@@ -13,6 +13,10 @@ import tempfile
 import uuid
 
 
+# Never add --save-config: it would record the manifest, secret data included, in an annotation.
+KUBECTL_CREATE_FROM_STDIN = ["kubectl", "create", "-f", "-"]
+
+
 def b64url(value: int) -> str:
     width = max(1, (value.bit_length() + 7) // 8)
     return base64.urlsafe_b64encode(value.to_bytes(width, "big")).rstrip(b"=").decode()
@@ -59,11 +63,13 @@ def write_json(path: Path, payload: object) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--context", help="Explicit kubectl context; recommended for isolated Kubernetes installs")
     parser.add_argument("--namespace", default="axiom")
     parser.add_argument("--name", default="axiom-signing-key")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
+    kubectl = ["kubectl", "--context", args.context] if args.context else ["kubectl"]
 
     with tempfile.TemporaryDirectory(prefix="axiom-signing-") as temporary:
         work = Path(temporary)
@@ -100,7 +106,7 @@ def main() -> None:
 
         if args.apply:
             exists = subprocess.run(
-                ["kubectl", "get", "secret", args.name, "-n", args.namespace],
+                [*kubectl, "get", "secret", args.name, "-n", args.namespace],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             ).returncode == 0
@@ -117,8 +123,11 @@ def main() -> None:
                     "jwks.json": base64.b64encode(public_path.read_bytes()).decode(),
                 },
             }
+            # `create`, never `apply`: apply would copy this manifest, private JWK included, into the
+            # kubectl.kubernetes.io/last-applied-configuration annotation. `create` is also atomic against
+            # an existing Secret (AlreadyExists), closing the window between the check above and this call.
             subprocess.run(
-                ["kubectl", "apply", "-f", "-"],
+                [*kubectl, *KUBECTL_CREATE_FROM_STDIN[1:]],
                 input=json.dumps(manifest).encode(),
                 check=True,
             )

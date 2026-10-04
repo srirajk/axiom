@@ -12,7 +12,7 @@ metadata:
     # The next test run removes the prior pod before creating a replacement.
     helm.sh/hook-delete-policy: before-hook-creation
 spec:
-  serviceAccountName: {{ include "axiom.serviceAccountName" . }}
+  serviceAccountName: {{ include "axiom.componentServiceAccountName" (dict "root" . "component" "test") }}
   automountServiceAccountToken: false
   restartPolicy: Never
   activeDeadlineSeconds: 120

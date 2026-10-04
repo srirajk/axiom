@@ -125,7 +125,8 @@ public class IdentityControlApplyService {
                 IdentitySource source = identitySourceRepository.findByIdAndTenantIdForUpdate(request.getTargetId(), tenantId)
                         .orElseThrow(() -> EntityNotFoundException.forId("Identity source", request.getTargetId()));
                 targetRevision = source.getRevision(); verifyTargetRevision(request, targetRevision);
-                identitySources.rotateSecret(tenantId, request.getTargetId(), new RotateIdentitySourceSecretRequest(requiredSecret(payload)), httpRequest);
+                identitySources.rotateSecret(tenantId, request.getTargetId(),
+                        new RotateIdentitySourceSecretRequest(IdentityControlPayloads.identitySourceSecret(payload)), httpRequest);
             }
             case REVOKE_APPLICATION_CLIENT_SECRET -> {
                 TenantApplicationClient client = lockedClient(tenantId, request.getTargetId());
@@ -135,10 +136,18 @@ public class IdentityControlApplyService {
             }
             case ROTATE_APPLICATION_CLIENT_SECRET -> {
                 TenantApplicationClient client = lockedClient(tenantId, request.getTargetId());
-                targetRevision = client.getRevision(); verifyTargetRevision(request, targetRevision); requireEmptyPayload(payload);
+                targetRevision = client.getRevision(); verifyTargetRevision(request, targetRevision);
+                // {} keeps the generated, returned-once secret; {"clientSecret"} applies the operator's escrowed one.
+                String supplied = OperatorSuppliedClientSecrets.fromRotationPayload(payload);
                 CreatedTenantApplicationClientResponse result = applications.rotateClientSecret(tenantId, client.getApplicationId(), client.getId(),
-                        new RotateTenantApplicationClientSecretRequest(targetRevision), httpRequest);
+                        new RotateTenantApplicationClientSecretRequest(targetRevision), supplied, httpRequest);
                 oneTimeSecret = result.serviceSecret();
+            }
+            case REPLACE_APPLICATION_CLIENT_KEYS -> {
+                TenantApplicationClient client = lockedClient(tenantId, request.getTargetId());
+                targetRevision = client.getRevision(); verifyTargetRevision(request, targetRevision);
+                applications.replaceClientKeys(tenantId, client.getApplicationId(), client.getId(),
+                        IdentityControlPayloads.clientKeys(payload), targetRevision, httpRequest);
             }
             case REVOKE_SCIM_SOURCE -> {
                 ScimProvisioningSource source = scimRepository.findByIdAndTenantIdForUpdate(request.getTargetId(), tenantId)
@@ -177,8 +186,17 @@ public class IdentityControlApplyService {
             try { canonical = canonical(mapper.readTree(secrets.reveal(request.getPayloadCiphertext()))); }
             catch (Exception ex) { throw new ResourceConflictException("identity control payload cannot be decrypted", ex); }
         }
-        if (!sha256(canonical).equals(request.getPayloadHash())) throw new ResourceConflictException("identity control payload hash mismatch");
-        try { return mapper.readTree(canonical); } catch (Exception ex) { throw new ResourceConflictException("identity control payload is malformed", ex); }
+        try {
+            JsonNode payload = mapper.readTree(canonical);
+            if (!IdentityControlPayloads.matches(secrets, request.getAction(), payload, canonical, request.getPayloadHash())) {
+                throw new ResourceConflictException("identity control payload hash mismatch");
+            }
+            return payload;
+        } catch (ResourceConflictException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new ResourceConflictException("identity control payload is malformed", ex);
+        }
     }
 
     private String canonical(JsonNode payload) throws Exception { return mapper.writeValueAsString(sort(payload)); }
@@ -198,11 +216,6 @@ public class IdentityControlApplyService {
         }
         return value;
     }
-    private String requiredSecret(JsonNode payload) {
-        JsonNode value = payload.get("clientSecret");
-        if (value == null || !value.isTextual() || value.asText().isBlank()) throw new ResourceConflictException("encrypted replacement secret is required");
-        return value.asText();
-    }
     private void requireEmptyPayload(JsonNode payload) {
         if (payload != null && (!payload.isObject() || payload.size() != 0)) {
             throw new ResourceConflictException("payload is not permitted for this generated mutation");
@@ -215,7 +228,8 @@ public class IdentityControlApplyService {
         IdentityControlRequest.TargetType expected = switch (action) {
             case EMERGENCY_RETIRE_SIGNING_KEY -> IdentityControlRequest.TargetType.SIGNING_KEY;
             case DISABLE_IDENTITY_SOURCE, ROTATE_IDENTITY_SOURCE_SECRET -> IdentityControlRequest.TargetType.IDENTITY_SOURCE;
-            case REVOKE_APPLICATION_CLIENT_SECRET, ROTATE_APPLICATION_CLIENT_SECRET -> IdentityControlRequest.TargetType.APPLICATION_CLIENT;
+            case REVOKE_APPLICATION_CLIENT_SECRET, ROTATE_APPLICATION_CLIENT_SECRET, REPLACE_APPLICATION_CLIENT_KEYS ->
+                    IdentityControlRequest.TargetType.APPLICATION_CLIENT;
             case REVOKE_SCIM_SOURCE, ROTATE_SCIM_SOURCE_CREDENTIAL -> IdentityControlRequest.TargetType.SCIM_SOURCE;
         };
         if (expected != target) throw new ResourceConflictException("identity control action and target type do not match");
@@ -229,7 +243,6 @@ public class IdentityControlApplyService {
         return authentication != null && authentication.getAuthorities().stream()
                 .anyMatch(authority -> "ROLE_platform_admin".equals(authority.getAuthority()));
     }
-    private static String sha256(String value) { try { return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8))); } catch (Exception ex) { throw new IllegalStateException("SHA-256 unavailable", ex); } }
     private IdentityControlRequestResponse response(IdentityControlRequest request) { return response(request, request.getRevision()); }
     private IdentityControlRequestResponse response(IdentityControlRequest r, long revision) { return new IdentityControlRequestResponse(r.getId(), r.getTenantId(), r.getAction(), r.getTargetType(), r.getTargetId(), r.getPayloadHash(), r.getInitiatorPrincipalId(), r.getCreatedAt(), r.getExpiresAt(), r.getExpectedTargetRevision(), r.getStatus(), r.getApproverPrincipalId(), r.getApprovedAt(), r.getApplicationResultReference(), revision); }
     private static String correlation(HttpServletRequest request) { return request == null ? null : request.getHeader("X-Correlation-ID"); }

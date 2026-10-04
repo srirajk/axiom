@@ -1,0 +1,28 @@
+{
+ "jar": "iam-service-baseline.jar",
+ "grant_types_supported": [
+  "authorization_code",
+  "client_credentials",
+  "urn:ietf:params:oauth:grant-type:token-exchange",
+  "urn:openwolf:params:oauth:grant-type:approved-action",
+  "urn:openwolf:params:oauth:grant-type:standing-grant"
+ ],
+ "token_endpoint_auth_methods_supported": [
+  "client_secret_basic",
+  "none"
+ ],
+ "create_public_client_with_population_and_ttl": 201,
+ "population_echoed": null,
+ "create_confidential_web_client": 400,
+ "create_private_key_jwt_client": 201,
+ "customer_browser_login": "refused: LoginFailed",
+ "workforce_on_customer_client": "token issued",
+ "access_token_lifetime_s": 3600,
+ "refresh_token_in_response": false,
+ "refresh_grant": [
+  401,
+  null
+ ],
+ "legacy_auth_login_status_in_cookbook_profile": 404
+}
+down: []

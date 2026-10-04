@@ -11,6 +11,7 @@ import com.nimbusds.jose.proc.DefaultJOSEObjectTypeVerifier;
 import com.nimbusds.jose.proc.JWSVerificationKeySelector;
 import com.nimbusds.jose.proc.SecurityContext;
 import com.nimbusds.jwt.proc.DefaultJWTProcessor;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.ApplicationRunner;
@@ -41,6 +42,7 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
+import com.openwolf.iam.auth.ActiveApplicationClientRepository;
 import com.openwolf.iam.auth.AxiomApiJwtValidator;
 import com.openwolf.iam.auth.ApplicationScopes;
 import com.openwolf.iam.auth.ApplicationSubjectContextJwtValidator;
@@ -158,6 +160,10 @@ public class SecurityConfig {
     @Value("${iam.oauth2.axiom-admin.post-logout-redirect-uri:http://localhost:5180/login}")
     private String axiomAdminPostLogoutRedirectUri;
 
+    /** Axiom Admin's access-token lifetime (the persisted system client must match it, see registerSystemClients). */
+    @Value("${iam.oauth2.axiom-admin.access-token-ttl:PT1H}")
+    private Duration axiomAdminAccessTokenTtl = Duration.ofHours(1);
+
     private final S256PkceEnforcementFilter s256PkceEnforcementFilter;
     private final FederatedOidcUserService federatedOidcUserService;
     private final FederatedAuthenticationFailureHandler federatedAuthenticationFailureHandler;
@@ -211,40 +217,122 @@ public class SecurityConfig {
             AuthorizationCodeRedemptionLockFilter codeRedemptionLockFilter,
             OidcEndSessionCleanupFilter endSessionCleanupFilter,
             @Qualifier("introspectionJwtDecoder") JwtDecoder localDecoder,
-            TokenExchangeAuthenticationProvider tokenExchangeProvider) throws Exception {
+            TokenExchangeAuthenticationProvider tokenExchangeProvider,
+            ObjectProvider<TenantApplicationService> applications,
+            ObjectProvider<com.openwolf.iam.invocation.InvocationContextService> invocationContexts,
+            ObjectProvider<com.openwolf.iam.auth.AuthorityGrantProvider> authorityGrants,
+            ObjectProvider<com.openwolf.iam.authority.lifecycle.ClientSecretOverlapStore> secretOverlaps,
+            ObjectProvider<com.openwolf.iam.authority.federation.WorkloadFederationService> workloadFederation,
+            ObjectProvider<com.openwolf.iam.authority.lifecycle.WorkloadLifecycleService> workloadLifecycle,
+            ObjectProvider<com.openwolf.iam.service.CiamCustomerAuthenticationService> customerSignIn,
+            org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator<
+                    org.springframework.security.oauth2.core.OAuth2Token> tokenGenerator,
+            org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService consents,
+            org.springframework.data.redis.core.StringRedisTemplate redis,
+            @Value("${iam.oauth2.authorization-store.redis.key-prefix:iam:oauth2}") String redisKeyPrefix,
+            BusinessScopeRegistry businessScopeRegistry,
+            @Qualifier("userInfoJwtDecoder") JwtDecoder userInfoJwtDecoder) throws Exception {
+        java.util.List<com.openwolf.iam.auth.AuthorityGrantProvider> extensionGrants = authorityGrants.orderedStream().toList();
         // Build the authorization server configurer to get its endpoint matcher
         OAuth2AuthorizationServerConfigurer authorizationServerConfigurer =
                 new OAuth2AuthorizationServerConfigurer();
+        // Inactive tenant application clients are not resolvable by client id inside the authorization server, so
+        // client authentication and the authorization endpoint reject them before any token is generated.
+        RegisteredClientRepository activeClients = new ActiveApplicationClientRepository(registeredClients, applications);
         RequestMatcher endpointsMatcher = authorizationServerConfigurer.getEndpointsMatcher();
         SessionAwareIntrospectionAuthenticationProvider introspectionProvider =
-                new SessionAwareIntrospectionAuthenticationProvider(registeredClients, authorizations, iamSessions, localDecoder);
+                new SessionAwareIntrospectionAuthenticationProvider(activeClients, authorizations, iamSessions, localDecoder);
+        introspectionProvider.setInvocationContexts(invocationContexts.getIfAvailable());
+        // Status for sessionless client-credentials tokens: the client and its workload lifecycle, checked live.
+        introspectionProvider.setClientStatus(applications::getIfAvailable, workloadLifecycle::getIfAvailable);
 
         // Include /login in this chain so form login is served here, not by the resource-server
         // chain. Static resources (/css/**) are intentionally NOT in this matcher — they fall
         // to Order-2 which permitAll()s them, avoiding the Bearer 401 from the resource server.
+        var clientAssertions = new com.openwolf.iam.auth.RegisteredKeyClientAssertionDecoderFactory(redis, redisKeyPrefix);
         http
             .securityMatcher(authorizationServerMatcher(endpointsMatcher))
-            .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
-            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+            .authorizeHttpRequests(auth -> auth
+                    .requestMatchers(HttpMethod.GET, com.openwolf.iam.auth.CustomerLoginFilter.LOGIN_PAGE).permitAll()
+                    .anyRequest().authenticated())
+            // RP-initiated logout is a top-level browser navigation (a form POST from the relying party's page), not
+            // a script request: CORS does not govern it, and applying the CORS allow-list there refused every relying
+            // party whose origin is not an Axiom admin origin. The endpoint still requires a valid id_token_hint and
+            // only redirects to registered post-logout URIs.
+            .cors(cors -> cors.configurationSource(request -> OIDC_LOGOUT_ENDPOINT.equals(request.getRequestURI())
+                    ? null : corsConfigurationSource().getCorsConfiguration(request)))
             .csrf(csrf -> csrf.ignoringRequestMatchers(endpointsMatcher))
             .with(authorizationServerConfigurer, configurer -> configurer
-                    .oidc(Customizer.withDefaults())
+                    .registeredClientRepository(activeClients)
+                    .tokenGenerator(tokenGenerator)
+                    .authorizationConsentService(consents)
+                    // Axiom's own consent page (self-hosted assets; no third-party requests from the consent step).
+                    .authorizationEndpoint(endpoint -> endpoint.consentPage(com.openwolf.iam.controller.ConsentController.PATH))
+                    .clientAuthentication(clientAuthentication -> {
+                        var federation = workloadFederation.getIfAvailable();
+                        var overlaps = secretOverlaps.getIfAvailable();
+                        // One consumer each: the configurer keeps only the last consumer it was given.
+                        if (federation != null) {
+                            // Phase 3.12: federated workload assertions (default deny until a profile is selected).
+                            clientAuthentication.authenticationConverters(converters -> converters.add(0,
+                                    com.openwolf.iam.authority.federation.WorkloadFederationClientAuthentication.converter()));
+                        }
+                        clientAuthentication.authenticationProviders(providers -> {
+                            if (federation != null) {
+                                providers.add(0, com.openwolf.iam.authority.federation.WorkloadFederationClientAuthentication
+                                        .provider(federation, activeClients));
+                            }
+                            // IDP-03: private_key_jwt against the client's registered public keys, single-use jti.
+                            providers.forEach(provider -> {
+                                if (provider instanceof org.springframework.security.oauth2.server.authorization
+                                        .authentication.JwtClientAssertionAuthenticationProvider assertions) {
+                                    assertions.setJwtDecoderFactory(clientAssertions);
+                                }
+                            });
+                            // Phase 3.15: the previous secret inside its declared rotation overlap.
+                            if (overlaps != null) {
+                                providers.add(0, new com.openwolf.iam.authority.lifecycle.ClientSecretOverlapAuthenticationProvider(
+                                        activeClients, passwordEncoder(), overlaps));
+                            }
+                        });
+                    })
+                    .oidc(oidc -> oidc
+                            // RP-initiated logout ends the durable Axiom session and the OAuth authorization named
+                            // by id_token_hint, not only the browser's servlet session.
+                            .logoutEndpoint(logout -> logout.logoutResponseHandler(
+                                    endSessionHandler(authorizations)))
+                            .providerConfigurationEndpoint(provider -> provider.providerConfigurationCustomizer(
+                                    configuration -> configuration.claims(claims ->
+                                            advertiseSupported(claims, extensionGrants,
+                                                    businessScopeRegistry.approvedScopes())))))
                     .authorizationServerMetadataEndpoint(endpoint -> endpoint
-                            .authorizationServerMetadataCustomizer(metadata ->
-                                    metadata.grantType(TokenExchangeConstants.GRANT_TYPE_VALUE)))
-                    .tokenEndpoint(endpoint -> endpoint
-                            .accessTokenRequestConverter(new TokenExchangeAuthenticationConverter())
-                            .authenticationProvider(tokenExchangeProvider))
+                            .authorizationServerMetadataCustomizer(metadata -> metadata.claims(claims ->
+                                    advertiseSupported(claims, extensionGrants, businessScopeRegistry.approvedScopes()))))
+                    .tokenEndpoint(endpoint -> {
+                        endpoint.accessTokenRequestConverter(new TokenExchangeAuthenticationConverter())
+                                .authenticationProvider(tokenExchangeProvider)
+                                // The response's scope is the scope actually issued in the token (RFC 6749 5.1).
+                                .accessTokenResponseHandler(new com.openwolf.iam.auth.IssuedScopeTokenResponseHandler());
+                        // Phase 3 extension grants: each converter ignores every other grant_type.
+                        extensionGrants.forEach(grant -> endpoint.accessTokenRequestConverter(grant.converter())
+                                .authenticationProvider(grant));
+                    })
                     .tokenIntrospectionEndpoint(endpoint -> endpoint.authenticationProviders(providers ->
                             providers.add(0, introspectionProvider))))
             .exceptionHandling(exceptions -> exceptions
                     .defaultAuthenticationEntryPointFor(
-                            new LoginUrlAuthenticationEntryPoint("/login"),
+                            // Customer-facing clients send the browser to the customer login, all others to /login.
+                            new com.openwolf.iam.auth.PopulationLoginEntryPoint(applications::getIfAvailable),
                             new MediaTypeRequestMatcher(MediaType.TEXT_HTML)
                     )
             )
-            .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()))
-            .formLogin(form -> form.loginPage("/login").permitAll())
+            // Bearer tokens in this chain reach only the OIDC UserInfo endpoint: any session-backed access token of this
+            // issuer (whatever its audience); the framework then requires the authorization to carry openid.
+            .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.decoder(userInfoJwtDecoder)))
+            .formLogin(form -> form.loginPage("/login").permitAll()
+                    // Phase 3.9: record when the interactive password login completed (auth_time/acr on its tokens).
+                    .authenticationDetailsSource(request -> new com.openwolf.iam.auth.AssuranceAuthenticationDetails(
+                            request, java.time.Instant.now(), com.openwolf.iam.auth.AuthenticationAssurance.PASSWORD)))
             .logout(logout -> logout
                     .invalidateHttpSession(true)
                     .clearAuthentication(true)
@@ -254,6 +342,9 @@ public class SecurityConfig {
                     .tokenEndpoint(token -> token.accessTokenResponseClient(federatedTokenClient))
                     .userInfoEndpoint(userInfo -> userInfo.oidcUserService(federatedOidcUserService))
                     .failureHandler(federatedAuthenticationFailureHandler))
+            .addFilterBefore(new com.openwolf.iam.auth.CustomerLoginFilter(customerSignIn::getIfAvailable,
+                            applications::getIfAvailable),
+                    org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
             .addFilterAfter(s256PkceEnforcementFilter, SecurityContextHolderFilter.class)
             .addFilterBefore(codeRedemptionLockFilter, SecurityContextHolderFilter.class)
             .addFilterBefore(endSessionCleanupFilter, SecurityContextHolderFilter.class);
@@ -261,11 +352,77 @@ public class SecurityConfig {
         return http.build();
     }
 
+    /**
+     * Discovery advertises only what Axiom actually supports (RFC 8414 / OIDC Discovery). Spring Authorization
+     * Server's defaults list grants and client-authentication methods no Axiom client is registered for (device_code,
+     * client_secret_post, client_secret_jwt, mutual TLS) and sender-constraint features Axiom does not enforce (DPoP,
+     * certificate-bound tokens); those entries are removed. refresh_token (confidential web clients granted
+     * offline_access) and private_key_jwt (confidential service clients with registered keys) are supported.
+     */
+    static void advertiseSupported(java.util.Map<String, Object> claims,
+                                   java.util.List<com.openwolf.iam.auth.AuthorityGrantProvider> extensionGrants) {
+        advertiseSupported(claims, extensionGrants, java.util.Set.of());
+    }
+
+    /**
+     * {@code scopes_supported} lists the scopes a client of this deployment can actually be registered for: the OIDC
+     * scopes (openid, profile, email), offline_access (refresh, confidential web clients), roles (workforce clients)
+     * and the deployment-approved business scopes. Which of them a given client may request is its registration.
+     */
+    static void advertiseSupported(java.util.Map<String, Object> claims,
+                                   java.util.List<com.openwolf.iam.auth.AuthorityGrantProvider> extensionGrants,
+                                   java.util.Collection<String> businessScopes) {
+        java.util.List<String> scopes = new java.util.ArrayList<>(java.util.List.of(
+                "openid", "profile", "email", "offline_access", "roles"));
+        businessScopes.stream().sorted().forEach(scopes::add);
+        claims.put("scopes_supported", scopes);
+        java.util.List<String> grants = new java.util.ArrayList<>(java.util.List.of("authorization_code",
+                "refresh_token", "client_credentials", TokenExchangeConstants.GRANT_TYPE_VALUE));
+        extensionGrants.forEach(grant -> grants.add(grant.grantType()));
+        claims.put("grant_types_supported", grants);
+        java.util.List<String> clientMethods = java.util.List.of("client_secret_basic", "private_key_jwt", "none");
+        claims.put("token_endpoint_auth_methods_supported", clientMethods);
+        java.util.List<String> assertionAlgorithms = java.util.List.of("RS256", "ES256");
+        claims.put("token_endpoint_auth_signing_alg_values_supported", assertionAlgorithms);
+        java.util.List<String> serviceMethods = java.util.List.of("client_secret_basic", "private_key_jwt");
+        claims.computeIfPresent("introspection_endpoint_auth_methods_supported", (k, v) -> serviceMethods);
+        claims.computeIfPresent("revocation_endpoint_auth_methods_supported", (k, v) -> serviceMethods);
+        claims.computeIfPresent("introspection_endpoint_auth_signing_alg_values_supported", (k, v) -> assertionAlgorithms);
+        claims.computeIfPresent("revocation_endpoint_auth_signing_alg_values_supported", (k, v) -> assertionAlgorithms);
+        claims.remove("dpop_signing_alg_values_supported");
+        claims.remove("tls_client_certificate_bound_access_tokens");
+        claims.remove("device_authorization_endpoint");
+        claims.remove("pushed_authorization_request_endpoint");
+        claims.put("code_challenge_methods_supported", java.util.List.of("S256"));
+    }
+
+    /** Ends the session bound to the logged-out authorization, then completes the standard OIDC logout response. */
+    static org.springframework.security.web.authentication.AuthenticationSuccessHandler endSessionHandler(
+            OAuth2AuthorizationService authorizations) {
+        var standard = new org.springframework.security.oauth2.server.authorization.oidc.web.authentication
+                .OidcLogoutAuthenticationSuccessHandler();
+        return (request, response, authentication) -> {
+            if (authentication instanceof org.springframework.security.oauth2.server.authorization.oidc.authentication
+                    .OidcLogoutAuthenticationToken logout && logout.getIdToken() != null) {
+                var authorization = authorizations.findByToken(logout.getIdToken().getTokenValue(),
+                        new org.springframework.security.oauth2.server.authorization.OAuth2TokenType(
+                                org.springframework.security.oauth2.core.oidc.endpoint.OidcParameterNames.ID_TOKEN));
+                // remove() also revokes the bound Axiom session (RedisOAuth2AuthorizationService.SessionRevoker).
+                if (authorization != null) authorizations.remove(authorization);
+            }
+            standard.onAuthenticationSuccess(request, response, authentication);
+        };
+    }
+
+    /** Spring Authorization Server's default OIDC RP-initiated logout endpoint. */
+    static final String OIDC_LOGOUT_ENDPOINT = "/connect/logout";
+
     static RequestMatcher authorizationServerMatcher(RequestMatcher endpointsMatcher) {
         return new OrRequestMatcher(
                 endpointsMatcher,
                 new AntPathRequestMatcher("/login"),
                 new AntPathRequestMatcher("/login/**"),
+                new AntPathRequestMatcher(com.openwolf.iam.controller.ConsentController.PATH),
                 new AntPathRequestMatcher("/oauth2/authorization/**"));
     }
 
@@ -357,6 +514,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST,
                                 "/ciam/tenants/*/customers/registrations",
                                 "/ciam/tenants/*/customers/verifications",
+                                "/ciam/tenants/*/customers/verification-challenges",
                                 "/ciam/tenants/*/customers/recovery-challenges",
                                 "/ciam/tenants/*/customers/recoveries",
                                 "/ciam/tenants/*/customers/tokens").permitAll()
@@ -379,6 +537,9 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // Public endpoints — no auth needed
                         .requestMatchers(
+                                // The servlet error dispatch carries the status a filter already chose (e.g. 400 for an
+                                // authorization request without S256 PKCE); it must not be replaced by a bearer 401.
+                                "/error",
                                 "/health",
                                 "/actuator/**",
                                 "/.well-known/**",
@@ -509,6 +670,34 @@ public class SecurityConfig {
         return new JdbcRegisteredClientRepository(new org.springframework.jdbc.core.JdbcTemplate(dataSource));
     }
 
+    /**
+     * Token generation for the authorization server's standard grants: signed JWT access/ID tokens through the shared
+     * customizer, and opaque refresh tokens only when {@code offline_access} was granted (see {@link
+     * com.openwolf.iam.auth.OfflineAccess}). Clients without the refresh grant never receive one.
+     */
+    @Bean
+    public org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator<
+            org.springframework.security.oauth2.core.OAuth2Token> oauth2TokenGenerator(
+            JwtEncoder jwtEncoder, OAuth2TokenCustomizer<JwtEncodingContext> jwtCustomizer) {
+        JwtGenerator jwt = new JwtGenerator(jwtEncoder);
+        jwt.setJwtCustomizer(jwtCustomizer);
+        var refresh = new org.springframework.security.oauth2.server.authorization.token.OAuth2RefreshTokenGenerator();
+        org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator<
+                org.springframework.security.oauth2.core.OAuth2RefreshToken> gatedRefresh = context ->
+                com.openwolf.iam.auth.OfflineAccess.granted(context) ? refresh.generate(context) : null;
+        return new org.springframework.security.oauth2.server.authorization.token.DelegatingOAuth2TokenGenerator(
+                jwt, new org.springframework.security.oauth2.server.authorization.token.OAuth2AccessTokenGenerator(),
+                gatedRefresh);
+    }
+
+    /** Durable OAuth consent (the standard Spring Authorization Server JDBC store, table from V40). */
+    @Bean
+    public org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService authorizationConsentService(
+            DataSource dataSource, RegisteredClientRepository registeredClientRepository) {
+        return new org.springframework.security.oauth2.server.authorization.JdbcOAuth2AuthorizationConsentService(
+                new org.springframework.jdbc.core.JdbcTemplate(dataSource), registeredClientRepository);
+    }
+
     @Bean
     public ApplicationRunner registerSystemClients(
             RegisteredClientRepository repository,
@@ -553,7 +742,7 @@ public class SecurityConfig {
                 .scope(OidcScopes.EMAIL)
                 .scope("roles")
                 .tokenSettings(TokenSettings.builder()
-                        .accessTokenTimeToLive(Duration.ofHours(1))
+                        .accessTokenTimeToLive(axiomAdminAccessTokenTtl)
                         .build())
                 .clientSettings(ClientSettings.builder()
                         .requireProofKey(true)
@@ -695,7 +884,7 @@ public class SecurityConfig {
                                                      AgentExchangeAuthorityService exchangeAuthority) {
         NimbusJwtDecoder decoder = decoderFor(jwkSource);
         CustomerTokenAuthorityValidator customerValidator =
-                new CustomerTokenAuthorityValidator(customers, applications, businessScopes);
+                new CustomerTokenAuthorityValidator(customers, applications, businessScopes, false, true);
         decoder.setJwtValidator(iamSessions == null
                 ? new DelegatingOAuth2TokenValidator<>(JwtValidators.createDefaultWithIssuer(issuerUrl),
                         new TokenExchangeSubjectAuthorityValidator(customerValidator, exchangeAuthority))
@@ -718,6 +907,15 @@ public class SecurityConfig {
         return decoder;
     }
 
+    /** UserInfo (OIDC Core 5.3): issuer, signature, at+jwt and an active durable session; no audience restriction. */
+    @Bean
+    public JwtDecoder userInfoJwtDecoder(JWKSource<SecurityContext> jwkSource) {
+        NimbusJwtDecoder decoder = decoderFor(jwkSource);
+        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+                JwtValidators.createDefaultWithIssuer(issuerUrl), new SessionTokenValidator(iamSessions)));
+        return decoder;
+    }
+
     @Bean
     public JwtDecoder introspectionJwtDecoder(JWKSource<SecurityContext> jwkSource,
                                               CiamDelegationAuthorityService delegationAuthority,
@@ -729,7 +927,7 @@ public class SecurityConfig {
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
                 JwtValidators.createDefaultWithIssuer(issuerUrl),
                 new SessionTokenValidator(iamSessions),
-                new CustomerTokenAuthorityValidator(customers, applications, businessScopes, true),
+                new CustomerTokenAuthorityValidator(customers, applications, businessScopes, true, true),
                 new DelegatedTokenAuthorityValidator(delegationAuthority),
                 new AgentExchangeTokenAuthorityValidator(exchangeAuthority)));
         return decoder;
@@ -744,11 +942,12 @@ public class SecurityConfig {
             TenantApplicationService applications,
             AuditService audit,
             AgentExchangeAuthorityService exchangeAuthority,
+            com.openwolf.iam.invocation.InvocationContextService invocationContexts,
             @Value("${iam.oauth2.token-exchange.ttl:PT5M}") Duration ttl) {
         JwtGenerator generator = new JwtGenerator(encoder);
         generator.setJwtCustomizer(jwtCustomizer);
         return new TokenExchangeAuthenticationProvider(authorizations, generator, subjectDecoder,
-                applications, audit, exchangeAuthority, ttl);
+                applications, audit, exchangeAuthority, ttl, invocationContexts);
     }
 
     private NimbusJwtDecoder decoderFor(JWKSource<SecurityContext> jwkSource) {

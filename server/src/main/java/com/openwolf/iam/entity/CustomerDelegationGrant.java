@@ -32,6 +32,8 @@ public class CustomerDelegationGrant {
     @Column(name = "revocation_reason") private String revocationReason;
     @Column(name = "created_at", nullable = false) private Instant createdAt;
     @Version @Column(nullable = false) private long revision;
+    @Column(name = "purpose_code") private String purposeCode;
+    @Column(name = "consent_source") private String consentSource;
 
     protected CustomerDelegationGrant() {}
 
@@ -49,6 +51,16 @@ public class CustomerDelegationGrant {
         this.consentRecordedAt = now;
         this.expiresAt = expiresAt;
         this.createdAt = now;
+    }
+
+    /** Phase 3.2: binds the grant to a registered purpose; only consent recorded by the customer may carry one. */
+    public CustomerDelegationGrant consent(String purposeCode, boolean recordedByCustomer) {
+        if (purposeCode != null && !recordedByCustomer) {
+            throw new IllegalStateException("purpose-bound consent must be recorded by the customer");
+        }
+        this.purposeCode = purposeCode;
+        this.consentSource = recordedByCustomer ? "CUSTOMER" : "ADMINISTRATOR";
+        return this;
     }
 
     public void revoke(String reason, Instant now) {
@@ -76,4 +88,6 @@ public class CustomerDelegationGrant {
     public String getRevocationReason() { return revocationReason; }
     public Instant getCreatedAt() { return createdAt; }
     public long getRevision() { return revision; }
+    public String getPurposeCode() { return purposeCode; }
+    public String getConsentSource() { return consentSource; }
 }

@@ -16,6 +16,9 @@ import java.util.UUID;
 public class CustomerIdentity {
     public enum Status { PENDING_VERIFICATION, ACTIVE, SUSPENDED, CLOSED }
 
+    /** How the identity was created. Neither source verifies the e-mail address. */
+    public enum ProvisioningSource { SELF_REGISTRATION, ADMINISTRATOR }
+
     @Id private UUID id;
     @Column(name = "tenant_id", nullable = false) private String tenantId;
     @Column(nullable = false) private String email;
@@ -23,6 +26,8 @@ public class CustomerIdentity {
     @Column(name = "password_hash", nullable = false) private String passwordHash;
     @Enumerated(EnumType.STRING) @Column(nullable = false) private Status status;
     @Column(name = "email_verified_at") private Instant emailVerifiedAt;
+    @Enumerated(EnumType.STRING) @Column(name = "provisioning_source", nullable = false)
+    private ProvisioningSource provisioningSource = ProvisioningSource.SELF_REGISTRATION;
     @Column(name = "created_at", nullable = false) private Instant createdAt;
     @Column(name = "updated_at", nullable = false) private Instant updatedAt;
     @Column(name = "token_version", nullable = false) private long tokenVersion;
@@ -41,6 +46,14 @@ public class CustomerIdentity {
         this.createdAt = now;
         this.updatedAt = now;
         this.tokenVersion = 1;
+    }
+
+    /** An administrator-provisioned identity: still pending verification until the customer proves the address. */
+    public static CustomerIdentity provisionedByAdministrator(String tenantId, String email, String displayName,
+                                                              String passwordHash, Instant now) {
+        CustomerIdentity identity = new CustomerIdentity(tenantId, email, displayName, passwordHash, now);
+        identity.provisioningSource = ProvisioningSource.ADMINISTRATOR;
+        return identity;
     }
 
     public void verify(Instant now) {
@@ -82,6 +95,7 @@ public class CustomerIdentity {
     public String getPasswordHash() { return passwordHash; }
     public Status getStatus() { return status; }
     public Instant getEmailVerifiedAt() { return emailVerifiedAt; }
+    public ProvisioningSource getProvisioningSource() { return provisioningSource; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
     public long getTokenVersion() { return tokenVersion; }

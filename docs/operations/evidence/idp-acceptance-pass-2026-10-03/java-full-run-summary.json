@@ -1,0 +1,1499 @@
+{
+ "failsafe": {
+  "classes": {
+   "com.openwolf.iam.auth.ApplicationAudienceEscalationIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.authority.AuthorityMeasurementIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.authority.IssuanceCommitBoundaryIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.authority.approval.ActionApprovalIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 5
+   },
+   "com.openwolf.iam.authority.approval.ApprovedActionUseTimeIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 5
+   },
+   "com.openwolf.iam.authority.consent.ConsentPurposeIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.authority.delivery.CustomerAdministratorProvisioningIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.authority.delivery.CustomerCodeDeliveryIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 8
+   },
+   "com.openwolf.iam.authority.delivery.CustomerCodeLocalDemoIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.authority.delivery.CustomerCodeNoProviderIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.authority.federation.WorkloadFederationIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.authority.issuer.IdpBaselineIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 12
+   },
+   "com.openwolf.iam.authority.issuer.IssuerLifecycleRepairIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 7
+   },
+   "com.openwolf.iam.authority.issuer.LegacyLoginSwitchIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.authority.lifecycle.WorkloadLifecycleIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.authority.lifecycle.WorkloadOwnershipConcurrencyIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.authority.lifecycle.WorkloadSuspensionPathsIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.authority.standing.StandingGrantIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 7
+   },
+   "com.openwolf.iam.authority.task.DurableTaskIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.authority.task.TaskCallbackIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.invocation.InvocationBranchCancellationIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.invocation.InvocationContextContinuationIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 9
+   },
+   "com.openwolf.iam.invocation.InvocationContextDefaultDenyIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.invocation.InvocationContextEstablishmentIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 5
+   },
+   "com.openwolf.iam.invocation.InvocationContextOutageIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.invocation.InvocationContextRepairIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 10
+   },
+   "com.openwolf.iam.invocation.InvocationContextRevocationIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 5
+   },
+   "com.openwolf.iam.invocation.SharedAgentIsolationIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.phase03.Phase03PersistenceIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 3,
+    "skipped_tests": [
+     "freshMigrationReachesV29OnRealPostgres",
+     "supportedV28ToV29UpgradePreservesExistingRows",
+     "redisRoundTripUsesOnlyTemporaryKey"
+    ],
+    "tests": 3
+   },
+   "com.openwolf.iam.policystudio.LocalPdpParityIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.SelfContainedBundleIT": {
+    "errors": 0,
+    "failed_tests": [
+     "tenantWideCaptureContainsEveryRuntimeResourceKind"
+    ],
+    "failures": 1,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.policystudio.breakglass.BreakGlassPendingRecoveryIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 5
+   },
+   "com.openwolf.iam.policystudio.lifecycle.PromotionExecutionLockStoreIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.policystudio.lifecycle.PromotionReachesRuntimeEnforcementBlobIT": {
+    "errors": 2,
+    "failed_tests": [
+     "promotionThroughBlobPollFlipsALiveDecisionAndIsAdditive",
+     "baseServedFromBlobAnswersAKnownDecision"
+    ],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.policystudio.lifecycle.PromotionReachesRuntimeEnforcementIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.scenario.receiver.SyntheticGatewayReceiverScenarioIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 10
+   },
+   "com.openwolf.iam.service.BrokerWorkloadRegistrationLockIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.service.BrokerWorkloadRegistrationServiceRaceIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.service.EntryAgentGatewayScenarioIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 7
+   },
+   "com.openwolf.iam.service.ExchangeEdgeScenarioIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 20
+   },
+   "com.openwolf.iam.service.OperatorSuppliedClientSecretIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 9
+   },
+   "com.openwolf.iam.service.UserDisableSessionRaceIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 8
+   },
+   "com.openwolf.iam.tenancy.ProvisioningSagaConcurrencyIT": {
+    "errors": 3,
+    "failed_tests": [
+     "provisionAndDeprovisionForSameTenantAreExcluded",
+     "sameKeyHasOneRowAndLaterRetryReconciles",
+     "differentKeysForSameTenantAreExcluded"
+    ],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.tenancy.TenantLifecycleLockStoreIT": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   }
+  },
+  "totals": {
+   "errors": 5,
+   "failures": 1,
+   "skipped": 3,
+   "tests": 194
+  }
+ },
+ "surefire": {
+  "classes": {
+   "com.openwolf.iam.IamApplicationTests": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.auth.ActiveApplicationClientRepositoryTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.auth.AgentExchangeTokenAuthorityValidatorTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.auth.AuthorizationCodeRedemptionLockFilterTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.auth.AuthorizationTenantResolverTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.auth.AxiomApiJwtValidatorTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.auth.BusinessScopeRegistryTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.auth.IamOAuthLocatorIsolationTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 7
+   },
+   "com.openwolf.iam.auth.JwtClaimsCustomizerClientCredentialsTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 7
+   },
+   "com.openwolf.iam.auth.JwtClaimsCustomizerTokenExchangeTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.auth.OidcEndSessionCleanupFilterTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.auth.RecoveryScopeFilterTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.auth.SessionAwareIntrospectionAuthenticationProviderTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.auth.SessionTokenValidatorTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 5
+   },
+   "com.openwolf.iam.auth.SubjectContextCallerTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.auth.TenantTokenMintTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.auth.TokenExchangeAuthenticationConverterTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.auth.TokenExchangeSessionValidatorTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 5
+   },
+   "com.openwolf.iam.authority.approval.ActionCanonicalizerTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.authority.delivery.LocalDemoDisclosureGuardTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.bootstrap.FirstTenantBootstrapRunnerContextTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.config.LocalDemoBrowserTokenLifetimeTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.config.S256PkceEnforcementFilterTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 8
+   },
+   "com.openwolf.iam.config.SecurityConfigFederatedMatcherTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.config.SecurityConfigScimRegistrationTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.config.SecurityConfigSigningKeyTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.controller.AuthControllerTokenContractTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.controller.CiamControllerContractTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.controller.IamSessionControllerTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.controller.IdentityControlNoBypassTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.controller.IdentityControlRequestControllerTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.controller.PlatformAuthzControllerTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.controller.RecoveryControllerContractTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.controller.TenantApplicationCredentialControllerTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.entity.CustomerIdentityLifecycleTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.entity.ScimJsonMappingTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.federation.ConnectionBoundOidcTransportTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.federation.FederatedAuthenticationFailureHandlerTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.federation.FederatedIdentityResolverTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.federation.FederationBeanWiringTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.federation.HttpOidcMetadataFetcherTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.federation.IdentitySourceClientRegistrationRepositoryTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.federation.IdentitySourceRevisionGuardTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.federation.OidcAudienceRulesTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.federation.OidcNetworkAddressPolicyTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.federation.OidcProviderValidatorTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.policystudio.ApprovalBindingTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.C4RealPdpEvidenceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.policystudio.ConsequenceApprovalSoDTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 5
+   },
+   "com.openwolf.iam.policystudio.ConsequenceDiffFromRealPdpTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.ConsequenceVocabularyTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.GeneratedPolicyGateTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 7
+   },
+   "com.openwolf.iam.policystudio.GeneratedPolicyTotalityTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.GeneratedScopeConstraintTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.policystudio.GeneratedYamlCompilesTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.policystudio.GenerationGroundedInManifestTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.KnownBadCorpusCatchRateTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.policystudio.NegativeProbeInjectionTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 5
+   },
+   "com.openwolf.iam.policystudio.OverPermissionAlarmTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.policystudio.PolicyAuthoringBoundaryArchTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.ProductionPdpDecisionSourceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.ReviewStalenessTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.SampledNotFormalDisclosureTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.TestGenIsolationArchTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.policystudio.api.StudioAuthoringControllerTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.policystudio.api.StudioBreakGlassControllerTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 11
+   },
+   "com.openwolf.iam.policystudio.api.StudioGroundingControllerTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.policystudio.api.StudioLifecycleControllerTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 7
+   },
+   "com.openwolf.iam.policystudio.api.StudioPromotionControllerTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 8
+   },
+   "com.openwolf.iam.policystudio.api.StudioProvisioningReadTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.policystudio.api.StudioReviewControllerTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 8
+   },
+   "com.openwolf.iam.policystudio.api.StudioSessionStoreTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.policystudio.breakglass.BreakGlassAuditedTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.breakglass.BreakGlassBoundsTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 7
+   },
+   "com.openwolf.iam.policystudio.breakglass.BreakGlassCannotCrossTenantTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.policystudio.breakglass.BreakGlassConditionPreservingMergeTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.policystudio.breakglass.BreakGlassExpiryTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.breakglass.BreakGlassIssuanceReliabilityTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 5
+   },
+   "com.openwolf.iam.policystudio.breakglass.BreakGlassPendingRecoveryTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 6
+   },
+   "com.openwolf.iam.policystudio.breakglass.BreakGlassTimeIntegrityTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 6
+   },
+   "com.openwolf.iam.policystudio.breakglass.BreakGlassTwoPersonTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.policystudio.breakglass.CerbosAuditFileImporterTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.breakglass.GroundedBreakGlassTrustRootProviderTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.policystudio.lifecycle.BundleContentReaderTenantWideTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.lifecycle.BundleImmutabilityTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.lifecycle.CerbosRuntimeActivationProbeTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.lifecycle.ExaminerChainTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.lifecycle.MultiResourcePromotionRevalidationTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.lifecycle.PolicyPromotionTransactionBoundaryTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.lifecycle.PromotedBundleLoaderAncestorOrderTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.policystudio.lifecycle.PromotionAtomicityTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.lifecycle.PromotionCasTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.lifecycle.PromotionIdempotencyTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.lifecycle.PromotionRevalidationTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 5
+   },
+   "com.openwolf.iam.policystudio.lifecycle.PromotionTerminalCasTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.lifecycle.RegenerationIsDiffNotOverwriteTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.lifecycle.ResourcePolicyIdentityTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 5
+   },
+   "com.openwolf.iam.policystudio.lifecycle.RollbackIsAuthorizedPromotionTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.lifecycle.StagingCandidateProbeHardFailTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.policystudio.lifecycle.VersionedPolicyModulesTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.repository.CiamMigrationContractTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.repository.IamSessionRepositoryPersistenceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.scenario.receiver.SyntheticReceiverContractTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 6
+   },
+   "com.openwolf.iam.scim.ScimAuthenticationFilterTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 6
+   },
+   "com.openwolf.iam.scim.ScimCredentialServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.scim.ScimExceptionHandlerMvcTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.security.ConfiguredAesGcmSecretProtectorTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.service.AgentExchangeAuthorityServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 11
+   },
+   "com.openwolf.iam.service.ApplicationAccessServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 7
+   },
+   "com.openwolf.iam.service.ApplicationDecisionServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.service.CiamDelegationAuthorityServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.service.CiamDelegationServiceBrokerExclusivityTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.service.GroupServiceDomainAssignmentsTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.service.IamSessionServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.service.IdentityControlApplyServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.service.IdentityControlCredentialBoundaryTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 5
+   },
+   "com.openwolf.iam.service.IdentityControlRequestExpiryServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.service.IdentityControlRequestServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.service.IdentitySourceServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.service.OperatorSuppliedClientSecretTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 13
+   },
+   "com.openwolf.iam.service.RecoveryOperatorServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.service.RecoveryOperatorSodTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 7
+   },
+   "com.openwolf.iam.service.RecoverySessionServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.service.ScimReconciliationServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.service.ScimServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 5
+   },
+   "com.openwolf.iam.service.SigningKeyLifecycleServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 5
+   },
+   "com.openwolf.iam.service.SubjectContextServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 5
+   },
+   "com.openwolf.iam.service.TenantApplicationServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 8
+   },
+   "com.openwolf.iam.service.UserServiceCreateUserSafetyTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 7
+   },
+   "com.openwolf.iam.tenancy.ActiveTenantDirectoryTransactionalTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.tenancy.DeprovisioningTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.tenancy.LifecycleLockReconciliationLedgerTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.tenancy.LifecycleLockRecoveryControllerTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   },
+   "com.openwolf.iam.tenancy.LifecycleLockRecoveryServiceTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.tenancy.ProvisioningAtomicityTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 4
+   },
+   "com.openwolf.iam.tenancy.ProvisioningOperationRepositoryContractTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.tenancy.ProvisioningRetryTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 1
+   },
+   "com.openwolf.iam.tenancy.ProvisioningTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 3
+   },
+   "com.openwolf.iam.tenancy.TenantCatalogProvisioningTest": {
+    "errors": 0,
+    "failed_tests": [],
+    "failures": 0,
+    "skipped": 0,
+    "skipped_tests": [],
+    "tests": 2
+   }
+  },
+  "totals": {
+   "errors": 0,
+   "failures": 0,
+   "skipped": 0,
+   "tests": 410
+  }
+ }
+}

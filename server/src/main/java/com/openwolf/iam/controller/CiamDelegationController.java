@@ -46,7 +46,7 @@ public class CiamDelegationController {
             @Valid @RequestBody CreateDelegationGrantRequest request, HttpServletRequest httpRequest) {
         return ResponseEntity.status(201).body(service.createGrant(tenantId, customerId,
                 request.agentWorkloadId(), request.audience(), request.scopes(), request.purpose(),
-                request.expiresAt(), audit.currentActor(), correlation(httpRequest)));
+                request.purposeCode(), request.expiresAt(), audit.currentActor(), correlation(httpRequest)));
     }
 
     @PostMapping("/{grantId}/revoke")

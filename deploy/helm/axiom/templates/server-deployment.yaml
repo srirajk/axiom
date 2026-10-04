@@ -93,7 +93,7 @@ spec:
           volumeMounts:
             {{- include "axiom.serverVolumeMounts" . | nindent 12 }}
       volumes:
-        {{- include "axiom.serverVolumes" . | nindent 8 }}
+        {{- include "axiom.serverVolumes" (dict "root" . "bootstrap" false) | nindent 8 }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

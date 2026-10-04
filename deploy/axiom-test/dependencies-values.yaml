@@ -1,0 +1,9 @@
+# Disposable Docker Desktop test namespace only. Do not reuse for a shared or production cluster.
+nodeSelector:
+  kubernetes.io/hostname: desktop-worker
+networkPolicy:
+  enabled: true
+  probeName: axiom-test-probe
+  clientNamespaces: []
+policyRuntime:
+  accessModes: [ReadWriteOnce]

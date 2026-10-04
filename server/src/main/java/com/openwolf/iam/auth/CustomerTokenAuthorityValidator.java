@@ -21,6 +21,7 @@ public final class CustomerTokenAuthorityValidator implements OAuth2TokenValidat
     private final TenantApplicationService applications;
     private final BusinessScopeRegistry businessScopes;
     private final boolean delegatedPassThrough;
+    private final boolean browserLogins;
 
     public CustomerTokenAuthorityValidator(CustomerIdentityRepository customers,
                                            TenantApplicationService applications,
@@ -32,10 +33,24 @@ public final class CustomerTokenAuthorityValidator implements OAuth2TokenValidat
                                            TenantApplicationService applications,
                                            BusinessScopeRegistry businessScopes,
                                            boolean delegatedPassThrough) {
+        this(customers, applications, businessScopes, delegatedPassThrough, false);
+    }
+
+    /**
+     * {@code browserLogins}: also accept access tokens of a customer browser login (authorization code + PKCE through a
+     * customer-facing client), whose audience is that client's application. Enabled only where such a token may be
+     * used (token-exchange subject and introspection), never for Axiom's own customer API, which must not accept a
+     * token minted for another audience.
+     */
+    public CustomerTokenAuthorityValidator(CustomerIdentityRepository customers,
+                                           TenantApplicationService applications,
+                                           BusinessScopeRegistry businessScopes,
+                                           boolean delegatedPassThrough, boolean browserLogins) {
         this.customers = customers;
         this.applications = applications;
         this.businessScopes = businessScopes;
         this.delegatedPassThrough = delegatedPassThrough;
+        this.browserLogins = browserLogins;
     }
 
     @Override
@@ -46,8 +61,10 @@ public final class CustomerTokenAuthorityValidator implements OAuth2TokenValidat
         try {
             if (!"customer".equals(token.getClaimAsString("identity_kind"))
                     || token.getClaims().containsKey("roles")) return failure();
-            if (token.getAudience() == null || token.getAudience().size() != 1
-                    || !TokenExchangeConstants.SUBJECT_AUDIENCE.equals(token.getAudience().getFirst())) return failure();
+            if (token.getAudience() == null || token.getAudience().size() != 1) return failure();
+            if (!TokenExchangeConstants.SUBJECT_AUDIENCE.equals(token.getAudience().getFirst())) {
+                return browserLogins ? browserLogin(token) : failure();
+            }
             String tenantId = required(token, "tenant_id");
             String clientId = required(token, "client_id");
             UUID customerId = UUID.fromString(token.getSubject());
@@ -66,6 +83,25 @@ public final class CustomerTokenAuthorityValidator implements OAuth2TokenValidat
         } catch (RuntimeException invalid) {
             return failure();
         }
+    }
+
+    /** A customer browser-login access token: active customer-facing client of the same tenant, its audience. */
+    private OAuth2TokenValidatorResult browserLogin(Jwt token) {
+        String tenantId = required(token, "tenant_id");
+        String clientId = required(token, "client_id");
+        UUID customerId = UUID.fromString(token.getSubject());
+        Number tokenVersion = token.getClaim("token_version");
+        if (tokenVersion == null || token.getClaimAsString("sid") == null) return failure();
+        CustomerIdentity customer = customers.findByTenantIdAndId(tenantId, customerId).orElse(null);
+        if (customer == null || customer.getStatus() != CustomerIdentity.Status.ACTIVE
+                || customer.getTokenVersion() != tokenVersion.longValue()) return failure();
+        var client = applications.activeAuthority(clientId)
+                .filter(TenantApplicationService.ClientAuthority::customerSignIn)
+                .filter(authority -> authority.tenantId().equals(tenantId)).orElse(null);
+        if (client == null || !client.audience().equals(token.getAudience().getFirst())) return failure();
+        Set<String> scopes = scopes(token);
+        if (scopes.isEmpty() || !client.scopes().containsAll(scopes)) return failure();
+        return OAuth2TokenValidatorResult.success();
     }
 
     private static String required(Jwt token, String name) {

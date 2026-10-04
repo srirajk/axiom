@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in</title>
+  <link rel="stylesheet" th:href="@{/css/axiom-login.css}">
+</head>
+<body>
+<div class="page">
+  <div class="form-panel">
+    <main class="login-card" aria-labelledby="login-title">
+      <div class="form-header">
+        <div class="for-label">Customer sign-in</div>
+        <h2 class="form-title" id="login-title">Sign in to continue</h2>
+        <p class="form-subtitle">Use the e-mail address and password of your customer account.</p>
+      </div>
+
+      <div class="error-banner" id="login-error" role="alert" th:if="${loginError}">
+        <div class="error-icon" aria-hidden="true">!</div>
+        <div>
+          <p class="error-title">Incorrect e-mail or password</p>
+          <p class="error-copy">Check your details and try again. Unverified accounts cannot sign in yet.</p>
+        </div>
+      </div>
+
+      <form th:action="@{/login/customer}" method="post" class="login-form" id="customer-login-form">
+        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+
+        <div class="field">
+          <label for="username">E-mail</label>
+          <input id="username" name="username" type="email" placeholder="you@example.com"
+                 autocomplete="username" autofocus required>
+        </div>
+
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" placeholder="Enter your password"
+                 autocomplete="current-password" required>
+        </div>
+
+        <button type="submit" class="btn-sign-in">
+          <span>Sign in</span>
+          <span aria-hidden="true">&rarr;</span>
+        </button>
+      </form>
+    </main>
+  </div>
+</div>
+</body>
+</html>

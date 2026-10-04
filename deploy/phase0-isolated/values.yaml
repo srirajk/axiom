@@ -1,0 +1,51 @@
+server:
+  image:
+    repository: axiom-server
+    tag: phase0-codex-74e7e56
+    pullPolicy: IfNotPresent
+admin:
+  image:
+    repository: axiom-admin
+    tag: phase0-codex-74e7e56
+    pullPolicy: IfNotPresent
+config:
+  issuerUrl: http://axiom.axiom-phase0-test.svc.cluster.local:8084
+  adminPublicUrl: http://axiom-admin.axiom-phase0-test.svc.cluster.local:8080
+  corsAllowedOrigins: http://axiom-admin.axiom-phase0-test.svc.cluster.local:8080
+  approvedBusinessScopes: cards:incident.read,cards:freeze.propose,wealth:review.invoke,quickstart:invoke
+  ciam:
+    localDemoChallengeDisclosure: false
+    tenantId: meridian
+    customerClientId: card-customer-web
+    customerScopes: cards:incident.read
+  # Explicit opt-in, not a default: the isolated Phase 0 harness (deploy/phase0-isolated/harness, step V-9 and its
+  # cleanup re-login) still authenticates its test administrator with POST /auth/login. This keeps the behaviour the
+  # namespace already had before the secure default; remove it once the harness uses the authorization-code flow.
+  auth:
+    legacyPasswordLogin: true
+    impersonation: false
+bootstrap:
+  tenant:
+    id: meridian
+    name: Meridian Phase 0 Isolated Test
+    slug: meridian
+  administrator:
+    id: admin
+    username: admin
+    email: admin@phase0.invalid
+postgresql:
+  host: axiom-postgresql
+  database: axiom
+redis:
+  host: axiom-redis
+  database: 0
+cerbos:
+  host: axiom-cerbos
+policyRuntime:
+  backend: pvc
+  pvc:
+    existingClaim: axiom-policy-runtime
+nodeSelector:
+  kubernetes.io/hostname: desktop-worker
+podAnnotations:
+  axiom.meridian.com/build: phase0-codex-74e7e56

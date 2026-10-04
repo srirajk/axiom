@@ -3,7 +3,9 @@ package com.openwolf.iam.service;
 import com.openwolf.iam.auth.ExecutionTenant;
 import com.openwolf.iam.dto.RevokeIamSessionRequest;
 import com.openwolf.iam.entity.IamSession;
+import com.openwolf.iam.entity.Principal;
 import com.openwolf.iam.repository.IamSessionRepository;
+import com.openwolf.iam.repository.PrincipalRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterEach;
 import org.springframework.security.authentication.TestingAuthenticationToken;
@@ -78,5 +80,32 @@ class IamSessionServiceTest {
         assertThatThrownBy(() -> service.revoke("tenant-a", id, new RevokeIamSessionRequest(0L), null))
                 .isInstanceOf(com.openwolf.iam.exception.ResourceConflictException.class)
                 .hasMessageContaining("stale");
+    }
+
+    @Test
+    void disabledPrincipalCannotUseSessionCreatedAfterRevocationScan() {
+        PrincipalRepository principals = mock(PrincipalRepository.class);
+        IamSessionService guarded = new IamSessionService(sessions, executionTenant, audit,
+                Clock.fixed(now, ZoneOffset.UTC), null, principals);
+        UUID id = UUID.randomUUID();
+        IamSession session = new IamSession(id, "tenant-a", "user-1", null, "browser-client", now,
+                now.plusSeconds(3600));
+        Principal disabled = new Principal("user-1", "tenant-a", "alice", null, "hash", false, "{}");
+        when(sessions.findByIdAndTenantId(id, "tenant-a")).thenReturn(Optional.of(session));
+        when(principals.findById("user-1")).thenReturn(Optional.of(disabled));
+
+        assertThat(guarded.active(id, "tenant-a", now)).isFalse();
+
+        disabled.setActive(true);
+        assertThat(guarded.active(id, "tenant-a", now)).isTrue();
+    }
+
+    @Test
+    void sessionTouchOnlyWritesWhenLastSeenIsAtLeastThirtySecondsOld() {
+        UUID id = UUID.randomUUID();
+
+        service.touch(id, "tenant-a", now);
+
+        verify(sessions).touch(id, "tenant-a", now, IamSession.Status.ACTIVE, now.minusSeconds(30));
     }
 }

@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: axiom-test-network-canary
+  namespace: axiom-test
+  labels:
+    app.kubernetes.io/name: axiom-test-network-canary
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  activeDeadlineSeconds: 60
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: canary
+      image: redis:7-alpine
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/sh", "-ec"]
+      args:
+        - |
+          if timeout 3 redis-cli -h axiom-redis ping | grep -qx PONG; then
+            echo "UNEXPECTED_REDIS_REACHABILITY"
+            exit 2
+          fi
+          echo "Redis access denied to an unlabeled pod."
+      resources:
+        requests: {cpu: 10m, memory: 32Mi}
+        limits: {cpu: 100m, memory: 64Mi}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: axiom-test-admin-network-canary
+  namespace: axiom-test
+  labels:
+    app.kubernetes.io/name: axiom
+    app.kubernetes.io/instance: axiom
+    app.kubernetes.io/component: admin
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  activeDeadlineSeconds: 60
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: canary
+      image: redis:7-alpine
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/sh", "-ec"]
+      args:
+        - |
+          if timeout 3 redis-cli -h axiom-redis ping | grep -qx PONG; then
+            echo "UNEXPECTED_ADMIN_REDIS_REACHABILITY"
+            exit 2
+          fi
+          echo "Redis access denied to an Admin-labeled pod."
+      resources:
+        requests: {cpu: 10m, memory: 32Mi}
+        limits: {cpu: 100m, memory: 64Mi}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: {drop: [ALL]}

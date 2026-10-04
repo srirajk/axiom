@@ -4,6 +4,12 @@ This chart installs the Axiom server and Admin UI into one namespace. It deliber
 install PostgreSQL, Redis, Cerbos, an object store, or Gateway resources. Those dependencies may
 live in the same namespace, but must be healthy before Axiom is installed.
 
+For a self-contained, disposable Docker Desktop installation, install the separate
+[`axiom-dependencies` chart](../axiom-dependencies/README.md) first, then this chart with the
+[`axiom-test` profile](../../axiom-test/README.md). The two-release order is required because this chart's
+pre-install bootstrap hook runs before ordinary resources in its own release. The older `deploy/kind` profile and
+`deploy/phase0-isolated` files are historical and must not be used to install `axiom-test`.
+
 ## Current topology contract
 
 - Kubernetes 1.28 or newer.
@@ -65,6 +71,35 @@ provides it.
 
 The master key must be a base64-encoded 32-byte value. Kubernetes Secrets require encryption at rest
 and tightly scoped namespace access; base64 encoding by itself is not encryption.
+
+Each workload receives only the keys it reads, as files with mode `0400` (the pod `fsGroup` adds group
+read for the non-root process user only):
+
+| Workload | ServiceAccount | Runtime Secret keys |
+|---|---|---|
+| server Deployment | `<fullname>` (`serviceAccount.name`) | database password, master key, Redis/S3 keys when enabled |
+| bootstrap Job (hook) | `<fullname>-bootstrap` (hook) | the server keys plus `axiom.bootstrap.admin-password` |
+| preflight Job (hook) | `<fullname>-preflight` (hook) | the same keys as bootstrap, to validate them |
+| admin Deployment | `<fullname>-admin` | none |
+| verify Job and smoke test | `<fullname>-test` | none |
+
+The long-running server never mounts the bootstrap administrator password. Workload-identity
+annotations on `serviceAccount.annotations` apply to the server only; when the bootstrap Job also needs
+policy-runtime storage access, set `serviceAccount.bootstrap.annotations`. All ServiceAccounts disable
+token automount.
+
+The bootstrap and preflight ServiceAccounts are pre-install/pre-upgrade hooks: Helm removes them after the whole
+hook phase succeeds. A failed install or upgrade leaves them (and `helm uninstall` never removes hook resources)
+until the next attempt replaces them. To remove leftovers, run the exact-name recovery, which deletes only this
+release's hook accounts that no running pod or active Job uses:
+
+```bash
+python3 deploy/helm/recover_hook_service_accounts.py -n axiom --release axiom            # read-only plan
+python3 deploy/helm/recover_hook_service_accounts.py -n axiom --release axiom --execute  # delete
+```
+
+Each `runtimeSecret.keys` role must name a distinct, valid Secret key; rendering fails otherwise, so the
+bootstrap administrator password can never alias a key projected into the server.
 
 ## 4. Configure the release
 

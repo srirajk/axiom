@@ -46,7 +46,10 @@ class IdentityControlRequestServiceTest {
         when(requests.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(expiry.expireIfDue(any(), any(), any())).thenReturn(false);
         UUID target = UUID.randomUUID();
-        var payload = new ObjectMapper().createObjectNode().put("replacement", "generated-by-apply");
+        // Rotation payloads are validated at proposal: empty, or a secret with an independent recovery ID.
+        var payload = new ObjectMapper().createObjectNode().put("clientSecret",
+                "Kq3vT9xZp1LmN8wR2sY7bC4dF6gH0jJ5kP_aE-uViOt").put("recoveryId",
+                "Nq3vT9xZp1LmN8wR2sY7bC4dF6gH0jJ5kP_aE-uViOt");
         var created = service.propose(TENANT, new IdentityControlProposalRequest(
                 IdentityControlRequest.Action.ROTATE_APPLICATION_CLIENT_SECRET,
                 IdentityControlRequest.TargetType.APPLICATION_CLIENT, target, payload, 4L), null);

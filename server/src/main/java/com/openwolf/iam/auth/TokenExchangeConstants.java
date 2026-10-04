@@ -17,6 +17,16 @@ public final class TokenExchangeConstants {
     public static final String RESOURCE = "resource";
     public static final String PURPOSE = "purpose";
     public static final String DELEGATION_ID = "delegation_id";
+    /** Phase 3.2: selects a purpose-bound customer grant by its registered purpose code (selection, not authority). */
+    public static final String DELEGATION_PURPOSE = "delegation_purpose";
+
+    /** Phase 2 invocation-context extension parameters (all optional; labels are non-authoritative). */
+    public static final String INVOCATION_AUTHORIZATION = "invocation_authorization";
+    public static final String INVOCATION_RUN = "invocation_run";
+    public static final String INVOCATION_TTL = "invocation_ttl";
+    public static final String INVOCATION_IDEMPOTENCY_KEY = "invocation_idempotency_key";
+    public static final String INVOCATION_BRANCH = "invocation_branch";
+    public static final String INVOCATION_CONTEXT = "invocation_context";
 
     public static final String CONTEXT_SUBJECT = TokenExchangeConstants.class.getName() + ".subject";
     public static final String CONTEXT_AUDIENCE = TokenExchangeConstants.class.getName() + ".audience";

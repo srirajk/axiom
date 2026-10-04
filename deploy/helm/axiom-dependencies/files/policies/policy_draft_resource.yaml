@@ -1,0 +1,50 @@
+apiVersion: api.cerbos.dev/v1
+# ═════════════════════════════════════════════════════════════════════════════
+# POLICY-STUDIO RESOURCE: policy_draft  (Axiom Story C1 — policy-authoring meta-authz)
+# ═════════════════════════════════════════════════════════════════════════════
+# The editable policy draft. One of three studio resources that together mirror onboarding's
+# candidate_bundle / approval_request model
+# (docs/implementation/onboarding-studio/AUTHORIZATION-APPROVAL-PROMOTION.md §3/§6):
+#   policy_draft  (this file) — create/read/list by drafter; approve/read/list by approver
+#   policy_bundle             — create by drafter; deploy/read/list by approver
+#   policy_approval           — approve/read/list by approver; read/list by drafter
+#
+# Structural guarantees (C1 acceptance):
+#   C1.1  tenant isolation — every ALLOW is gated by a policy_studio_derived_roles role whose
+#         condition carries P.attr.tenant_id == R.attr.tenant_id (B3 equality lint proves it),
+#         so a tenant-A approver can neither approve nor read a tenant-B draft.
+#   C1.2  author≠approver — the explicit EFFECT_DENY on `approve` fires when the acting principal
+#         is the last editor (P.id == R.attr.last_editor_id). DENY overrides ALLOW ⇒ structural SoD.
+#   C1.3  platform_admin is NOT an auto-approver — no rule grants platform_admin; approval flows
+#         only through studio_policy_approver (parentRole policy_approver, tenant-scoped).
+#
+# scope "" (root), scopePermissions UNSET ⇒ Cerbos default OVERRIDE_PARENT (matches iam_resource
+# B2 posture). No tenant child policy for this resource ⇒ no totality fall-through to cover.
+#
+# Resource attrs: R.attr.tenant_id (owning tenant), R.attr.last_editor_id (last material editor).
+# Principal attrs: P.id, P.attr.tenant_id.
+resourcePolicy:
+  version: "default"
+  resource: policy_draft
+  scope: ""
+  importDerivedRoles:
+    - policy_studio_derived_roles
+  rules:
+    # ── author≠approver SoD (structural) — the last editor may never approve their own draft ──
+    # DENY overrides ALLOW at the same scope, so this wins even for a legitimate in-tenant approver.
+    - actions: ["approve"]
+      effect: EFFECT_DENY
+      roles: ["*"]
+      condition:
+        match:
+          expr: "has(R.attr.last_editor_id) && P.id == R.attr.last_editor_id"
+
+    # ── drafter: author policy drafts within their own tenant ──
+    - actions: ["create", "read", "list"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["studio_policy_drafter"]
+
+    # ── approver: approve / read / list drafts within their own tenant ──
+    - actions: ["approve", "read", "list"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["studio_policy_approver"]

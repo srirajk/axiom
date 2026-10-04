@@ -30,9 +30,10 @@ public interface IamSessionRepository extends JpaRepository<IamSession, UUID> {
                             Pageable pageable);
 
     @Modifying
-    @Query("update IamSession s set s.lastSeenAt = :seenAt where s.id = :id and s.tenantId = :tenantId and s.status = :activeStatus")
+    @Query("update IamSession s set s.lastSeenAt = :seenAt where s.id = :id and s.tenantId = :tenantId "
+            + "and s.status = :activeStatus and s.lastSeenAt <= :cutoff")
     int touch(@Param("id") UUID id, @Param("tenantId") String tenantId, @Param("seenAt") Instant seenAt,
-              @Param("activeStatus") IamSession.Status activeStatus);
+              @Param("activeStatus") IamSession.Status activeStatus, @Param("cutoff") Instant cutoff);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from IamSession s where s.tenantId = :tenantId and s.recoveryMarked = true "
@@ -40,6 +41,13 @@ public interface IamSessionRepository extends JpaRepository<IamSession, UUID> {
     java.util.List<IamSession> findActiveRecoverySessionsForOperatorForUpdate(
             @Param("tenantId") String tenantId, @Param("operatorId") UUID operatorId,
             @Param("active") IamSession.Status active);
+
+    /** Active sessions issued to one OAuth client (client disable ends them). */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from IamSession s where s.tenantId = :tenantId and s.clientId = :clientId and s.status = :active")
+    java.util.List<IamSession> findActiveForClientForUpdate(@org.springframework.data.repository.query.Param("tenantId") String tenantId,
+                                                            @org.springframework.data.repository.query.Param("clientId") String clientId,
+                                                            @org.springframework.data.repository.query.Param("active") IamSession.Status active);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from IamSession s where s.tenantId = :tenantId and s.principalId = :principalId and s.status = :active")

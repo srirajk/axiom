@@ -109,7 +109,7 @@ public class BreakGlassPromotionService {
         PolicyBundle candidate = reviews.assembleCandidateBundle(tenant, kind, mergedYaml, null);
         // Stable across retries, including a crash after promotion but before the C6 issuance ledger is
         // marked ACTIVATED. PolicyPromotionService replays this key without a second CAS.
-        String idempotencyKey = "break-glass:" + pending.grantId();
+        String idempotencyKey = idempotencyKey(pending.grantId());
         PromotionReceipt receipt = promotion.promote(new PromotionRequest(
                 candidate, review, approval, idempotencyKey, PromotionRecord.Kind.PROMOTION));
 
@@ -118,5 +118,10 @@ public class BreakGlassPromotionService {
                 pending.grantId(), tenant, receipt.fromBundleId(), receipt.toBundleId(),
                 receipt.directoryVersion(), grant.action(), grant.role(), grant.expiresAt());
         return receipt;
+    }
+
+    /** Durable C5 promotion idempotency key for a break-glass grant; also used by issuance reconciliation. */
+    public static String idempotencyKey(String grantId) {
+        return "break-glass:" + grantId;
     }
 }

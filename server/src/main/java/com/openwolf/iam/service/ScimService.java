@@ -44,11 +44,13 @@ public class ScimService {
     private final ObjectMapper mapper;
     private final PasswordEncoder passwordEncoder;
     private final AuditService audit;
+    private final IamSessionService sessions;
 
     public ScimService(PrincipalRepository principals, GroupRepository groups, ScimResourceLinkRepository links,
-                       ObjectMapper mapper, PasswordEncoder passwordEncoder, AuditService audit) {
+                       ObjectMapper mapper, PasswordEncoder passwordEncoder, AuditService audit,
+                       IamSessionService sessions) {
         this.principals = principals; this.groups = groups; this.links = links; this.mapper = mapper;
-        this.passwordEncoder = passwordEncoder; this.audit = audit;
+        this.passwordEncoder = passwordEncoder; this.audit = audit; this.sessions = sessions;
     }
 
     @Transactional(readOnly = true)
@@ -125,8 +127,10 @@ public class ScimService {
     public Mutation replace(ScimProvisioningSource source, String type, String resourceId, JsonNode body, String ifMatch, HttpServletRequest request) {
         ScimResourceLink link = requireLink(source, type, resourceId); checkIfMatch(link, ifMatch);
         if (USER.equals(type)) {
-            Principal principal = principals.findByIdAndTenantId(resourceId, source.getTenantId()).orElseThrow(() -> bad("SCIM resource not found"));
+            Principal principal = principals.findByIdAndTenantIdForUpdate(resourceId, source.getTenantId()).orElseThrow(() -> bad("SCIM resource not found"));
+            boolean activeBefore = principal.isActive();
             principal.setUsername(required(body, "userName")); principal.setEmail(email(body)); principal.setActive(active(body)); updateAttributes(principal, body, "displayName", "name", "emails"); principals.save(principal);
+            if (!principal.isActive() || activeBefore != principal.isActive()) sessions.revokeAllForPrincipal(source.getTenantId(), resourceId);
         } else {
             Group group = group(resourceId, source); group.setName(required(body, "displayName")); group.getMembers().clear(); applyGroupMembers(source, group, body.get("members")); groups.save(group);
         }
@@ -141,11 +145,14 @@ public class ScimService {
     }
 
     private void patchUser(ScimProvisioningSource source, String id, JsonNode operations) {
-        Principal p = principals.findByIdAndTenantId(id, source.getTenantId()).orElseThrow(() -> bad("SCIM resource not found"));
+        Principal p = principals.findByIdAndTenantIdForUpdate(id, source.getTenantId()).orElseThrow(() -> bad("SCIM resource not found"));
+        boolean activeBefore = p.isActive();
         for (JsonNode op : operations) { String path = required(op, "path"); String action = required(op, "op").toLowerCase(); JsonNode value = op.get("value");
             if (!List.of("replace", "add").contains(action)) throw bad("Only add and replace are supported for User");
             switch (path) { case "active" -> p.setActive(value != null && value.asBoolean()); case "userName" -> p.setUsername(value == null ? null : value.asText()); case "displayName", "name", "emails" -> updateAttribute(p, path, value); default -> throw bad("Unsupported User PATCH path: " + path); }
         } principals.save(p);
+        // Same rule as UserService.updateUser: sweep on disable or on any active-state change.
+        if (!p.isActive() || activeBefore != p.isActive()) sessions.revokeAllForPrincipal(source.getTenantId(), id);
     }
     private void patchGroup(ScimProvisioningSource source, String id, JsonNode operations) {
         Group g = group(id, source);

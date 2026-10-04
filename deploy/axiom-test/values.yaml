@@ -1,0 +1,49 @@
+# The matching dependency release is deploy/helm/axiom-dependencies with dependencies-values.yaml.
+# One build from this checkout. See README for recording the image ID before installing.
+server:
+  image:
+    repository: axiom-server
+    tag: axiom-test-20261003b
+    pullPolicy: IfNotPresent
+admin:
+  image:
+    repository: axiom-admin
+    tag: phase0-codex-74e7e56
+    pullPolicy: IfNotPresent
+config:
+  issuerUrl: http://axiom.axiom-test.svc.cluster.local:8084
+  adminPublicUrl: http://axiom-admin.axiom-test.svc.cluster.local:8080
+  corsAllowedOrigins: http://axiom-admin.axiom-test.svc.cluster.local:8080
+  approvedBusinessScopes: example:read,example:write
+  ciam:
+    localDemoChallengeDisclosure: false
+    tenantId: meridian
+    customerClientId: demo-customer-web
+    customerScopes: example:read
+  auth:
+    legacyPasswordLogin: false
+    impersonation: false
+bootstrap:
+  tenant:
+    id: meridian
+    name: Meridian Axiom Test
+    slug: meridian
+  administrator:
+    id: admin
+    username: admin
+    email: admin@axiom-test.invalid
+postgresql:
+  host: axiom-postgresql
+  database: axiom
+redis:
+  host: axiom-redis
+  database: 0
+  passwordEnabled: false
+cerbos:
+  host: axiom-cerbos
+policyRuntime:
+  backend: pvc
+  pvc:
+    existingClaim: axiom-policy-runtime
+nodeSelector:
+  kubernetes.io/hostname: desktop-worker

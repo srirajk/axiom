@@ -1,0 +1,12 @@
+# Apply this before any workloads. The final Kustomize overlay contains the
+# same NetworkPolicy; re-applying it is idempotent.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: axiom-phase0-test
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

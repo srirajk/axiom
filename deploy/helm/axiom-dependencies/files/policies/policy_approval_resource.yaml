@@ -1,0 +1,34 @@
+apiVersion: api.cerbos.dev/v1
+# ═════════════════════════════════════════════════════════════════════════════
+# POLICY-STUDIO RESOURCE: policy_approval  (Axiom Story C1 — policy-authoring meta-authz)
+# ═════════════════════════════════════════════════════════════════════════════
+# The approval record (sibling of policy_draft / policy_bundle). Approver records approval;
+# drafter may read/list the record. Same three structural guarantees:
+#   C1.1 tenant isolation (studio_policy_* derived roles carry P.tenant_id == R.tenant_id).
+#   C1.2 author≠approver — EFFECT_DENY on `approve` when P.id == R.attr.last_editor_id (DENY wins).
+#   C1.3 platform_admin is not an auto-approver — approve flows only through studio_policy_approver.
+# scope "" (root), scopePermissions UNSET ⇒ OVERRIDE_PARENT; no tenant child ⇒ no totality hole.
+resourcePolicy:
+  version: "default"
+  resource: policy_approval
+  scope: ""
+  importDerivedRoles:
+    - policy_studio_derived_roles
+  rules:
+    # ── author≠approver SoD — the last editor may never record approval on their own artifact ──
+    - actions: ["approve"]
+      effect: EFFECT_DENY
+      roles: ["*"]
+      condition:
+        match:
+          expr: "has(R.attr.last_editor_id) && P.id == R.attr.last_editor_id"
+
+    # ── approver: approve / read / list approval records within their own tenant ──
+    - actions: ["approve", "read", "list"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["studio_policy_approver"]
+
+    # ── drafter: read / list approval records within their own tenant ──
+    - actions: ["read", "list"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["studio_policy_drafter"]

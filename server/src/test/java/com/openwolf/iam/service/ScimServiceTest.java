@@ -14,6 +14,8 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.any;
 
@@ -21,7 +23,7 @@ class ScimServiceTest {
     @Test
     void advertisesOnlyImplementedCapabilitiesAndSchemas() {
         ScimService service = new ScimService(mock(PrincipalRepository.class), mock(GroupRepository.class),
-                mock(ScimResourceLinkRepository.class), new ObjectMapper(), mock(org.springframework.security.crypto.password.PasswordEncoder.class), mock(AuditService.class));
+                mock(ScimResourceLinkRepository.class), new ObjectMapper(), mock(org.springframework.security.crypto.password.PasswordEncoder.class), mock(AuditService.class), mock(IamSessionService.class));
         var config = service.discovery("config");
         assertThat(config.path("patch").path("supported").asBoolean()).isTrue();
         assertThat(config.path("bulk").path("supported").asBoolean()).isFalse();
@@ -31,7 +33,7 @@ class ScimServiceTest {
     @Test
     void rejectsUnimplementedFilterShapeAndSort() {
         ScimService service = new ScimService(mock(PrincipalRepository.class), mock(GroupRepository.class),
-                mock(ScimResourceLinkRepository.class), new ObjectMapper(), mock(org.springframework.security.crypto.password.PasswordEncoder.class), mock(AuditService.class));
+                mock(ScimResourceLinkRepository.class), new ObjectMapper(), mock(org.springframework.security.crypto.password.PasswordEncoder.class), mock(AuditService.class), mock(IamSessionService.class));
         var source = new com.openwolf.iam.entity.ScimProvisioningSource("tenant-a", null, "Directory", "selector", "hash");
         assertThatThrownBy(() -> service.list(source, "User", 1, 10, "userName eq \"alice\"", null, null))
                 .isInstanceOf(ScimException.class).hasMessageContaining("externalId");
@@ -46,7 +48,7 @@ class ScimServiceTest {
         ScimResourceLinkRepository links = mock(ScimResourceLinkRepository.class);
         ObjectMapper mapper = new ObjectMapper();
         ScimService service = new ScimService(principals, groups, links, mapper,
-                mock(org.springframework.security.crypto.password.PasswordEncoder.class), mock(AuditService.class));
+                mock(org.springframework.security.crypto.password.PasswordEncoder.class), mock(AuditService.class), mock(IamSessionService.class));
         ScimProvisioningSource source = new ScimProvisioningSource("tenant-a", null, "Directory", "selector", "hash");
         Group group = new Group("tenant-a", "old", null, null, "{}");
         group.setId(java.util.UUID.randomUUID()); group.setScimSourceId(source.getId());
@@ -61,5 +63,67 @@ class ScimServiceTest {
 
         assertThat(group.getMembers()).isEmpty();
         assertThat(group.getName()).isEqualTo("new");
+    }
+
+    @Test
+    void replacingScimUserAsInactiveRevokesItsSessions() {
+        PrincipalRepository principals = mock(PrincipalRepository.class);
+        ScimResourceLinkRepository links = mock(ScimResourceLinkRepository.class);
+        IamSessionService sessions = mock(IamSessionService.class);
+        ObjectMapper mapper = new ObjectMapper();
+        ScimService service = new ScimService(principals, mock(GroupRepository.class), links, mapper,
+                mock(org.springframework.security.crypto.password.PasswordEncoder.class), mock(AuditService.class), sessions);
+        ScimProvisioningSource source = new ScimProvisioningSource("tenant-a", null, "Directory", "selector", "hash");
+        Principal principal = new Principal("scim-user-1", "tenant-a", "alice", null, "hash", true, "{}");
+        principal.setScimSourceId(source.getId());
+        ScimResourceLink link = new ScimResourceLink(source.getId(), "tenant-a", "User", "external-1",
+                principal.getId(), "[\"active\"]");
+        when(links.findBySourceIdAndResourceTypeAndResourceId(source.getId(), "User", principal.getId()))
+                .thenReturn(java.util.Optional.of(link));
+        when(principals.findByIdAndTenantId(principal.getId(), "tenant-a"))
+                .thenReturn(java.util.Optional.of(principal));
+        when(principals.findByIdAndTenantIdForUpdate(principal.getId(), "tenant-a"))
+                .thenReturn(java.util.Optional.of(principal));
+
+        service.replace(source, "User", principal.getId(),
+                mapper.createObjectNode().put("userName", "alice").put("active", false), "1", null);
+
+        assertThat(principal.isActive()).isFalse();
+        verify(sessions).revokeAllForPrincipal("tenant-a", principal.getId());
+    }
+
+    @Test
+    void patchingScimUserAsInactiveRevokesSessionsButEmailPatchDoesNot() {
+        PrincipalRepository principals = mock(PrincipalRepository.class);
+        ScimResourceLinkRepository links = mock(ScimResourceLinkRepository.class);
+        IamSessionService sessions = mock(IamSessionService.class);
+        ObjectMapper mapper = new ObjectMapper();
+        ScimService service = new ScimService(principals, mock(GroupRepository.class), links, mapper,
+                mock(org.springframework.security.crypto.password.PasswordEncoder.class), mock(AuditService.class), sessions);
+        ScimProvisioningSource source = new ScimProvisioningSource("tenant-a", null, "Directory", "selector", "hash");
+        Principal principal = new Principal("scim-user-2", "tenant-a", "bob", null, "hash", true, "{}");
+        principal.setScimSourceId(source.getId());
+        ScimResourceLink link = new ScimResourceLink(source.getId(), "tenant-a", "User", "external-2",
+                principal.getId(), "[\"active\"]");
+        when(links.findBySourceIdAndResourceTypeAndResourceId(source.getId(), "User", principal.getId()))
+                .thenReturn(java.util.Optional.of(link));
+        when(principals.findByIdAndTenantId(principal.getId(), "tenant-a"))
+                .thenReturn(java.util.Optional.of(principal));
+        when(principals.findByIdAndTenantIdForUpdate(principal.getId(), "tenant-a"))
+                .thenReturn(java.util.Optional.of(principal));
+
+        var usernamePatch = mapper.createObjectNode();
+        usernamePatch.putArray("Operations").addObject().put("op", "replace")
+                .put("path", "userName").put("value", "bob-renamed");
+        service.patch(source, "User", principal.getId(), usernamePatch, "1", null);
+        verify(sessions, never()).revokeAllForPrincipal("tenant-a", principal.getId());
+
+        var disablePatch = mapper.createObjectNode();
+        disablePatch.putArray("Operations").addObject().put("op", "replace")
+                .put("path", "active").put("value", false);
+        service.patch(source, "User", principal.getId(), disablePatch, "2", null);
+
+        assertThat(principal.isActive()).isFalse();
+        verify(sessions).revokeAllForPrincipal("tenant-a", principal.getId());
     }
 }

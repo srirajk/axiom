@@ -16,6 +16,7 @@ import com.openwolf.iam.exception.ResourceConflictException;
 import com.openwolf.iam.repository.GroupRepository;
 import com.openwolf.iam.repository.PrincipalRepository;
 import com.openwolf.iam.repository.RoleRepository;
+import jakarta.persistence.EntityManager;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,6 +44,8 @@ public class UserService {
     private static final TypeReference<List<String>> LIST_TYPE = new TypeReference<>() {};
 
     private final PrincipalRepository principalRepository;
+    private final EntityManager entityManager;
+    private final IamSessionService sessions;
     private final RoleRepository roleRepository;
     private final GroupRepository groupRepository;
     private final AuditService auditService;
@@ -51,6 +54,8 @@ public class UserService {
     private final ExecutionTenant executionTenant;
 
     public UserService(PrincipalRepository principalRepository,
+                       EntityManager entityManager,
+                       IamSessionService sessions,
                        RoleRepository roleRepository,
                        GroupRepository groupRepository,
                        AuditService auditService,
@@ -58,6 +63,8 @@ public class UserService {
                        ObjectMapper objectMapper,
                        ExecutionTenant executionTenant) {
         this.principalRepository = principalRepository;
+        this.entityManager = entityManager;
+        this.sessions = sessions;
         this.roleRepository = roleRepository;
         this.groupRepository = groupRepository;
         this.auditService = auditService;
@@ -90,6 +97,11 @@ public class UserService {
 
     public UserResponse createUser(CreateUserRequest req, HttpServletRequest httpReq) {
         String tenantId = executionTenant.require();
+        // Principal IDs are global. A tenant-scoped lookup would let an assigned-ID save merge
+        // onto a principal owned by another tenant.
+        if (principalRepository.existsById(req.id())) {
+            throw new ResourceConflictException("User ID already taken: " + req.id());
+        }
         if (principalRepository.findByUsername(req.username()).isPresent()) {
             throw new ResourceConflictException("Username already taken: " + req.username());
         }
@@ -104,7 +116,9 @@ public class UserService {
                 true,
                 attrsJson
         );
-        principalRepository.save(p);
+        // Assigned IDs make JpaRepository.save() call merge(), which can overwrite an existing
+        // principal if another create races this check. persist() is insert-only; the PK rejects it.
+        entityManager.persist(p);
 
         auditService.log(tenantId, auditService.currentActor(),
                 "CREATE_USER", "user", p.getId(), null, toUserResponse(p), httpReq);
@@ -118,7 +132,7 @@ public class UserService {
 
     public UserResponse updateUser(String userId, UpdateUserRequest req, HttpServletRequest httpReq) {
         String tenantId = executionTenant.require();
-        Principal p = principalRepository.findByIdAndTenantId(userId, tenantId)
+        Principal p = principalRepository.findByIdAndTenantIdForUpdate(userId, tenantId)
                 .orElseThrow(() -> EntityNotFoundException.forId("User", userId));
 
         if (p.getScimSourceId() != null) {
@@ -127,11 +141,18 @@ public class UserService {
 
         UserResponse before = toUserResponse(p);
 
+        boolean activeBefore = p.isActive();
         if (req.email() != null) p.setEmail(req.email());
         if (req.isActive() != null) p.setActive(req.isActive());
         if (req.attributes() != null) p.setAttributes(mergeAttributes(p.getAttributes(), req.attributes()));
 
         principalRepository.save(p);
+        // The principal row lock (findByIdAndTenantIdForUpdate) serializes this with workforce session issuance
+        // (IamSessionService.issueForWorkforce). Disable sweeps sessions; a re-enable also sweeps, so no session that
+        // predates the disabled period can validate again. A no-op active flag leaves sessions alone.
+        if (Boolean.FALSE.equals(req.isActive()) || activeBefore != p.isActive()) {
+            sessions.revokeAllForPrincipal(tenantId, userId);
+        }
         UserResponse after = toUserResponse(p);
         auditService.log(tenantId, auditService.currentActor(),
                 "UPDATE_USER", "user", userId, before, after, httpReq);
@@ -144,7 +165,7 @@ public class UserService {
 
     public void deleteUser(String userId, HttpServletRequest httpReq) {
         String tenantId = executionTenant.require();
-        Principal p = principalRepository.findByIdAndTenantId(userId, tenantId)
+        Principal p = principalRepository.findByIdAndTenantIdForUpdate(userId, tenantId)
                 .orElseThrow(() -> EntityNotFoundException.forId("User", userId));
 
         if (p.getScimSourceId() != null) {
@@ -154,6 +175,7 @@ public class UserService {
         UserResponse before = toUserResponse(p);
         p.setActive(false);
         principalRepository.save(p);
+        sessions.revokeAllForPrincipal(tenantId, userId);
         auditService.log(tenantId, auditService.currentActor(),
                 "DELETE_USER", "user", userId, before, null, httpReq);
         log.info("Soft-deleted user id={}", userId);

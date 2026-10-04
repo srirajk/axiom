@@ -1,0 +1,34 @@
+apiVersion: api.cerbos.dev/v1
+# ═════════════════════════════════════════════════════════════════════════════
+# POLICY-STUDIO RESOURCE: policy_bundle  (Axiom Story C1 — policy-authoring meta-authz)
+# ═════════════════════════════════════════════════════════════════════════════
+# The compiled, promotable policy bundle (sibling of policy_draft / policy_approval).
+# Drafter assembles it; approver deploys it. Same three structural guarantees as policy_draft:
+#   C1.1 tenant isolation (studio_policy_* derived roles carry P.tenant_id == R.tenant_id).
+#   C1.2 author≠approver — EFFECT_DENY on `deploy` when P.id == R.attr.last_editor_id (DENY wins).
+#   C1.3 platform_admin is not an auto-approver — deploy flows only through studio_policy_approver.
+# scope "" (root), scopePermissions UNSET ⇒ OVERRIDE_PARENT; no tenant child ⇒ no totality hole.
+resourcePolicy:
+  version: "default"
+  resource: policy_bundle
+  scope: ""
+  importDerivedRoles:
+    - policy_studio_derived_roles
+  rules:
+    # ── author≠approver SoD — the last editor may never deploy their own bundle ──
+    - actions: ["deploy"]
+      effect: EFFECT_DENY
+      roles: ["*"]
+      condition:
+        match:
+          expr: "has(R.attr.last_editor_id) && P.id == R.attr.last_editor_id"
+
+    # ── drafter: assemble bundles within their own tenant ──
+    - actions: ["create", "read", "list"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["studio_policy_drafter"]
+
+    # ── approver: deploy / read / list bundles within their own tenant ──
+    - actions: ["deploy", "read", "list"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["studio_policy_approver"]

@@ -1,0 +1,39 @@
+{
+ "scopes_supported": [
+  "openid"
+ ],
+ "workforce_consent": {
+  "login_page": "/login",
+  "login_external_hosts": [
+   "fonts.googleapis.com",
+   "fonts.gstatic.com"
+  ],
+  "consent_status": 200,
+  "consent_external_hosts": [
+   "stackpath.bootstrapcdn.com"
+  ]
+ },
+ "customer_consent": {
+  "login_page": "/login/customer",
+  "login_external_hosts": [],
+  "consent_status": 200,
+  "consent_external_hosts": [
+   "stackpath.bootstrapcdn.com"
+  ]
+ },
+ "userinfo_workforce": {
+  "status": 401,
+  "sub_matches": false,
+  "claims": []
+ },
+ "userinfo_customer": {
+  "status": 401,
+  "sub_matches": false,
+  "claims": []
+ },
+ "introspection_pkjwt_aud_endpoint": 200,
+ "introspection_pkjwt_aud_issuer": 200,
+ "revocation_pkjwt_aud_endpoint": 400,
+ "revocation_pkjwt_aud_issuer": 400
+}
+cleanup []

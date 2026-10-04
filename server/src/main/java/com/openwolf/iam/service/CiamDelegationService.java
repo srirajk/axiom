@@ -15,6 +15,7 @@ import com.openwolf.iam.exception.EntityNotFoundException;
 import com.openwolf.iam.exception.ResourceConflictException;
 import com.openwolf.iam.repository.AgentWorkloadIdentityRepository;
 import com.openwolf.iam.repository.CustomerDelegationGrantRepository;
+import com.openwolf.iam.repository.TrustedExchangeBrokerRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,6 +35,7 @@ import java.util.UUID;
 public class CiamDelegationService {
     private static final Duration MAX_GRANT_LIFETIME = Duration.ofDays(90);
     private final AgentWorkloadIdentityRepository workloads;
+    private final TrustedExchangeBrokerRepository brokers;
     private final CustomerDelegationGrantRepository grants;
     private final CiamCustomerService customers;
     private final CiamLifecycleAuditService audit;
@@ -44,20 +46,23 @@ public class CiamDelegationService {
 
     @org.springframework.beans.factory.annotation.Autowired
     public CiamDelegationService(AgentWorkloadIdentityRepository workloads,
+                                 TrustedExchangeBrokerRepository brokers,
                                  CustomerDelegationGrantRepository grants,
                                  CiamCustomerService customers, CiamLifecycleAuditService audit,
                                  ObjectMapper objectMapper, TenantApplicationService applications,
                                  BusinessScopeRegistry businessScopes) {
-        this(workloads, grants, customers, audit, objectMapper, applications,
+        this(workloads, brokers, grants, customers, audit, objectMapper, applications,
                 businessScopes, Clock.systemUTC());
     }
 
     CiamDelegationService(AgentWorkloadIdentityRepository workloads,
+                          TrustedExchangeBrokerRepository brokers,
                           CustomerDelegationGrantRepository grants,
                           CiamCustomerService customers, CiamLifecycleAuditService audit,
                           ObjectMapper objectMapper, TenantApplicationService applications,
                           BusinessScopeRegistry businessScopes, Clock clock) {
         this.workloads = workloads;
+        this.brokers = brokers;
         this.grants = grants;
         this.customers = customers;
         this.audit = audit;
@@ -70,7 +75,12 @@ public class CiamDelegationService {
     public AgentWorkloadResponse registerWorkload(String tenantId, String workloadRef, String name,
                                                    String oauthClientId, String actorId,
                                                    String correlationId) {
-        var clientAuthority = applications.activeAuthority(oauthClientId)
+        String clientId = oauthClientId.trim();
+        applications.lockClientForIdentityRegistration(clientId);
+        if (brokers.findByTenantIdAndOauthClientId(tenantId, clientId).isPresent()) {
+            throw new ResourceConflictException("trusted Gateway broker cannot be an Agent workload");
+        }
+        var clientAuthority = applications.activeAuthority(clientId)
                 .filter(value -> value.tenantId().equals(tenantId))
                 .filter(value -> value.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_SERVICE)
                 .orElseThrow(() -> new IllegalArgumentException(
@@ -78,11 +88,11 @@ public class CiamDelegationService {
         if (workloads.existsByTenantIdAndWorkloadRef(tenantId, workloadRef)) {
             throw new ResourceConflictException("agent workload reference already exists");
         }
-        if (workloads.existsByTenantIdAndOauthClientId(tenantId, oauthClientId)) {
+        if (workloads.existsByTenantIdAndOauthClientId(tenantId, clientId)) {
             throw new ResourceConflictException("agent OAuth client is already registered");
         }
         AgentWorkloadIdentity workload = workloads.save(new AgentWorkloadIdentity(tenantId,
-                workloadRef.trim(), name.trim(), oauthClientId.trim(), clock.instant()));
+                workloadRef.trim(), name.trim(), clientId, clock.instant()));
         audit.record(tenantId, actorId, "AGENT_WORKLOAD_REGISTERED", "agent_workload_identity",
                 workload.getId().toString(), Map.of("workloadRef", workload.getWorkloadRef(),
                         "oauthClientId", workload.getOauthClientId()), correlationId);
@@ -113,7 +123,8 @@ public class CiamDelegationService {
                                                  String correlationId) {
         AgentWorkloadIdentity workload = requireWorkload(tenantId, workloadId);
         Instant now = clock.instant();
-        boolean changed = workload.getStatus() != AgentWorkloadIdentity.Status.REVOKED;
+        boolean changed = workload.getStatus() == AgentWorkloadIdentity.Status.ACTIVE
+                || workload.getStatus() == AgentWorkloadIdentity.Status.SUSPENDED;
         workload.revoke(now);
         if (!changed) return toResponse(workload);
         grants.findByTenantIdAndAgentWorkloadIdAndStatus(tenantId, workloadId,
@@ -127,9 +138,33 @@ public class CiamDelegationService {
         return toResponse(workload);
     }
 
+    private com.openwolf.iam.authority.consent.ConsentPurposeService purposes;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setPurposes(com.openwolf.iam.authority.consent.ConsentPurposeService purposes) {
+        this.purposes = purposes;
+    }
+
     public DelegationGrantResponse createGrant(String tenantId, UUID customerId, UUID workloadId,
                                                 String audience, Set<String> scopes, String purpose,
                                                 Instant expiresAt, String actorId, String correlationId) {
+        return createGrant(tenantId, customerId, workloadId, audience, scopes, purpose, null, expiresAt, actorId,
+                correlationId);
+    }
+
+    /**
+     * Phase 3.2: with a {@code purposeCode} the grant binds a registered purpose of this workload; scopes must lie
+     * within it, validity within its maximum, and only the customer themself may record such consent.
+     */
+    public DelegationGrantResponse createGrant(String tenantId, UUID customerId, UUID workloadId,
+                                                String audience, Set<String> scopes, String purpose,
+                                                String purposeCode, Instant expiresAt, String actorId,
+                                                String correlationId) {
+        boolean recordedByCustomer = customerId.toString().equals(actorId);
+        if (purposeCode != null && !recordedByCustomer) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "purpose-bound consent must be recorded by the customer");
+        }
         CustomerIdentity customer = customers.requireCustomer(tenantId, customerId);
         if (customer.getStatus() != CustomerIdentity.Status.ACTIVE) {
             throw new ResourceConflictException("customer must be active and verified");
@@ -156,12 +191,24 @@ public class CiamDelegationService {
                 || normalizedScopes.stream().anyMatch(scope -> !businessScopes.isApproved(scope))) {
             throw new IllegalArgumentException("delegation audience or scopes exceed the registered agent client authority");
         }
+        if (purposeCode != null) {
+            if (purposes == null) throw new ResourceConflictException("consent purposes are unavailable");
+            var registered = purposes.activePurpose(tenantId, workloadId, purposeCode.trim(), normalizedScopes)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "purpose is not an active registered purpose of this workload covering these scopes"));
+            if (expiresAt.isAfter(now.plus(registered.getMaxValidity()))) {
+                throw new IllegalArgumentException("delegation expiry exceeds the purpose's maximum validity");
+            }
+        }
         CustomerDelegationGrant grant = grants.save(new CustomerDelegationGrant(tenantId, customerId,
-                workloadId, audience.trim(), writeScopes(normalizedScopes), purpose.trim(), expiresAt, now));
+                workloadId, audience.trim(), writeScopes(normalizedScopes), purpose.trim(), expiresAt, now)
+                .consent(purposeCode == null ? null : purposeCode.trim(), recordedByCustomer));
+        Map<String, Object> created = new java.util.LinkedHashMap<>(Map.of("customerId", customerId,
+                "workloadId", workloadId, "audience", grant.getAudience(), "scopes", normalizedScopes,
+                "expiresAt", expiresAt.toString(), "consentSource", grant.getConsentSource()));
+        if (grant.getPurposeCode() != null) created.put("purposeCode", grant.getPurposeCode());
         audit.record(tenantId, actorId, "DELEGATION_GRANT_CREATED", "delegation_grant",
-                grant.getId().toString(), Map.of("customerId", customerId, "workloadId", workloadId,
-                        "audience", grant.getAudience(), "scopes", normalizedScopes,
-                        "expiresAt", expiresAt.toString()), correlationId);
+                grant.getId().toString(), created, correlationId);
         return toResponse(grant);
     }
 
@@ -222,6 +269,6 @@ public class CiamDelegationService {
         return new DelegationGrantResponse(value.getId(), value.getCustomerId(), value.getAgentWorkloadId(),
                 value.getAudience(), readScopes(value), value.getPurpose(), value.getStatus(),
                 value.getConsentRecordedAt(), value.getExpiresAt(), value.getRevokedAt(),
-                value.getRevocationReason(), value.getRevision());
+                value.getRevocationReason(), value.getRevision(), value.getPurposeCode(), value.getConsentSource());
     }
 }

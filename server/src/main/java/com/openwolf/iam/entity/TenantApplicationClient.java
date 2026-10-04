@@ -18,8 +18,21 @@ import java.util.UUID;
 @Entity
 @Table(name = "tenant_application_clients")
 public class TenantApplicationClient {
-    public enum Type { PUBLIC_BROWSER, CONFIDENTIAL_SERVICE }
+    /**
+     * {@code PUBLIC_BROWSER}: a browser (SPA/native) client without a secret, authorization code + S256 PKCE.
+     * {@code CONFIDENTIAL_WEB}: a server-side web client (BFF) with its own credential, authorization code + S256 PKCE
+     * and, when it is granted {@code offline_access}, rotating refresh tokens. {@code CONFIDENTIAL_SERVICE}: software
+     * acting as itself (client credentials, token exchange); never a person's sign-in client.
+     */
+    public enum Type {
+        PUBLIC_BROWSER, CONFIDENTIAL_SERVICE, CONFIDENTIAL_WEB;
+
+        /** Clients through which a person (workforce) or a customer (CIAM) signs in. */
+        public boolean interactive() { return this == PUBLIC_BROWSER || this == CONFIDENTIAL_WEB; }
+    }
     public enum Status { ACTIVE, DISABLED }
+    /** Which population signs in through an interactive client. Service clients are always WORKFORCE (unused). */
+    public enum Population { WORKFORCE, CUSTOMER }
 
     @Id private UUID id;
     @Column(name = "application_id", nullable = false) private UUID applicationId;
@@ -28,6 +41,7 @@ public class TenantApplicationClient {
     @Enumerated(EnumType.STRING) @Column(nullable = false) private Status status;
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "allowed_scopes", nullable = false, columnDefinition = "jsonb") private List<String> allowedScopes = new ArrayList<>();
+    @Enumerated(EnumType.STRING) @Column(nullable = false) private Population population = Population.WORKFORCE;
     @Version @Column(nullable = false) private long revision;
     @Column(name = "created_at", nullable = false) private Instant createdAt;
     @Column(name = "updated_at", nullable = false) private Instant updatedAt;
@@ -38,11 +52,16 @@ public class TenantApplicationClient {
         this.clientType = clientType; this.allowedScopes = new ArrayList<>(allowedScopes); this.status = Status.ACTIVE;
         this.revision = 1; this.createdAt = Instant.now(); this.updatedAt = this.createdAt;
     }
+    public TenantApplicationClient(UUID applicationId, String clientId, Type clientType, List<String> allowedScopes,
+                                   Population population) {
+        this(applicationId, clientId, clientType, allowedScopes);
+        this.population = population == null ? Population.WORKFORCE : population;
+    }
     public void disable() { status = Status.DISABLED; updatedAt = Instant.now(); }
     public void rotateSecret() { updatedAt = Instant.now(); }
     public UUID getId() { return id; } public UUID getApplicationId() { return applicationId; }
     public String getClientId() { return clientId; } public Type getClientType() { return clientType; }
-    public Status getStatus() { return status; } public List<String> getAllowedScopes() { return List.copyOf(allowedScopes); }
+    public Status getStatus() { return status; } public Population getPopulation() { return population; } public List<String> getAllowedScopes() { return List.copyOf(allowedScopes); }
     public long getRevision() { return revision; }
     public Instant getCreatedAt() { return createdAt; } public Instant getUpdatedAt() { return updatedAt; }
 }

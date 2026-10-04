@@ -1,0 +1,111 @@
+# Namespace-scoped dependencies of one Axiom installation. Install this release first, in the same namespace as the
+# Axiom app release; the app chart's postgresql/redis/cerbos hosts and policyRuntime.pvc.existingClaim must match the
+# names below (defaults: axiom-postgresql, axiom-redis, axiom-cerbos, axiom-policy-runtime).
+#
+# This chart renders no Namespace and no other cluster-scoped object, and no Secret: the runtime Secret is
+# operator-owned and created out of band (see deploy/axiom-test/README.md).
+
+# Prefix of every resource name (the Axiom app chart's defaults assume "axiom").
+namePrefix: axiom
+
+# The Axiom app release whose pods may use these dependencies (NetworkPolicy selectors).
+app:
+  name: axiom
+  instance: axiom
+
+runtimeSecret:
+  existingSecret: axiom-runtime
+  # Only this key is projected into PostgreSQL (owner-only 0400).
+  databasePasswordKey: spring.datasource.password
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+postgresql:
+  image:
+    repository: postgres
+    tag: "16"
+    digest: ""
+    pullPolicy: IfNotPresent
+  username: axiom
+  database: axiom
+  storage:
+    size: 4Gi
+    # Empty: the cluster default StorageClass (dynamic provisioning creates the PersistentVolume).
+    storageClassName: ""
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 768Mi}
+
+redis:
+  image:
+    repository: redis
+    tag: 7-alpine
+    digest: ""
+    pullPolicy: IfNotPresent
+  storage:
+    size: 1Gi
+    storageClassName: ""
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+cerbos:
+  image:
+    repository: ghcr.io/cerbos/cerbos
+    tag: 0.53.0
+    digest: ""
+    pullPolicy: IfNotPresent
+  auditStorage:
+    size: 1Gi
+    storageClassName: ""
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+# Writable Cerbos runtime policy tree, shared with the Axiom server (app chart policyRuntime.backend=pvc).
+policyRuntime:
+  size: 1Gi
+  storageClassName: ""
+  accessModes: [ReadWriteOnce]
+
+# PVCs created by this chart are kept by Helm on uninstall (helm.sh/resource-policy: keep) so that data is never
+# deleted by a release operation; StatefulSet volume claims are retained by their own retention policy.
+persistence:
+  keepOnUninstall: true
+
+networkPolicy:
+  enabled: true
+  probeName: axiom-test-probe
+  # Namespaces (by kubernetes.io/metadata.name) whose pods may call Axiom's HTTP ports. Empty: same namespace only
+  # (kubectl port-forward is not affected by NetworkPolicy).
+  clientNamespaces: []
+
+guardrails:
+  enabled: true
+  resourceQuota:
+    pods: "12"
+    services: "8"
+    services.nodeports: "0"
+    services.loadbalancers: "0"
+    persistentvolumeclaims: "5"
+    requests.storage: 10Gi
+    requests.cpu: "4"
+    requests.memory: 6Gi
+    limits.cpu: "10"
+    limits.memory: 12Gi
+  limitRange:
+    default: {cpu: 500m, memory: 512Mi}
+    defaultRequest: {cpu: 50m, memory: 64Mi}
+    max: {cpu: "2", memory: 2Gi}
+    min: {cpu: 10m, memory: 32Mi}
+
+tests:
+  enabled: true
+  # Image for the connectivity tests (needs sh, nc and wget): the Redis image already used by this chart.
+  image:
+    repository: redis
+    tag: 7-alpine
+    digest: ""
+    pullPolicy: IfNotPresent

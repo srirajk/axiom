@@ -2,10 +2,12 @@ package com.openwolf.iam.service;
 
 import com.openwolf.iam.auth.BusinessScopeRegistry;
 import com.openwolf.iam.dto.AgentExchangeContracts.CreateAgentExchangeRouteRequest;
+import com.openwolf.iam.dto.AgentExchangeContracts.RegisterTrustedBrokerRequest;
 import com.openwolf.iam.entity.AgentExchangeRoute;
 import com.openwolf.iam.entity.AgentWorkloadIdentity;
 import com.openwolf.iam.entity.TenantApplicationClient;
 import com.openwolf.iam.entity.TrustedExchangeBroker;
+import com.openwolf.iam.exception.ResourceConflictException;
 import com.openwolf.iam.repository.AgentExchangeRouteRepository;
 import com.openwolf.iam.repository.AgentWorkloadIdentityRepository;
 import com.openwolf.iam.repository.TrustedExchangeBrokerRepository;
@@ -26,7 +28,10 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AgentExchangeAuthorityServiceTest {
@@ -127,6 +132,29 @@ class AgentExchangeAuthorityServiceTest {
     }
 
     @Test
+    void workforceTokenFromAnotherApplicationCannotBorrowActorApplicationAuthority() {
+        UUID otherApplicationId = UUID.randomUUID();
+        when(applications.activeAuthority("card-customer-web")).thenReturn(Optional.of(authority(
+                SOURCE_AUDIENCE, TenantApplicationClient.Type.PUBLIC_BROWSER, otherApplicationId)));
+        when(applicationAccess.decisionAuthority(TENANT, sourceApplicationId, "meridian-1008"))
+                .thenReturn(Optional.of(new ApplicationAccessService.DecisionAuthority(
+                        "card-assistance", 7, Set.of("card-incident-operator"),
+                        Map.of(SCOPE, "allow"), Map.of(), "policy-v1")));
+        Jwt workforce = token("meridian-1008", SOURCE_AUDIENCE, Map.of(
+                "tenant_id", TENANT,
+                "identity_kind", "workforce",
+                "client_id", "card-customer-web",
+                "scope", SCOPE));
+
+        assertThatThrownBy(() -> service.resolve(workforce, SOURCE_CLIENT, SOURCE_AUDIENCE, Set.of(SCOPE)))
+                .isInstanceOf(OAuth2AuthenticationException.class)
+                .satisfies(error -> assertThat(((OAuth2AuthenticationException) error).getError().getErrorCode())
+                        .isEqualTo("invalid_grant"));
+        org.mockito.Mockito.verify(applicationAccess, org.mockito.Mockito.never())
+                .decisionAuthority(TENANT, sourceApplicationId, "meridian-1008");
+    }
+
+    @Test
     void autonomousWorkloadCanReachOnlyItsApprovedGatewayRoute() {
         Jwt workload = token(SOURCE_CLIENT, SOURCE_AUDIENCE, Map.of(
                 "tenant_id", TENANT,
@@ -141,6 +169,19 @@ class AgentExchangeAuthorityServiceTest {
         assertThat(resolved.authorityId()).isEqualTo(gatewayRoute.getId().toString());
         assertThatThrownBy(() -> service.resolve(workload, SOURCE_CLIENT, "unapproved-api", Set.of(SCOPE)))
                 .isInstanceOf(OAuth2AuthenticationException.class);
+    }
+
+    @Test
+    void workloadRegisteredFirstCannotBecomeBroker() {
+        assertThatThrownBy(() -> service.registerBroker(TENANT,
+                new RegisterTrustedBrokerRequest(SOURCE_CLIENT, GATEWAY_AUDIENCE, Set.of(SCOPE)),
+                "admin", "test"))
+                .isInstanceOf(ResourceConflictException.class)
+                .hasMessageContaining("broker cannot be an Agent workload");
+        var order = org.mockito.Mockito.inOrder(applications, workloads);
+        order.verify(applications).lockClientForIdentityRegistration(SOURCE_CLIENT);
+        order.verify(workloads).findByOauthClientId(SOURCE_CLIENT);
+        org.mockito.Mockito.verify(brokers, org.mockito.Mockito.never()).save(any(TrustedExchangeBroker.class));
     }
 
     @Test
@@ -202,6 +243,27 @@ class AgentExchangeAuthorityServiceTest {
     }
 
     @Test
+    void actorIdentityRequiresExactWorkloadIdReferenceAndClient() {
+        service.requireValidNonCustomerSubject(gatewayAuthorization(TENANT));
+
+        assertThatThrownBy(() -> service.requireValidNonCustomerSubject(
+                gatewayAuthorizationWithActor(Map.of(
+                        "sub", source.getWorkloadRef(), "client_id", SOURCE_CLIENT,
+                        "workload_id", UUID.randomUUID().toString()))))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+        assertThatThrownBy(() -> service.requireValidNonCustomerSubject(
+                gatewayAuthorizationWithActor(Map.of(
+                        "sub", "agent:other:development", "client_id", SOURCE_CLIENT,
+                        "workload_id", source.getId().toString()))))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+        assertThatThrownBy(() -> service.requireValidNonCustomerSubject(
+                gatewayAuthorizationWithActor(Map.of(
+                        "sub", source.getWorkloadRef(), "client_id", DESTINATION_CLIENT,
+                        "workload_id", source.getId().toString()))))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+    }
+
+    @Test
     void routeRevocationInvalidatesAnAlreadyIssuedAgentSubject() {
         Jwt agentSubject = token("meridian-1008", DESTINATION_AUDIENCE, Map.of(
                 "tenant_id", TENANT,
@@ -232,12 +294,42 @@ class AgentExchangeAuthorityServiceTest {
                 .hasMessageContaining("active tenant application audience");
     }
 
+    @Test
+    void routeLifecycleAuditUsesWorkloadIdsRatherThanAgentNames() {
+        var request = new CreateAgentExchangeRouteRequest(source.getId(),
+                AgentExchangeRoute.DestinationType.AGENT, destination.getId(), DESTINATION_AUDIENCE,
+                Set.of(SCOPE), "Delegate bounded card action work", NOW.plusSeconds(3600));
+        service.createRoute(TENANT, request, "admin", "test-create");
+        verify(audit).record(eq(TENANT), eq("admin"), eq("AGENT_EXCHANGE_ROUTE_CREATED"),
+                eq("agent_exchange_route"), any(), argThat(details ->
+                        source.getId().equals(details.get("sourceWorkloadId"))
+                        && destination.getId().equals(details.get("destinationWorkloadId"))
+                        && AgentExchangeRoute.DestinationType.AGENT.equals(details.get("destinationType"))),
+                eq("test-create"));
+
+        service.revokeRoute(TENANT, agentRoute.getId(), "admin", "test-revoke");
+        verify(audit).record(eq(TENANT), eq("admin"), eq("AGENT_EXCHANGE_ROUTE_REVOKED"),
+                eq("agent_exchange_route"), eq(agentRoute.getId().toString()), argThat(details ->
+                        source.getId().equals(details.get("sourceWorkloadId"))
+                        && destination.getId().equals(details.get("destinationWorkloadId"))
+                        && AgentExchangeRoute.DestinationType.AGENT.equals(details.get("destinationType"))),
+                eq("test-revoke"));
+    }
+
     private TenantApplicationService.ClientAuthority authority(
             String audience, TenantApplicationClient.Type type, UUID applicationId) {
         return new TenantApplicationService.ClientAuthority(TENANT, audience, type, List.of(SCOPE), applicationId);
     }
 
     private Jwt gatewayAuthorization(String tenantId) {
+        return gatewayAuthorizationWithActor(tenantId, actor(source));
+    }
+
+    private Jwt gatewayAuthorizationWithActor(Map<String, Object> actor) {
+        return gatewayAuthorizationWithActor(TENANT, actor);
+    }
+
+    private Jwt gatewayAuthorizationWithActor(String tenantId, Map<String, Object> actor) {
         return token("meridian-1008", GATEWAY_AUDIENCE, Map.of(
                 "tenant_id", tenantId,
                 "identity_kind", "workforce",
@@ -246,7 +338,7 @@ class AgentExchangeAuthorityServiceTest {
                 "token_use", "gateway_authorization",
                 "authority_profile", "workload_continuation",
                 "authority_id", gatewayRoute.getId().toString(),
-                "act", actor(source)));
+                "act", actor));
     }
 
     private static Map<String, Object> actor(AgentWorkloadIdentity workload) {

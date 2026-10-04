@@ -119,6 +119,18 @@ public class GlobalExceptionHandler {
                 ErrorResponse.of("Conflict", ex.getMessage(), 409, req.getRequestURI()));
     }
 
+    // -------------------------------------------------------
+    // 503 Service Unavailable — a required provider or trust anchor is not configured or not reachable.
+    // -------------------------------------------------------
+
+    @ExceptionHandler(ServiceUnavailableException.class)
+    public ResponseEntity<ErrorResponse> handleUnavailable(
+            ServiceUnavailableException ex, HttpServletRequest req) {
+        log.warn("Service unavailable on {}: {}", req.getRequestURI(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(
+                ErrorResponse.of("Service Unavailable", ex.getMessage(), 503, req.getRequestURI()));
+    }
+
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ErrorResponse> handleDataIntegrity(
             DataIntegrityViolationException ex, HttpServletRequest req) {
@@ -148,7 +160,9 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ErrorResponse> handleNotReadable(
             HttpMessageNotReadableException ex, HttpServletRequest req) {
-        log.warn("Malformed request body on {}: {}", req.getRequestURI(), ex.getMessage());
+        // Parser messages can quote request content (including credentials), so log exception types only.
+        log.warn("Malformed request body on {}: {} ({})", req.getRequestURI(), ex.getClass().getSimpleName(),
+                ex.getMostSpecificCause() == null ? "none" : ex.getMostSpecificCause().getClass().getSimpleName());
         return ResponseEntity.badRequest().body(
                 ErrorResponse.of("Bad Request", "Malformed request body", 400, req.getRequestURI()));
     }

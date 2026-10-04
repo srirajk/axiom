@@ -19,6 +19,7 @@ spec:
         {{- include "axiom.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: preflight
     spec:
+      serviceAccountName: {{ include "axiom.componentServiceAccountName" (dict "root" . "component" "preflight") }}
       automountServiceAccountToken: false
       restartPolicy: Never
       {{- with .Values.imagePullSecrets }}
@@ -75,12 +76,17 @@ spec:
         - name: signing
           secret:
             secretName: {{ .Values.signingKey.existingSecret | quote }}
+            defaultMode: {{ include "axiom.secretFileMode" . }}
             items:
               - key: {{ .Values.signingKey.privateJwkKey | quote }}
                 path: signing-key.json
         - name: runtime
           secret:
             secretName: {{ .Values.runtimeSecret.existingSecret | quote }}
+            defaultMode: {{ include "axiom.secretFileMode" . }}
+            # Only the keys this check validates: the same set the bootstrap job receives.
+            items:
+              {{- include "axiom.runtimeSecretItems" (dict "root" . "bootstrap" true) | nindent 14 }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

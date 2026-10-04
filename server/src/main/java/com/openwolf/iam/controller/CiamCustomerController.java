@@ -50,6 +50,15 @@ public class CiamCustomerController {
         return ResponseEntity.ok(customers.verify(tenantId, request.token(), correlation(httpRequest)));
     }
 
+    @PostMapping("/verification-challenges")
+    public ResponseEntity<RecoveryChallengeResponse> verificationChallenge(
+            @PathVariable String tenantId,
+            @Valid @RequestBody com.openwolf.iam.dto.CiamContracts.VerificationChallengeRequest request,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.accepted().body(customers.requestVerification(
+                tenantId, request.email(), correlation(httpRequest)));
+    }
+
     @PostMapping("/recovery-challenges")
     public ResponseEntity<RecoveryChallengeResponse> recoveryChallenge(
             @PathVariable String tenantId, @Valid @RequestBody RecoveryChallengeRequest request,

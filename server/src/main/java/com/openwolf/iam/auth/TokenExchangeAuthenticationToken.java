@@ -13,12 +13,24 @@ public final class TokenExchangeAuthenticationToken extends OAuth2AuthorizationG
     private final String audience;
     private final Set<String> requestedScopes;
     private AuthorityContext authorityContext;
+    private com.openwolf.iam.invocation.InvocationContextService.Request invocation =
+            com.openwolf.iam.invocation.InvocationContextService.Request.NONE;
 
     /** Server-resolved authority used only during this token-generation request. */
     public record AuthorityContext(Jwt subject, String audience, String purpose,
                                    String authorityProfile, String authorityId, String delegationId,
                                    String tokenUse, String identityKind, String workloadId,
-                                   String workloadRef, String actorClientId) {}
+                                   String workloadRef, String actorClientId, InvocationBinding invocation) {
+        public AuthorityContext(Jwt subject, String audience, String purpose, String authorityProfile, String authorityId,
+                                String delegationId, String tokenUse, String identityKind, String workloadId,
+                                String workloadRef, String actorClientId) {
+            this(subject, audience, purpose, authorityProfile, authorityId, delegationId, tokenUse, identityKind,
+                    workloadId, workloadRef, actorClientId, null);
+        }
+    }
+
+    /** Opaque invocation-context reference carried by a context-bound token (Phase 2.4). */
+    public record InvocationBinding(String contextId, long version, int depth) {}
 
     public TokenExchangeAuthenticationToken(Authentication clientPrincipal, String subjectToken,
                                              String audience, Set<String> requestedScopes,
@@ -41,4 +53,17 @@ public final class TokenExchangeAuthenticationToken extends OAuth2AuthorizationG
     }
 
     public AuthorityContext authorityContext() { return authorityContext; }
+
+    public com.openwolf.iam.invocation.InvocationContextService.Request invocation() { return invocation; }
+
+    private String delegationPurpose;
+
+    /** Phase 3.2 purpose selector for customer delegation; null when absent. */
+    public String delegationPurpose() { return delegationPurpose; }
+
+    void delegationPurpose(String delegationPurpose) { this.delegationPurpose = delegationPurpose; }
+
+    void invocation(com.openwolf.iam.invocation.InvocationContextService.Request invocation) {
+        this.invocation = java.util.Objects.requireNonNull(invocation);
+    }
 }

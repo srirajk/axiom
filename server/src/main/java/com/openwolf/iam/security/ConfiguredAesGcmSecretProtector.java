@@ -4,12 +4,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.Cipher;
+import javax.crypto.Mac;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.util.HexFormat;
 
 /** AES-GCM dev/deployment adapter; the master key is configuration, never database data. */
 @Component
@@ -67,6 +69,22 @@ public final class ConfiguredAesGcmSecretProtector implements SecretProtector {
             return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
         } catch (GeneralSecurityException | IllegalArgumentException ex) {
             throw new IllegalStateException("protected secret cannot be revealed", ex);
+        }
+    }
+
+    @Override
+    public String keyedDigest(String purpose, String value) {
+        if (purpose == null || purpose.isBlank() || value == null) throw new IllegalArgumentException("digest input is required");
+        try {
+            // Purpose-specific subkey, so a digest is never interchangeable with any other use of the master key.
+            Mac derive = Mac.getInstance("HmacSHA256");
+            derive.init(new SecretKeySpec(key, "HmacSHA256"));
+            byte[] subkey = derive.doFinal(("axiom/keyed-digest/v1/" + purpose).getBytes(StandardCharsets.UTF_8));
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(subkey, "HmacSHA256"));
+            return HexFormat.of().formatHex(mac.doFinal(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (GeneralSecurityException ex) {
+            throw new IllegalStateException("keyed digest failed", ex);
         }
     }
 

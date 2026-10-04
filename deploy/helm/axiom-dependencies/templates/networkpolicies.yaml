@@ -1,0 +1,173 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-axiom-dependencies
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.app.name | quote }}
+      app.kubernetes.io/instance: {{ .Values.app.instance | quote }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [server, bootstrap, dependency-test]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "axiomdeps.name" . }}-postgresql
+      ports: [{protocol: TCP, port: 5432}]
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "axiomdeps.name" . }}-redis
+      ports: [{protocol: TCP, port: 6379}]
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "axiomdeps.name" . }}-cerbos
+      ports:
+        - {protocol: TCP, port: 3592}
+        - {protocol: TCP, port: 3593}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-axiom-http-clients
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.app.name | quote }}
+      app.kubernetes.io/instance: {{ .Values.app.instance | quote }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.app.name | quote }}
+              app.kubernetes.io/instance: {{ .Values.app.instance | quote }}
+      ports:
+        - {protocol: TCP, port: 8084}
+        - {protocol: TCP, port: 8080}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgresql-from-axiom
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "axiomdeps.name" . }}-postgresql
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.app.name | quote }}
+              app.kubernetes.io/instance: {{ .Values.app.instance | quote }}
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [server, bootstrap, dependency-test]
+      ports: [{protocol: TCP, port: 5432}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis-from-axiom
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "axiomdeps.name" . }}-redis
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.app.name | quote }}
+              app.kubernetes.io/instance: {{ .Values.app.instance | quote }}
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [server, bootstrap, dependency-test]
+      ports: [{protocol: TCP, port: 6379}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cerbos-from-axiom
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "axiomdeps.name" . }}-cerbos
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.app.name | quote }}
+              app.kubernetes.io/instance: {{ .Values.app.instance | quote }}
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [server, bootstrap, dependency-test]
+      ports:
+        - {protocol: TCP, port: 3592}
+        - {protocol: TCP, port: 3593}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-and-clients
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.app.name | quote }}
+      app.kubernetes.io/instance: {{ .Values.app.instance | quote }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Values.app.name | quote }}
+              app.kubernetes.io/instance: {{ .Values.app.instance | quote }}
+        {{- with .Values.networkPolicy.probeName }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ . | quote }}
+        {{- end }}
+        {{- range .Values.networkPolicy.clientNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+      ports:
+        - {protocol: TCP, port: 8084}
+        - {protocol: TCP, port: 8080}
+{{- end }}

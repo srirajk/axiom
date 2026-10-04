@@ -18,9 +18,10 @@ public class SigningKeyController {
     public SigningKeyController(SigningKeyLifecycleService service) { this.service = service; }
 
     @GetMapping public List<SigningKeyLifecycleService.SigningKeyView> list(@PathVariable String tenantId) { return service.list(tenantId); }
-    @PostMapping public ResponseEntity<SigningKeyLifecycleService.SigningKeyView> create(@PathVariable String tenantId, HttpServletRequest request) { return ResponseEntity.status(201).body(service.createStaged(tenantId, request)); }
-    @PostMapping("/{id}/activate") public SigningKeyLifecycleService.SigningKeyView activate(@PathVariable String tenantId, @PathVariable UUID id, HttpServletRequest request) { return service.activate(tenantId, id, request); }
-    @PostMapping("/{id}/retire") public ResponseEntity<Void> retire(@PathVariable String tenantId, @PathVariable UUID id, HttpServletRequest request) { service.retire(tenantId, id, request); return ResponseEntity.noContent().build(); }
+    // Signing keys are deployment-wide (every tenant's tokens): only a platform administrator may change them.
+    @PostMapping @PreAuthorize("hasRole('platform_admin')") public ResponseEntity<SigningKeyLifecycleService.SigningKeyView> create(@PathVariable String tenantId, HttpServletRequest request) { return ResponseEntity.status(201).body(service.createStaged(tenantId, request)); }
+    @PostMapping("/{id}/activate") @PreAuthorize("hasRole('platform_admin')") public SigningKeyLifecycleService.SigningKeyView activate(@PathVariable String tenantId, @PathVariable UUID id, HttpServletRequest request) { return service.activate(tenantId, id, request); }
+    @PostMapping("/{id}/retire") @PreAuthorize("hasRole('platform_admin')") public ResponseEntity<Void> retire(@PathVariable String tenantId, @PathVariable UUID id, HttpServletRequest request) { service.retire(tenantId, id, request); return ResponseEntity.noContent().build(); }
     @PostMapping("/{id}/emergency-retire")
     @PreAuthorize("hasRole('platform_admin')")
     public ResponseEntity<Void> emergencyRetire(@PathVariable String tenantId, @PathVariable UUID id, HttpServletRequest request) { throw new ResourceConflictException("approval required for signing-key emergency retirement"); }

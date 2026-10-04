@@ -23,9 +23,16 @@ public final class CiamContracts {
             @NotBlank @Size(max = 200) String displayName,
             @NotBlank @Size(min = 12, max = 200) String password) {}
 
+    /** Administrator provisioning: the identity starts pending verification; no code is returned to the operator. */
+    public record ProvisionCustomerRequest(
+            @Email @NotBlank String email,
+            @NotBlank @Size(max = 200) String displayName,
+            @NotBlank @Size(min = 12, max = 200) String initialPassword) {}
+
     public record ChallengeAction(String kind, String token, Instant expiresAt, String delivery) {}
 
-    public record RegistrationResponse(CustomerResponse customer, ChallengeAction localDemoAction) {}
+    /** {@code codeDelivery} is QUEUED (provider) or LOCAL_DEMO; it never claims that a code was received. */
+    public record RegistrationResponse(CustomerResponse customer, ChallengeAction localDemoAction, String codeDelivery) {}
 
     public record CustomerAuthenticationRequest(
             @Email @NotBlank String email,
@@ -41,7 +48,9 @@ public final class CiamContracts {
 
     public record RecoveryChallengeRequest(@Email @NotBlank String email) {}
 
-    public record RecoveryChallengeResponse(boolean accepted, ChallengeAction localDemoAction) {}
+    public record RecoveryChallengeResponse(boolean accepted, ChallengeAction localDemoAction, String codeDelivery) {}
+
+    public record VerificationChallengeRequest(@Email @NotBlank String email) {}
 
     public record CompleteRecoveryRequest(
             @NotBlank String token,
@@ -49,7 +58,8 @@ public final class CiamContracts {
 
     public record CustomerResponse(UUID customerId, String email, String displayName,
                                    CustomerIdentity.Status status, Instant emailVerifiedAt,
-                                   Instant createdAt, long revision) {}
+                                   Instant createdAt, long revision,
+                                   CustomerIdentity.ProvisioningSource provisioningSource) {}
 
     public record RegisterAgentWorkloadRequest(
             @NotBlank @Size(max = 255) String workloadRef,
@@ -68,7 +78,8 @@ public final class CiamContracts {
             @NotBlank @Size(max = 255) String audience,
             @NotEmpty Set<@NotBlank @Size(max = 120) String> scopes,
             @NotBlank @Size(max = 500) String purpose,
-            @NotNull @Future Instant expiresAt) {}
+            @NotNull @Future Instant expiresAt,
+            @Size(max = 64) String purposeCode) {}
 
     public record RevokeDelegationGrantRequest(@NotBlank @Size(max = 500) String reason) {}
 
@@ -76,7 +87,7 @@ public final class CiamContracts {
             UUID id, UUID customerId, UUID agentWorkloadId, String audience,
             List<String> scopes, String purpose, CustomerDelegationGrant.Status status,
             Instant consentRecordedAt, Instant expiresAt, Instant revokedAt,
-            String revocationReason, long revision) {}
+            String revocationReason, long revision, String purposeCode, String consentSource) {}
 
     public record CiamLifecycleEventResponse(
             UUID id, String actorId, String eventType, String subjectType,

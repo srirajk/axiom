@@ -26,7 +26,7 @@ spec:
         {{- include "axiom.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: admin
     spec:
-      serviceAccountName: {{ include "axiom.serviceAccountName" . }}
+      serviceAccountName: {{ include "axiom.componentServiceAccountName" (dict "root" . "component" "admin") }}
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true

@@ -252,6 +252,13 @@ final class C5LifecycleFixtures {
             byId.put(r.getId(), r);
             return r;
         });
+        when(repo.markFailedIfNotPromoted(anyString(), anyString(), any(PromotionRecord.Status.class),
+                any(PromotionRecord.Status.class))).thenAnswer(a -> {
+            PromotionRecord r = byKey.get(a.<String>getArgument(0));
+            if (r == null || r.getStatus() == PromotionRecord.Status.PROMOTED) return 0;
+            r.markFailed(a.getArgument(1));
+            return 1;
+        });
         when(repo.findByTenantIdOrderByCreatedAtDesc(anyString())).thenAnswer(a -> byId.values().stream()
                 .filter(r -> r.getTenantId().equals(a.<String>getArgument(0))).toList());
         return repo;

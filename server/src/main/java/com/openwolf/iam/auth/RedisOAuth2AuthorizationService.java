@@ -115,14 +115,35 @@ public class RedisOAuth2AuthorizationService implements OAuth2AuthorizationServi
         }
     }
 
+    /**
+     * Ends the durable Axiom session bound to an authorization. Called when the authorization's access token is
+     * invalidated (RFC 7009 revocation, authorization-code replay) or the authorization is removed (OIDC logout).
+     */
+    @FunctionalInterface
+    public interface SessionRevoker {
+        void revoke(String tenantId, String authorizationId, String reason);
+    }
+
+    private SessionRevoker sessionRevoker;
+
+    public void setSessionRevoker(SessionRevoker sessionRevoker) {
+        this.sessionRevoker = sessionRevoker;
+    }
+
+    private void endSession(String tenant, OAuth2Authorization authorization, String reason) {
+        if (sessionRevoker != null && tenant != null) sessionRevoker.revoke(tenant, authorization.getId(), reason);
+    }
+
     @Override
     public void save(OAuth2Authorization authorization) {
         Assert.notNull(authorization, "authorization cannot be null");
         String tenant = tenantOf(authorization);
+        boolean invalidated = authorization.getAccessToken() != null && authorization.getAccessToken().isInvalidated();
 
         OAuth2Authorization existing = readRecord(tenant, authorization.getId());
         if (existing != null) {
             deleteLocators(existing, tenant);
+            rememberSpentRefreshToken(existing, authorization, tenant);
         }
 
         Duration ttl = ttlFor(authorization);
@@ -130,6 +151,9 @@ public class RedisOAuth2AuthorizationService implements OAuth2AuthorizationServi
         stringRedis.opsForValue().set(authorizationIdLocatorKey(authorization.getId()),
                 writeLocator(new Locator(tenant, authorization.getId())), ttl);
         saveLocators(authorization, tenant, ttl);
+        // Revocation or a replayed code invalidates the access token: the session it is bound to ends with it, so
+        // resource servers that check sessions (not only introspection) also refuse the token.
+        if (invalidated) endSession(tenant, authorization, "access token invalidated");
     }
 
     @Override
@@ -141,6 +165,7 @@ public class RedisOAuth2AuthorizationService implements OAuth2AuthorizationServi
         deleteLocators(persisted != null ? persisted : authorization, tenant);
         stringRedis.delete(authorizationIdLocatorKey(authorization.getId()));
         authorizationRedis.delete(authorizationKey(tenant, authorization.getId()));
+        endSession(tenant, authorization, "authorization removed");
     }
 
     @Override
@@ -158,6 +183,7 @@ public class RedisOAuth2AuthorizationService implements OAuth2AuthorizationServi
 
         String locatorJson = stringRedis.opsForValue().get(tokenLocatorKey(token));
         if (locatorJson == null) {
+            if (tokenType == null || OAuth2TokenType.REFRESH_TOKEN.equals(tokenType)) withdrawReusedFamily(token);
             return null;
         }
         Locator locator = parseLocator(locatorJson);
@@ -177,7 +203,72 @@ public class RedisOAuth2AuthorizationService implements OAuth2AuthorizationServi
                     locator.tenant(), recordTenant, locator.authorizationId());
             return null;
         }
+        // A typed lookup matches only a token of that type: an access or ID token presented as a refresh token (or
+        // as an authorization code) resolves to nothing. Spring Authorization Server relies on this contract.
+        if (tokenType != null && !holds(record, token, tokenType)) return null;
         return record;
+    }
+
+    private static boolean holds(OAuth2Authorization record, String token, OAuth2TokenType type) {
+        String value = switch (type.getValue()) {
+            case OAuth2ParameterNames.STATE -> record.getAttribute(OAuth2ParameterNames.STATE);
+            case OAuth2ParameterNames.CODE -> valueOf(record.getToken(OAuth2AuthorizationCode.class));
+            case OAuth2ParameterNames.ACCESS_TOKEN -> valueOf(record.getToken(OAuth2AccessToken.class));
+            case OAuth2ParameterNames.REFRESH_TOKEN -> valueOf(record.getToken(OAuth2RefreshToken.class));
+            case OidcParameterNames.ID_TOKEN -> valueOf(record.getToken(OidcIdToken.class));
+            case OAuth2ParameterNames.DEVICE_CODE -> valueOf(record.getToken(OAuth2DeviceCode.class));
+            case OAuth2ParameterNames.USER_CODE -> valueOf(record.getToken(OAuth2UserCode.class));
+            default -> null;
+        };
+        return value != null && MessageDigestEquality.equal(value, token);
+    }
+
+    private static String valueOf(OAuth2Authorization.Token<? extends OAuth2Token> token) {
+        return token == null ? null : token.getToken().getTokenValue();
+    }
+
+    /** Constant-time comparison of two token values. */
+    private static final class MessageDigestEquality {
+        static boolean equal(String a, String b) {
+            return MessageDigest.isEqual(a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    // ── refresh-token reuse detection (RFC 9700 section 4.14.2) ────────────────────────────────────
+
+    /**
+     * When a save replaces an authorization's refresh token (rotation), the previous value is remembered — as a hashed
+     * locator only — until it would have expired. Presenting it again is a reuse: someone holds a token that was already
+     * spent, so the whole family (the authorization and its durable session) is withdrawn.
+     */
+    private void rememberSpentRefreshToken(OAuth2Authorization existing, OAuth2Authorization replacement, String tenant) {
+        OAuth2Authorization.Token<OAuth2RefreshToken> previous = existing.getRefreshToken();
+        if (previous == null) return;
+        OAuth2Authorization.Token<OAuth2RefreshToken> current = replacement.getRefreshToken();
+        if (current != null && current.getToken().getTokenValue().equals(previous.getToken().getTokenValue())) return;
+        Instant expiresAt = previous.getToken().getExpiresAt();
+        Duration ttl = expiresAt == null ? FALLBACK_TTL : Duration.between(clock.instant(), expiresAt.plus(EXPIRY_GRACE));
+        if (ttl.isNegative() || ttl.isZero()) return;
+        stringRedis.opsForValue().set(spentRefreshKey(previous.getToken().getTokenValue()),
+                writeLocator(new Locator(tenant, existing.getId())), ttl);
+    }
+
+    private void withdrawReusedFamily(String token) {
+        String spent = stringRedis.opsForValue().get(spentRefreshKey(token));
+        Locator locator = parseLocator(spent);
+        if (locator == null || locator.tenant() == null || locator.authorizationId() == null) return;
+        OAuth2Authorization family = readRecord(locator.tenant(), locator.authorizationId());
+        if (family == null || !locator.tenant().equals(tenantOf(family))) return;
+        log.warn("Refresh token reuse detected for authorization {} in tenant {}: withdrawing the refresh family",
+                locator.authorizationId(), locator.tenant());
+        deleteLocators(family, locator.tenant());
+        stringRedis.delete(authorizationIdLocatorKey(family.getId()));
+        authorizationRedis.delete(authorizationKey(locator.tenant(), family.getId()));
+        endSession(locator.tenant(), family, "refresh token reuse");
+    }
+
+    private String spentRefreshKey(String tokenValue) {
+        return contextSegment + ":" + serviceSegment + ":spent-refresh:" + sha256(tokenValue);
     }
 
     // ── tenant resolution ───────────────────────────────────────────────────────────────────────

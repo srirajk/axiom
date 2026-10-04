@@ -31,6 +31,37 @@ class TokenExchangeAuthenticationConverterTest {
     }
 
     @Test
+    void invocationParametersAreOptionalStrictAndNonAuthoritativeLabels() {
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated("broker-client", "n/a", java.util.List.of()));
+        TokenExchangeAuthenticationToken plain = (TokenExchangeAuthenticationToken) converter.convert(request());
+        assertThat(plain.invocation().any()).isFalse();
+
+        MockHttpServletRequest full = request();
+        full.addParameter(TokenExchangeConstants.INVOCATION_AUTHORIZATION, "opaque.evidence");
+        full.addParameter(TokenExchangeConstants.INVOCATION_RUN, "run-1");
+        full.addParameter(TokenExchangeConstants.INVOCATION_TTL, "600");
+        full.addParameter(TokenExchangeConstants.INVOCATION_IDEMPOTENCY_KEY, "key-1");
+        TokenExchangeAuthenticationToken parsed = (TokenExchangeAuthenticationToken) converter.convert(full);
+        assertThat(parsed.invocation().evidence()).isEqualTo("opaque.evidence");
+        assertThat(parsed.invocation().ttlSeconds()).isEqualTo(600L);
+        assertThat(parsed.invocation().establishes()).isTrue();
+
+        for (String[] bad : new String[][]{{TokenExchangeConstants.INVOCATION_TTL, "-5"}, {TokenExchangeConstants.INVOCATION_TTL, "1e9"},
+                {TokenExchangeConstants.INVOCATION_TTL, "0"}, {TokenExchangeConstants.INVOCATION_RUN, "has space"},
+                {TokenExchangeConstants.INVOCATION_BRANCH, "x".repeat(200)}, {TokenExchangeConstants.INVOCATION_CONTEXT, "not-a-uuid"},
+                {TokenExchangeConstants.INVOCATION_AUTHORIZATION, "e".repeat(8193)}}) {
+            MockHttpServletRequest r = request();
+            r.addParameter(bad[0], bad[1]);
+            assertThatThrownBy(() -> converter.convert(r)).as(bad[0]).isInstanceOf(OAuth2AuthenticationException.class);
+        }
+        MockHttpServletRequest duplicated = request();
+        duplicated.addParameter(TokenExchangeConstants.INVOCATION_AUTHORIZATION, "a");
+        duplicated.addParameter(TokenExchangeConstants.INVOCATION_AUTHORIZATION, "b");
+        assertThatThrownBy(() -> converter.convert(duplicated)).isInstanceOf(OAuth2AuthenticationException.class);
+    }
+
+    @Test
     void rejectsActorTokenOrCallerOwnedPurposeAndDelegation() {
         MockHttpServletRequest actorToken = request();
         actorToken.addParameter(TokenExchangeConstants.ACTOR_TOKEN, "untrusted-actor");

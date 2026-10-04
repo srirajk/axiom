@@ -52,6 +52,7 @@ public final class TokenExchangeAuthenticationProvider implements Authentication
     private final AuditService audit;
     private final AgentExchangeAuthorityService exchangeAuthority;
     private final Duration maximumTtl;
+    private final com.openwolf.iam.invocation.InvocationContextService contexts;
 
     public TokenExchangeAuthenticationProvider(OAuth2AuthorizationService authorizations,
                                                OAuth2TokenGenerator<? extends OAuth2Token> tokenGenerator,
@@ -60,6 +61,18 @@ public final class TokenExchangeAuthenticationProvider implements Authentication
                                                AuditService audit,
                                                AgentExchangeAuthorityService exchangeAuthority,
                                                @Value("${iam.oauth2.token-exchange.ttl:PT5M}") Duration maximumTtl) {
+        this(authorizations, tokenGenerator, subjectDecoder, applications, audit, exchangeAuthority, maximumTtl, null);
+    }
+
+    public TokenExchangeAuthenticationProvider(OAuth2AuthorizationService authorizations,
+                                               OAuth2TokenGenerator<? extends OAuth2Token> tokenGenerator,
+                                               JwtDecoder subjectDecoder,
+                                               TenantApplicationService applications,
+                                               AuditService audit,
+                                               AgentExchangeAuthorityService exchangeAuthority,
+                                               Duration maximumTtl,
+                                               com.openwolf.iam.invocation.InvocationContextService contexts) {
+        this.contexts = contexts;
         this.authorizations = authorizations;
         this.tokenGenerator = tokenGenerator;
         this.subjectDecoder = subjectDecoder;
@@ -91,7 +104,7 @@ public final class TokenExchangeAuthenticationProvider implements Authentication
         AgentExchangeAuthorityService.ResolvedAuthority authority;
         try {
             authority = exchangeAuthority.resolve(subject, actorClient.getClientId(),
-                    exchange.audience(), exchange.requestedScopes());
+                    exchange.audience(), exchange.requestedScopes(), exchange.delegationPurpose());
         } catch (RuntimeException denied) {
             if (denied instanceof OAuth2AuthenticationException oauth) throw oauth;
             throw new OAuth2AuthenticationException(INVALID_GRANT, denied);
@@ -101,6 +114,9 @@ public final class TokenExchangeAuthenticationProvider implements Authentication
                 || !authority.audience().equals(exchange.audience())
                 || !authority.scopes().containsAll(exchange.requestedScopes())) fail(INVALID_GRANT);
 
+        com.openwolf.iam.invocation.InvocationContextService.Binding binding =
+                bindInvocation(exchange, subject, authority, actorClient.getClientId());
+
         Instant now = Instant.now();
         Instant subjectExpiry = subject.getExpiresAt();
         if (subjectExpiry == null || !subjectExpiry.isAfter(now)) fail(INVALID_GRANT);
@@ -108,6 +124,7 @@ public final class TokenExchangeAuthenticationProvider implements Authentication
         if (authority.authorityExpiresAt() != null) {
             ttl = minimum(ttl, Duration.between(now, authority.authorityExpiresAt()));
         }
+        if (binding != null) ttl = minimum(ttl, Duration.between(now, binding.deadline()));
         if (ttl.isZero() || ttl.isNegative()) fail(INVALID_GRANT);
         RegisteredClient boundedClient = RegisteredClient.from(actorClient)
                 .tokenSettings(TokenSettings.withSettings(actorClient.getTokenSettings().getSettings())
@@ -118,7 +135,9 @@ public final class TokenExchangeAuthenticationProvider implements Authentication
                 subject, exchange.audience(), authority.purpose(), authority.profile().name().toLowerCase(),
                 authority.authorityId(), authority.delegationId(), authority.tokenUse().name().toLowerCase(),
                 authority.identityKind(), authority.actingWorkload().getId().toString(),
-                authority.actingWorkload().getWorkloadRef(), authority.actingWorkload().getOauthClientId()));
+                authority.actingWorkload().getWorkloadRef(), authority.actingWorkload().getOauthClientId(),
+                binding == null ? null : new TokenExchangeAuthenticationToken.InvocationBinding(
+                        binding.contextId().toString(), binding.version(), binding.tokenDepth())));
         OAuth2Authorization pending = OAuth2Authorization.withRegisteredClient(actorClient)
                 .id(UUID.randomUUID().toString())
                 .principalName(subject.getSubject())
@@ -158,27 +177,87 @@ public final class TokenExchangeAuthenticationProvider implements Authentication
                 .token(accessToken, metadata -> metadata.put(OAuth2Authorization.Token.CLAIMS_METADATA_NAME, jwt.getClaims()))
                 .build();
         authorizations.save(authorization);
-        audit.logRequired(tenantId, actorClient.getClientId(), "TOKEN_EXCHANGE_SUCCEEDED", "delegated_token", authority.authorityId(),
-                null, Map.of("subject", subject.getSubject(), "requester", actorClient.getClientId(),
-                        "actor", authority.actingWorkload().getWorkloadRef(),
-                        "profile", authority.profile().name().toLowerCase(),
-                        "audience", exchange.audience(), "scopes", exchange.requestedScopes(),
-                        "purpose", authority.purpose(), "expires_at", jwt.getExpiresAt()), authority.authorityId());
+        Map<String, Object> issued = new java.util.LinkedHashMap<>(Map.of("subject", subject.getSubject(),
+                "requester", actorClient.getClientId(), "actor", authority.actingWorkload().getWorkloadRef(),
+                "profile", authority.profile().name().toLowerCase(), "audience", exchange.audience(),
+                "scopes", exchange.requestedScopes(), "purpose", authority.purpose(), "expires_at", jwt.getExpiresAt()));
+        if (jwt.getId() != null) issued.put("token_id", jwt.getId());
+        if (binding != null) {
+            issued.put("context_id", binding.contextId().toString());
+            issued.put("context_version", binding.version());
+            issued.put("context_depth", binding.tokenDepth());
+            issued.put("decision", binding.created() ? "context_established_or_branched" : "context_continued");
+        }
+        audit.logRequired(tenantId, actorClient.getClientId(), "TOKEN_EXCHANGE_SUCCEEDED", "delegated_token",
+                authority.authorityId(), null, issued,
+                binding == null ? authority.authorityId() : binding.contextId().toString());
 
         Map<String, Object> responseParameters = new java.util.LinkedHashMap<>();
         responseParameters.put("issued_token_type", TokenExchangeConstants.ACCESS_TOKEN_TYPE);
         responseParameters.put("authority_id", authority.authorityId());
         if (authority.delegationId() != null) responseParameters.put("delegation_id", authority.delegationId());
+        if (binding != null) {
+            responseParameters.put("invocation_context", binding.contextId().toString());
+            responseParameters.put("invocation_context_version", binding.version());
+        }
         return new OAuth2AccessTokenAuthenticationToken(actorClient, actor, accessToken, null,
                 responseParameters);
         } catch (OAuth2AuthenticationException denied) {
             String auditId = UUID.randomUUID().toString();
             audit.logRequired(actorAuthority.tenantId(), actorClient.getClientId(), "TOKEN_EXCHANGE_DENIED",
                     "delegated_token", auditId, null,
-                    Map.of("actor", actorClient.getClientId(), "audience", exchange.audience(),
-                            "reason", denied.getError().getErrorCode()), auditId);
+                    denialDetails(actorClient.getClientId(), exchange, denied), auditId);
             throw denied;
         }
+    }
+
+    /**
+     * Phase 2: a context-bound subject continues its context; a broker exchanging a Gateway authorization with
+     * {@code invocation_authorization} (or {@code invocation_context}) establishes (or resumes) one. Without either,
+     * the Phase 1 behaviour is unchanged. Context parameters on any other edge are refused.
+     */
+    private com.openwolf.iam.invocation.InvocationContextService.Binding bindInvocation(
+            TokenExchangeAuthenticationToken exchange, Jwt subject,
+            AgentExchangeAuthorityService.ResolvedAuthority authority, String requesterClientId) {
+        var request = exchange.invocation();
+        boolean bound = subject.getClaims().containsKey(com.openwolf.iam.invocation.InvocationContextService.CLAIM_CONTEXT);
+        if (!bound && !request.any()) return null;
+        if (contexts == null) fail(INVALID_GRANT);
+        if (bound) {
+            if (request.establishes() || request.idempotencyKey() != null || request.ttlSeconds() != null) {
+                fail(new OAuth2Error(OAuth2ErrorCodes.INVALID_REQUEST));
+            }
+            return contexts.continueFrom(subject, exchange.requestedScopes(), request.branchRef());
+        }
+        if (!request.establishes() || request.branchRef() != null
+                || authority.profile() != AgentExchangeAuthorityService.Profile.GATEWAY_BACKEND) {
+            fail(new OAuth2Error(OAuth2ErrorCodes.INVALID_REQUEST));
+        }
+        var broker = exchangeAuthority.activeBroker(authority.tenantId(), requesterClientId);
+        java.util.UUID gatewayRoute;
+        try {
+            gatewayRoute = java.util.UUID.fromString(requiredClaim(subject, "authority_id"));
+        } catch (IllegalArgumentException malformed) {
+            throw new OAuth2AuthenticationException(INVALID_GRANT);
+        }
+        return contexts.establish(new com.openwolf.iam.invocation.InvocationContextService.Establishment(
+                authority.tenantId(), requesterClientId, broker.getId(), broker.getGatewayAudience(), gatewayRoute,
+                subject, authority.actingWorkload().getOauthClientId(), authority.actingWorkload().getId(),
+                exchange.audience(), exchange.requestedScopes()), request);
+    }
+
+    private static Map<String, Object> denialDetails(String actor, TokenExchangeAuthenticationToken exchange,
+                                                     OAuth2AuthenticationException denied) {
+        Map<String, Object> details = new java.util.LinkedHashMap<>();
+        details.put("actor", actor);
+        details.put("audience", exchange.audience());
+        details.put("reason", denied.getError().getErrorCode());
+        if (denied instanceof com.openwolf.iam.invocation.InvocationContextService.Denied context) {
+            details.put("decision", "invocation_context_denied");
+            details.put("context_reason", context.reason());
+        }
+        if (exchange.invocation().runRef() != null) details.put("run_ref", exchange.invocation().runRef());
+        return details;
     }
 
     @Override

@@ -1,5 +1,9 @@
 # Axiom on the local Meridian Kubernetes cluster
 
+> Historical shared-cluster profile. **Do not run `install.sh` for the new isolated release.** It targets the
+> existing `axiom` namespace and a shared Gateway. The disposable, namespace-only replacement is
+> [`deploy/axiom-test/README.md`](../axiom-test/README.md).
+
 This profile installs Axiom in the `axiom` namespace and owns the local identity edge. The
 replay-safe installer ensures the pinned Envoy Gateway controller, `meridian-gateway` GatewayClass,
 and `gateway-demo/meridian-edge` Gateway exist when missing. It validates and reuses matching

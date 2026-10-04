@@ -1,0 +1,26 @@
+[project]
+name = "axiom-identity-cookbook"
+version = "0.1.0"
+description = "Runnable Python examples and HTTP contract tests for Axiom's consumer-neutral identity interface"
+requires-python = ">=3.11"
+dependencies = [
+  "requests>=2.31,<3",
+  "PyJWT[crypto]>=2.8,<3",
+  "cryptography>=41",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.4,<9"]
+browser = ["playwright==1.63.0"]
+
+[tool.setuptools]
+packages = ["axiom_cookbook", "basics", "ciam", "oauth", "consumer_contracts", "idp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-p no:cacheprovider -ra --strict-markers"
+markers = [
+  "disruptive: restarts or pauses a test-owned dependency (requires AXIOM_COOKBOOK_ALLOW_DISRUPTIVE=1)",
+  "browser: drives Axiom's real login page in headless Chromium (requires the 'browser' extra)",
+]

@@ -25,8 +25,6 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.TreeMap;
@@ -64,9 +62,13 @@ public class IdentityControlRequestService {
                                                   HttpServletRequest httpRequest) {
         requireTenantAdmin(tenantId);
         validateTarget(input.action(), input.targetType());
+        // Reject a payload the action cannot use before anything is stored; accepted payloads are encrypted at rest
+        // and their payloadHash never digests a secret without a key (IdentityControlPayloads).
+        IdentityControlPayloads.validate(input.action(), input.payload());
         String canonical = canonical(input.payload());
+        String payloadHash = IdentityControlPayloads.digest(secrets, input.action(), input.payload(), canonical);
         IdentityControlRequest request = requests.save(new IdentityControlRequest(tenantId, input.action(), input.targetType(),
-                input.targetId(), sha256(canonical), canonical.equals("{}") ? null : secrets.protect(canonical),
+                input.targetId(), payloadHash, canonical.equals("{}") ? null : secrets.protect(canonical),
                 currentActor(), clock.instant(), clock.instant().plusSeconds(ttlSeconds), input.expectedTargetRevision()));
         IdentityControlRequestResponse result = response(request);
         auditTransition(tenantId, request, "PROPOSE_IDENTITY_CONTROL_REQUEST", null, result, httpRequest);
@@ -156,7 +158,8 @@ public class IdentityControlRequestService {
         IdentityControlRequest.TargetType expected = switch (action) {
             case EMERGENCY_RETIRE_SIGNING_KEY -> IdentityControlRequest.TargetType.SIGNING_KEY;
             case DISABLE_IDENTITY_SOURCE, ROTATE_IDENTITY_SOURCE_SECRET -> IdentityControlRequest.TargetType.IDENTITY_SOURCE;
-            case REVOKE_APPLICATION_CLIENT_SECRET, ROTATE_APPLICATION_CLIENT_SECRET -> IdentityControlRequest.TargetType.APPLICATION_CLIENT;
+            case REVOKE_APPLICATION_CLIENT_SECRET, ROTATE_APPLICATION_CLIENT_SECRET, REPLACE_APPLICATION_CLIENT_KEYS ->
+                    IdentityControlRequest.TargetType.APPLICATION_CLIENT;
             case REVOKE_SCIM_SOURCE, ROTATE_SCIM_SOURCE_CREDENTIAL -> IdentityControlRequest.TargetType.SCIM_SOURCE;
         };
         if (expected != target) throw new ResourceConflictException("identity control action and target type do not match");
@@ -196,10 +199,6 @@ public class IdentityControlRequestService {
         return value;
     }
 
-    private static String sha256(String value) {
-        try { return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
-        catch (Exception ex) { throw new IllegalStateException("SHA-256 unavailable", ex); }
-    }
 
     private IdentityControlRequestResponse response(IdentityControlRequest request) { return response(request, request.getRevision()); }
     private IdentityControlRequestResponse response(IdentityControlRequest r, long revision) {

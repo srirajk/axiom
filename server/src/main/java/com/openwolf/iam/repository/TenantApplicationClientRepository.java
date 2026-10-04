@@ -14,6 +14,9 @@ public interface TenantApplicationClientRepository extends JpaRepository<TenantA
     Optional<TenantApplicationClient> findByIdAndApplicationId(UUID id, UUID applicationId);
     Optional<TenantApplicationClient> findByClientId(String clientId);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select c from TenantApplicationClient c where c.clientId = :clientId")
+    Optional<TenantApplicationClient> findByClientIdForUpdate(String clientId);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select c from TenantApplicationClient c where c.id = :id")
     Optional<TenantApplicationClient> findByIdForUpdate(UUID id);
 }

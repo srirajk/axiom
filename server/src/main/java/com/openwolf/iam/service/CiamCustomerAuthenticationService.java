@@ -37,6 +37,18 @@ public class CiamCustomerAuthenticationService {
                 customer.getDisplayName(), "customer", customer.getTokenVersion());
     }
 
+    /**
+     * The customer as of now, only if still ACTIVE in that tenant with the same token version (no suspension or
+     * credential recovery since sign-in). Used at token issuance and refresh for customer browser logins.
+     */
+    public java.util.Optional<AuthenticatedCustomer> current(String tenantId, UUID customerId, long tokenVersion) {
+        return customers.findByTenantIdAndId(tenantId, customerId)
+                .filter(value -> value.getStatus() == CustomerIdentity.Status.ACTIVE)
+                .filter(value -> value.getTokenVersion() == tokenVersion)
+                .map(value -> new AuthenticatedCustomer(value.getId(), tenantId, value.getEmail(),
+                        value.getDisplayName(), "customer", value.getTokenVersion()));
+    }
+
     /** Token-time fail-closed check for subject-token and customer API validators. */
     public boolean isCurrentActive(String tenantId, UUID customerId, long tokenVersion) {
         return customers.findByTenantIdAndId(tenantId, customerId)

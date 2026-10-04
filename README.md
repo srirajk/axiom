@@ -15,6 +15,11 @@ development, integration, and product evaluation. It is not yet certified for pr
   [Configure the local environment](#configure-the-local-environment), then
   [Start Axiom](#start-axiom).
 - For an authenticated readiness check, follow [Verify the environment](#verify-the-environment).
+- For consumer-neutral, executable identity integration examples, use the
+  [Axiom identity cookbook](examples/identity_scenarios/README.md). Its local estate is separate from Kubernetes.
+- For the disposable Docker Desktop Helm installation, use the
+  [`axiom-test` quickstart](deploy/axiom-test/README.md). It installs only namespaced Axiom resources and has no
+  public issuer or production claim.
 - For a Probata handoff, read [Probata consumer contract](#probata-consumer-contract).
 - For customer identity and Agent on-behalf-of authorization, read
   [CIAM and Agent On-Behalf-Of Contract](docs/architecture/ciam-agent-delegation.md), then run the

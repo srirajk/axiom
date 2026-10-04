@@ -5,14 +5,17 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import pathlib
 import re
 import secrets
+import stat
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -22,6 +25,14 @@ from typing import Any
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "configuration" / "tenants"
 DEFAULT_SECRET_FILE = ROOT / ".local" / "configured-agent-clients.json"
+# Reveal-once credentials destined for a Kubernetes Secret are escrowed here (0600) from the moment Axiom returns
+# them until the Secret is created and verified, so a failed or interrupted delivery can be retried without
+# minting a new credential. The file is gitignored and holds no entry once every delivery has succeeded.
+PENDING_FILE_NAME = "pending-kubernetes-client-secrets.json"
+# `create`, never `apply`: apply (or create --save-config) copies the whole manifest, secret included, into the
+# kubectl.kubernetes.io/last-applied-configuration annotation.
+KUBECTL_CREATE_FROM_STDIN = ["kubectl", "create", "-f", "-"]
+DRY_RUN_PLACEHOLDER = "dry-run-placeholder-not-a-credential"
 KUBERNETES_NAME = re.compile(r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$")
 
 
@@ -260,6 +271,37 @@ class Axiom:
             raise RuntimeError(f"cannot reach Axiom at {self.base_url}: {exc.reason}") from exc
         return json.loads(payload) if payload else None
 
+    def client_credentials(self, client_id: str, client_secret: str, scope: str) -> tuple[int, dict[str, Any]]:
+        """Possession proof: (HTTP status, JSON body) of a client_credentials request. Never raises on HTTP errors,
+        never logs, and the caller never prints the body."""
+        status, body = self._form("/oauth/token", client_id, client_secret,
+                                  {"grant_type": "client_credentials", "scope": scope})
+        token = body.get("access_token") if status == 200 else None
+        if isinstance(token, str):
+            # The proof token is not needed; revoke it best-effort so it does not outlive the check.
+            self._form("/oauth/revoke", client_id, client_secret, {"token": token})
+        return status, {k: v for k, v in body.items() if k != "access_token"}
+
+    def _form(self, path: str, client_id: str, client_secret: str, form: dict[str, str]) -> tuple[int, dict[str, Any]]:
+        basic = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("ascii")
+        request = urllib.request.Request(
+            self.base_url + path, data=urllib.parse.urlencode(form).encode("ascii"), method="POST",
+            headers={"Authorization": f"Basic {basic}", "Accept": "application/json",
+                     "Content-Type": "application/x-www-form-urlencoded"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                raw, status = response.read().decode("utf-8"), response.status
+        except urllib.error.HTTPError as exc:
+            raw, status = exc.read().decode("utf-8"), exc.code
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"cannot reach Axiom at {self.base_url}: {exc.reason}") from exc
+        try:
+            body = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            body = {}
+        return status, body if isinstance(body, dict) else {}
+
 
 class Publisher:
     def __init__(self, api: Axiom, bundle: dict[str, Any], secret_file: pathlib.Path) -> None:
@@ -269,6 +311,8 @@ class Publisher:
         self.secret_file = secret_file
         self.counts: Counter[str] = Counter()
         self.secrets = read_secret_state(secret_file)
+        self.pending_file = secret_file.with_name(PENDING_FILE_NAME)
+        self.pending = read_secret_state(self.pending_file)
 
     def run(self) -> Counter[str]:
         token_tenant = str(self.api.claims.get("tenant_id", ""))
@@ -303,14 +347,14 @@ class Publisher:
         if not tenant_secrets:
             self.secrets.pop(self.tenant, None)
 
-    def ensure_kubernetes_secret_access(self) -> None:
+    def ensure_kubernetes_secret_access(self, verbs: tuple[str, ...] = ("get", "create")) -> None:
         namespaces = {
             str(spec["kubernetesSecret"]["namespace"])
             for spec in self.bundle["agent_workloads"] + self.bundle["trusted_brokers"]
             if spec.get("kubernetesSecret")
         }
         for namespace in sorted(namespaces):
-            for verb in ("get", "create", "patch"):
+            for verb in verbs:
                 result = subprocess.run(
                     ["kubectl", "auth", "can-i", verb, "secrets", "-n", namespace],
                     check=True,
@@ -672,40 +716,269 @@ class Publisher:
         self, application: dict[str, Any], spec: dict[str, Any], client_type: str
     ) -> dict[str, Any]:
         app_id = application["id"]
-        clients = self.api.request(
-            f"/admin/tenants/{self.tenant}/applications/{app_id}/clients"
-        )
-        matches = [item for item in clients if item.get("clientId") == spec["clientId"]]
-        if len(matches) > 1:
-            raise ConfigurationError(f"duplicate OAuth client: {spec['clientId']}")
-        if matches:
-            current = matches[0]
-            if current.get("clientType") != client_type or set(current.get("scopes", [])) != set(spec["scopes"]):
-                raise ConfigurationError(f"OAuth client drift: {spec['clientId']}")
-            if spec.get("kubernetesSecret"):
+        current = self.find_client(app_id, spec, client_type)
+        if current is not None:
+            entry = self.pending_entry(spec)
+            if entry is not None and entry.get("phase", "create") == "create":
+                # An earlier run escrowed and (perhaps) created this client but did not finish: prove the escrowed
+                # credential authenticates it before delivering anything.
+                self.require_deliverable(spec, entry)
+                self.prove_possession(current, spec, str(entry["client_secret"]))
+                self.deliver_pending(spec)
+            elif spec.get("kubernetesSecret"):
                 verify_kubernetes_secret(spec, current["clientId"])
             self.counts["oauth_clients_unchanged"] += 1
             return current
-        response = self.api.request(
-            f"/admin/tenants/{self.tenant}/applications/{app_id}/clients",
-            method="POST",
-            body={
-                "clientId": spec["clientId"],
-                "clientType": client_type,
-                "redirectUris": spec.get("redirectUris", []),
-                "postLogoutRedirectUris": spec.get("postLogoutRedirectUris", []),
-                "scopes": spec["scopes"],
-            },
-        )
+        if client_type != "CONFIDENTIAL_SERVICE":
+            response = self.post_client(app_id, spec, client_type, None)
+            self.counts["oauth_clients_created"] += 1
+            return response["client"]
+
+        # Confidential: the operator generates the secret and makes it durable BEFORE calling Axiom, so no
+        # credential ever exists only in an HTTP response. A rerun reuses the same escrowed value.
+        ensure_private_directory(self.pending_file.parent)
+        entry = self.pending_entry(spec)
+        if entry is not None:
+            self.require_deliverable(spec, entry)
+            if entry.get("phase", "create") != "create":
+                raise ConfigurationError(f"a pending rotation exists for {spec['clientId']} but Axiom has no such "
+                                         f"client; resolve {self.pending_file} manually")
+        if spec.get("kubernetesSecret"):
+            preflight_kubernetes_secret(spec)
+        if entry is None:
+            entry = self.escrow(spec, new_client_secret(), "create")
+        client_secret = str(entry["client_secret"])
+        try:
+            response = self.post_client(app_id, spec, client_type, client_secret)
+        except RuntimeError as exc:
+            if " returned HTTP 409" not in str(exc):
+                raise
+            # Created by an earlier, interrupted attempt (or concurrently): prove possession instead.
+            current = self.find_client(app_id, spec, client_type)
+            if current is None:
+                raise
+            self.prove_possession(current, spec, client_secret)
+            self.deliver_pending(spec)
+            self.counts["oauth_clients_recovered"] += 1
+            return current
+        if response.get("serviceSecret") is not None:
+            # An Axiom without operator-supplied secrets ignored the field and minted its own. Never deliver a
+            # credential the operator did not escrow first: quarantine both values and stop.
+            entry["state"] = "quarantined-server-minted-secret"
+            entry["server_minted_secret"] = response["serviceSecret"]
+            write_private_json(self.pending_file, self.pending)
+            raise ConfigurationError(
+                f"Axiom ignored the operator-supplied secret for {spec['clientId']} and returned its own; nothing "
+                f"was delivered. Both values are quarantined in {self.pending_file}; upgrade Axiom, then recover "
+                f"with an approval-gated rotation (--rotate-client)"
+            )
         current = response["client"]
-        service_secret = response.get("serviceSecret")
-        if service_secret:
-            if spec.get("kubernetesSecret"):
-                apply_kubernetes_secret(spec, service_secret)
-            else:
-                self.secrets.setdefault(self.tenant, {})[spec["clientId"]] = service_secret
+        self.prove_possession(current, spec, client_secret)
+        self.deliver_pending(spec)
         self.counts["oauth_clients_created"] += 1
         return current
+
+    def find_client(self, app_id: str, spec: dict[str, Any], client_type: str) -> dict[str, Any] | None:
+        clients = self.api.request(f"/admin/tenants/{self.tenant}/applications/{app_id}/clients")
+        matches = [item for item in clients if item.get("clientId") == spec["clientId"]]
+        if len(matches) > 1:
+            raise ConfigurationError(f"duplicate OAuth client: {spec['clientId']}")
+        if not matches:
+            return None
+        current = matches[0]
+        if current.get("clientType") != client_type or set(current.get("scopes", [])) != set(spec["scopes"]):
+            raise ConfigurationError(f"OAuth client drift: {spec['clientId']}")
+        return current
+
+    def post_client(self, app_id: str, spec: dict[str, Any], client_type: str, client_secret: str | None) -> Any:
+        body: dict[str, Any] = {
+            "clientId": spec["clientId"],
+            "clientType": client_type,
+            "redirectUris": spec.get("redirectUris", []),
+            "postLogoutRedirectUris": spec.get("postLogoutRedirectUris", []),
+            "scopes": spec["scopes"],
+        }
+        if client_secret is not None:
+            body["clientSecret"] = client_secret
+        return self.api.request(f"/admin/tenants/{self.tenant}/applications/{app_id}/clients",
+                                method="POST", body=body)
+
+    def require_deliverable(self, spec: dict[str, Any], entry: dict[str, Any]) -> None:
+        if entry.get("state"):
+            raise ConfigurationError(f"the escrowed credential for {spec['clientId']} is {entry['state']}; resolve "
+                                     f"{self.pending_file} deliberately before publishing")
+        if destination(spec) != entry_destination(entry):
+            raise ConfigurationError(
+                f"pending credential for {spec['clientId']} targets {entry_destination(entry)}, but configuration "
+                f"now declares {destination(spec)}; the credential stays in {self.pending_file}"
+            )
+
+    def prove_possession(self, client: dict[str, Any], spec: dict[str, Any], client_secret: str) -> None:
+        """Fail closed unless the escrowed secret authenticates this client. 401 is a mismatch; anything other
+        than 200 is indeterminate. Either way the escrow is kept and nothing is delivered."""
+        if client.get("status") != "ACTIVE":
+            raise ConfigurationError(f"OAuth client {spec['clientId']} is {client.get('status')}; the escrowed "
+                                     f"credential is kept in {self.pending_file}")
+        status, body = self.api.client_credentials(spec["clientId"], client_secret, sorted(spec["scopes"])[0])
+        if status == 200:
+            self.counts["oauth_client_possession_proved"] += 1
+            return
+        if status == 401:
+            raise ConfigurationError(
+                f"the escrowed credential does not authenticate {spec['clientId']} (another operator or an older "
+                f"Axiom may have set it); nothing was delivered and {self.pending_file} is unchanged. Recover with "
+                f"an approval-gated rotation (--rotate-client)"
+            )
+        raise ConfigurationError(f"possession of {spec['clientId']} could not be proved (HTTP {status}, "
+                                 f"{body.get('error', 'no error code')}); the escrow is kept, rerun later")
+
+    def deliver_pending(self, spec: dict[str, Any]) -> None:
+        entry = self.pending_entry(spec)
+        if entry is None:
+            return
+        if spec.get("kubernetesSecret"):
+            self.deliver_pending_kubernetes_secret(spec)
+            return
+        self.secrets.setdefault(self.tenant, {})[spec["clientId"]] = str(entry["client_secret"])
+        write_secret_state(self.secret_file, self.secrets)
+        self.clear_pending(spec)
+
+    def escrow(self, spec: dict[str, Any], client_secret: str, phase: str) -> dict[str, Any]:
+        entry: dict[str, Any] = {"client_secret": client_secret, "phase": phase}
+        if spec.get("kubernetesSecret"):
+            entry["namespace"], entry["name"] = kubernetes_secret(spec)
+        else:
+            entry["local"] = True
+        self.pending.setdefault(self.tenant, {})[spec["clientId"]] = entry
+        write_private_json(self.pending_file, self.pending)
+        return entry
+
+    def clear_pending(self, spec: dict[str, Any]) -> None:
+        tenant_pending = self.pending.get(self.tenant, {})
+        tenant_pending.pop(spec["clientId"], None)
+        if not tenant_pending:
+            self.pending.pop(self.tenant, None)
+        write_private_json(self.pending_file, self.pending)
+
+    # -- approval-gated rotation -------------------------------------------------------------------------------
+    def client_spec(self, client_id: str) -> dict[str, Any]:
+        for spec in self.bundle["agent_workloads"] + self.bundle["trusted_brokers"]:
+            if spec["clientId"] == client_id:
+                return spec
+        raise ConfigurationError(f"no confidential client {client_id} in the {self.tenant} configuration")
+
+    def locate_client(self, spec: dict[str, Any]) -> dict[str, Any]:
+        applications = {a["applicationKey"]: a for a in self.api.request(f"/admin/tenants/{self.tenant}/applications")}
+        application = applications.get(spec["applicationKey"])
+        current = None if application is None else self.find_client(application["id"], spec, "CONFIDENTIAL_SERVICE")
+        if current is None:
+            raise ConfigurationError(f"OAuth client {spec['clientId']} does not exist; publish it first")
+        return current
+
+    def propose_rotation(self, client_id: str) -> dict[str, Any]:
+        """Escrow a new operator-supplied secret, then propose its rotation. A second administrator approves."""
+        spec = self.client_spec(client_id)
+        current = self.locate_client(spec)
+        ensure_private_directory(self.pending_file.parent)
+        entry = self.pending_entry(spec)
+        if entry is not None and entry.get("phase") != "rotation":
+            raise ConfigurationError(f"{client_id} has a pending creation; finish publishing it first")
+        if entry is not None:
+            self.require_deliverable(spec, entry)
+        else:
+            entry = self.escrow(spec, new_client_secret(), "rotation")
+        if not entry.get("recovery_id"):
+            if entry.get("request_id"):
+                raise ConfigurationError(f"rotation for {client_id} has no recovery identifier; inspect the pending "
+                                         f"request before retrying")
+            entry["recovery_id"] = secrets.token_urlsafe(32)
+            write_private_json(self.pending_file, self.pending)
+        if entry.get("request_id"):
+            return self.rotation_status(spec, entry)
+        payload = {"clientSecret": str(entry["client_secret"]), "recoveryId": str(entry["recovery_id"])}
+        expected_hash = rotation_payload_hash(str(entry["recovery_id"]))
+        existing = [r for r in self.api.request(f"/admin/tenants/{self.tenant}/identity-control-requests?size=100")
+                    .get("content", []) if r.get("payloadHash") == expected_hash and r.get("targetId") == current["id"]
+                    and r.get("action") == "ROTATE_APPLICATION_CLIENT_SECRET"
+                    and r.get("expectedTargetRevision") == current["revision"]]
+        if len(existing) > 1:
+            raise ConfigurationError(f"multiple rotation requests match the escrowed recovery identifier for "
+                                     f"{client_id}; inspect them before retrying")
+        request = existing[0] if existing else self.api.request(
+            f"/admin/tenants/{self.tenant}/identity-control-requests", method="POST",
+            body={"action": "ROTATE_APPLICATION_CLIENT_SECRET", "targetType": "APPLICATION_CLIENT",
+                  "targetId": current["id"], "expectedTargetRevision": current["revision"], "payload": payload})
+        entry["request_id"] = request["id"]
+        write_private_json(self.pending_file, self.pending)
+        return {"clientId": client_id, "requestId": request["id"], "status": request["status"],
+                "next": "a second tenant administrator approves, then run --complete-rotation"}
+
+    def rotation_status(self, spec: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
+        request = self.api.request(f"/admin/tenants/{self.tenant}/identity-control-requests/{entry['request_id']}")
+        return {"clientId": spec["clientId"], "requestId": request["id"], "status": request["status"]}
+
+    def complete_rotation(self, client_id: str) -> dict[str, Any]:
+        spec = self.client_spec(client_id)
+        entry = self.pending_entry(spec)
+        if entry is None or entry.get("phase") != "rotation" or not entry.get("request_id"):
+            raise ConfigurationError(f"no proposed rotation is escrowed for {client_id}")
+        self.require_deliverable(spec, entry)
+        base = f"/admin/tenants/{self.tenant}/identity-control-requests/{entry['request_id']}"
+        request = self.api.request(base)
+        status = request["status"]
+        if status in ("REJECTED", "CANCELLED", "EXPIRED"):
+            # Never applied, so the escrowed value never became a credential: discard it.
+            self.clear_pending(spec)
+            return {"clientId": client_id, "requestId": request["id"], "status": status, "escrow": "discarded"}
+        if status == "PENDING":
+            return {"clientId": client_id, "requestId": request["id"], "status": status,
+                    "next": "awaiting approval by a second tenant administrator"}
+        if status == "APPROVED":
+            applied = self.api.request(base + "/apply", method="POST", body={"expectedRevision": request["revision"]})
+            if applied.get("oneTimeSecret") is not None:
+                entry["state"] = "quarantined-server-minted-secret"
+                entry["server_minted_secret"] = applied["oneTimeSecret"]
+                write_private_json(self.pending_file, self.pending)
+                raise ConfigurationError(f"Axiom applied a generated secret instead of the escrowed one for "
+                                         f"{client_id}; both are quarantined in {self.pending_file}")
+        elif status != "APPLIED":
+            raise ConfigurationError(f"rotation request {request['id']} is {status}")
+        current = self.locate_client(spec)
+        self.prove_possession(current, spec, str(entry["client_secret"]))
+        if spec.get("kubernetesSecret"):
+            replace_kubernetes_secret(spec, str(entry["client_secret"]))
+            verify_kubernetes_secret(spec, client_id, expected_secret=str(entry["client_secret"]))
+            self.clear_pending(spec)
+        else:
+            self.deliver_pending(spec)
+        self.counts["oauth_client_secrets_rotated"] += 1
+        return {"clientId": client_id, "requestId": request["id"], "status": "APPLIED", "delivered": True}
+
+    def pending_entry(self, spec: dict[str, Any]) -> dict[str, Any] | None:
+        tenant_pending = self.pending.get(self.tenant)
+        return tenant_pending.get(spec["clientId"]) if isinstance(tenant_pending, dict) else None
+
+    def deliver_pending_kubernetes_secret(self, spec: dict[str, Any]) -> None:
+        entry = self.pending_entry(spec)
+        if entry is None:
+            return
+        namespace, name = kubernetes_secret(spec)
+        self.require_deliverable(spec, entry)
+        client_secret = str(entry["client_secret"])
+        if read_kubernetes_secret(spec) is None:
+            try:
+                create_kubernetes_secret(spec, client_secret)
+            except ConfigurationError as exc:
+                raise ConfigurationError(
+                    f"{exc}; the credential for {spec['clientId']} is kept in {self.pending_file} and the next "
+                    f"run retries delivery without minting a new secret"
+                ) from None
+            self.counts["kubernetes_secrets_created"] += 1
+        else:
+            self.counts["kubernetes_secrets_recovered"] += 1
+        # Raises (and keeps the escrow) unless the Secret holds exactly this client's escrowed credential.
+        verify_kubernetes_secret(spec, spec["clientId"], expected_secret=client_secret)
+        self.clear_pending(spec)
 
 
 def kubernetes_secret(spec: dict[str, Any]) -> tuple[str, str]:
@@ -713,9 +986,75 @@ def kubernetes_secret(spec: dict[str, Any]) -> tuple[str, str]:
     return str(target["namespace"]), str(target["name"])
 
 
-def apply_kubernetes_secret(spec: dict[str, Any], client_secret: str) -> None:
+def new_client_secret() -> str:
+    """256-bit base64url secret in the format Axiom accepts (43 characters, at least 16 distinct)."""
+    while True:
+        value = secrets.token_urlsafe(32)
+        if len(set(value)) >= 16:
+            return value
+
+
+def rotation_payload_hash(recovery_id: str) -> str:
+    """Public recovery fingerprint; deliberately independent of the replacement credential."""
+    return hashlib.sha256(("client-secret-rotation:" + recovery_id).encode("utf-8")).hexdigest()
+
+
+def destination(spec: dict[str, Any]) -> str:
+    return "kubernetes:%s/%s" % kubernetes_secret(spec) if spec.get("kubernetesSecret") else "local output file"
+
+
+def entry_destination(entry: dict[str, Any]) -> str:
+    if entry.get("local"):
+        return "local output file"
+    return f"kubernetes:{entry.get('namespace')}/{entry.get('name')}"
+
+
+def replace_kubernetes_secret(spec: dict[str, Any], client_secret: str) -> None:
+    """Rotation delivery: conditional replacement of this dedicated Secret, preserving unrelated fields.
+
+    A failed ownership check or a resourceVersion conflict leaves the credential escrowed for deliberate retry.
+    The old client-side-apply annotation is removed because it can contain a credential value.
+    """
     namespace, name = kubernetes_secret(spec)
-    manifest = {
+    current = read_kubernetes_secret(spec)
+    manifest = secret_manifest(spec, client_secret)
+    if current is None:
+        verb = KUBECTL_CREATE_FROM_STDIN
+    else:
+        metadata = current.get("metadata") or {}
+        labels = metadata.get("labels") or {}
+        if labels.get("app.kubernetes.io/managed-by") != "axiom-configuration" or \
+                labels.get("axiom.openwolf.com/credential-kind") != "oauth-client":
+            raise ConfigurationError(f"refusing to replace Kubernetes Secret {namespace}/{name}: ownership differs")
+        if current.get("type") not in (None, "Opaque") or current.get("immutable"):
+            raise ConfigurationError(f"refusing to replace Kubernetes Secret {namespace}/{name}: incompatible type")
+        version = metadata.get("resourceVersion")
+        if not isinstance(version, str) or not version:
+            raise ConfigurationError(f"refusing to replace Kubernetes Secret {namespace}/{name}: version is missing")
+        existing_data = current.get("data") or {}
+        try:
+            existing_client_id = base64.b64decode(existing_data["client_id"], validate=True).decode("utf-8")
+        except (KeyError, ValueError, UnicodeDecodeError) as exc:
+            raise ConfigurationError(f"refusing to replace Kubernetes Secret {namespace}/{name}: client identity is invalid") from exc
+        if existing_client_id != spec["clientId"]:
+            raise ConfigurationError(f"refusing to replace Kubernetes Secret {namespace}/{name}: client identity differs")
+        manifest["metadata"]["resourceVersion"] = version
+        manifest["metadata"]["labels"] = {**labels, **manifest["metadata"]["labels"]}
+        annotations = {key: value for key, value in (metadata.get("annotations") or {}).items()
+                       if key != "kubectl.kubernetes.io/last-applied-configuration"}
+        if annotations:
+            manifest["metadata"]["annotations"] = annotations
+        manifest["data"] = existing_data
+        verb = ["kubectl", "replace", "-f", "-"]
+    result = subprocess.run(verb, input=json.dumps(manifest), text=True, capture_output=True)
+    if result.returncode != 0:
+        raise ConfigurationError(f"could not update Kubernetes Secret {namespace}/{name}; the rotated credential "
+                                 f"stays escrowed and --complete-rotation retries delivery")
+
+
+def secret_manifest(spec: dict[str, Any], client_secret: str) -> dict[str, Any]:
+    namespace, name = kubernetes_secret(spec)
+    return {
         "apiVersion": "v1",
         "kind": "Secret",
         "metadata": {
@@ -732,26 +1071,58 @@ def apply_kubernetes_secret(spec: dict[str, Any], client_secret: str) -> None:
             "client_secret": client_secret,
         },
     }
-    subprocess.run(
-        ["kubectl", "apply", "-f", "-"],
-        input=json.dumps(manifest),
-        text=True,
-        check=True,
-        stdout=subprocess.DEVNULL,
-    )
-    verify_kubernetes_secret(spec, spec["clientId"])
 
 
-def verify_kubernetes_secret(spec: dict[str, Any], expected_client_id: str) -> None:
+def preflight_kubernetes_secret(spec: dict[str, Any]) -> None:
+    """Server-side dry run of the exact create, with a placeholder value, before Axiom mints anything: proves the
+    namespace exists, RBAC and admission allow it, and no Secret already holds the name. Nothing is persisted."""
     namespace, name = kubernetes_secret(spec)
     result = subprocess.run(
-        ["kubectl", "get", "secret", name, "-n", namespace, "-o", "json"],
+        [*KUBECTL_CREATE_FROM_STDIN, "--dry-run=server", "-o", "name"],
+        input=json.dumps(secret_manifest(spec, DRY_RUN_PLACEHOLDER)),
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        reason = "it already exists" if "AlreadyExists" in result.stderr else "the server rejected a dry run"
+        raise ConfigurationError(
+            f"refusing to create OAuth client {spec['clientId']}: Kubernetes Secret {namespace}/{name} cannot be "
+            f"created ({reason}); no credential was minted"
+        )
+
+
+def create_kubernetes_secret(spec: dict[str, Any], client_secret: str) -> None:
+    namespace, name = kubernetes_secret(spec)
+    result = subprocess.run(
+        KUBECTL_CREATE_FROM_STDIN,
+        input=json.dumps(secret_manifest(spec, client_secret)),
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise ConfigurationError(f"could not create Kubernetes Secret {namespace}/{name}")
+
+
+def read_kubernetes_secret(spec: dict[str, Any]) -> dict[str, Any] | None:
+    """The Secret object, or None when it does not exist. Any other kubectl failure is an error."""
+    namespace, name = kubernetes_secret(spec)
+    result = subprocess.run(
+        ["kubectl", "get", "secret", name, "-n", namespace, "-o", "json", "--ignore-not-found"],
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
+        raise ConfigurationError(f"cannot read Kubernetes Secret {namespace}/{name}")
+    return json.loads(result.stdout) if result.stdout.strip() else None
+
+
+def verify_kubernetes_secret(
+    spec: dict[str, Any], expected_client_id: str, expected_secret: str | None = None
+) -> None:
+    namespace, name = kubernetes_secret(spec)
+    payload = read_kubernetes_secret(spec)
+    if payload is None:
         raise ConfigurationError(f"required Kubernetes Secret is missing: {namespace}/{name}")
-    payload = json.loads(result.stdout)
     data = payload.get("data", {})
     try:
         client_id = base64.b64decode(data["client_id"]).decode("utf-8")
@@ -762,6 +1133,12 @@ def verify_kubernetes_secret(spec: dict[str, Any], expected_client_id: str) -> N
         ) from exc
     if client_id != expected_client_id or not client_secret:
         raise ConfigurationError(f"Kubernetes Secret identity drift: {namespace}/{name}")
+    if expected_secret is not None and not secrets.compare_digest(
+        client_secret.encode("utf-8"), expected_secret.encode("utf-8")
+    ):
+        raise ConfigurationError(
+            f"Kubernetes Secret {namespace}/{name} holds a different credential than the one Axiom issued"
+        )
 
 
 def jwt_claims(token: str) -> dict[str, Any]:
@@ -793,12 +1170,60 @@ def read_secret_state(path: pathlib.Path) -> dict[str, Any]:
 def write_secret_state(path: pathlib.Path, value: dict[str, Any]) -> None:
     if not value:
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.chmod(0o600)
-    temporary.replace(path)
+    write_private_json(path, value)
+
+
+def ensure_private_directory(directory: pathlib.Path) -> None:
+    """Fail closed unless the credential directory is a real directory (not a symlink), owned by the effective
+    user, with mode exactly 0700. A missing directory is created 0700; an existing unsafe one is never repaired
+    here, because other users may already have read or replaced its contents."""
+    try:
+        info = os.lstat(directory)
+    except FileNotFoundError:
+        directory.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.mkdir(directory, 0o700)
+        except FileExistsError:
+            pass  # created concurrently: checked below like any existing directory
+        info = os.lstat(directory)
+    if stat.S_ISLNK(info.st_mode):
+        raise ConfigurationError(f"credential directory is a symbolic link; refusing to use it: {directory}")
+    if not stat.S_ISDIR(info.st_mode):
+        raise ConfigurationError(f"credential directory is not a directory: {directory}")
+    if info.st_uid != os.geteuid():
+        raise ConfigurationError(f"credential directory is not owned by the current user: {directory}")
+    mode = stat.S_IMODE(info.st_mode)
+    if mode != 0o700:
+        raise ConfigurationError(
+            f"credential directory must have mode 0700 but has {mode:04o}: {directory}; "
+            f"inspect its contents, then fix it deliberately (for example: chmod 700)"
+        )
+
+
+def write_private_json(path: pathlib.Path, value: dict[str, Any]) -> None:
+    """Atomic, durable write that is 0600 from creation (no window with default permissions). An empty value
+    removes the file."""
+    ensure_private_directory(path.parent)
+    if not value:
+        path.unlink(missing_ok=True)
+        return
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
     path.chmod(0o600)
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def inventories(bundle: dict[str, Any]) -> dict[str, int]:
@@ -828,6 +1253,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--username", default=os.environ.get("AXIOM_ADMIN_USERNAME", "admin"))
     parser.add_argument("--secret-file", type=pathlib.Path, default=DEFAULT_SECRET_FILE)
     parser.add_argument("--check", action="store_true", help="validate configuration without calling Axiom")
+    rotation = parser.add_mutually_exclusive_group()
+    rotation.add_argument("--rotate-client", metavar="CLIENT_ID",
+                          help="escrow a new secret and propose its approval-gated rotation")
+    rotation.add_argument("--complete-rotation", metavar="CLIENT_ID",
+                          help="apply an approved rotation, prove the escrowed secret and deliver it")
     return parser.parse_args()
 
 
@@ -849,7 +1279,14 @@ def main() -> int:
         raise ConfigurationError("publish one tenant at a time with --tenant")
     password = required_env("AXIOM_ADMIN_PASSWORD")
     api = Axiom(args.base_url, args.username, password)
-    counts = Publisher(api, bundles[0], args.secret_file.resolve()).run()
+    publisher = Publisher(api, bundles[0], args.secret_file.resolve())
+    if args.rotate_client or args.complete_rotation:
+        publisher.ensure_kubernetes_secret_access(("get", "create", "update"))
+        result = (publisher.propose_rotation(args.rotate_client) if args.rotate_client
+                  else publisher.complete_rotation(args.complete_rotation))
+        print(json.dumps(result, sort_keys=True))
+        return 0
+    counts = publisher.run()
     print("Axiom tenant configuration publish PASS")
     for key in sorted(counts):
         print(f"  {key}: {counts[key]}")

@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: phase0-image-probe
+  namespace: axiom-phase0-test
+  labels:
+    app.kubernetes.io/name: phase0-image-probe
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: server-image
+      image: axiom-server:phase0-codex-74e7e56
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/sh", "-c", "sleep 300"]
+      resources:
+        requests: {cpu: 10m, memory: 32Mi}
+        limits: {cpu: 100m, memory: 64Mi}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+    - name: admin-image
+      image: axiom-admin:phase0-codex-74e7e56
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/sh", "-c", "sleep 300"]
+      resources:
+        requests: {cpu: 10m, memory: 32Mi}
+        limits: {cpu: 100m, memory: 64Mi}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]

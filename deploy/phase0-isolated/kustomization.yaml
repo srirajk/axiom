@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: axiom-phase0-test
+resources:
+  - ../kind/dependencies.yaml
+  - guardrails.yaml
+patches:
+  - target:
+      group: networking.k8s.io
+      version: v1
+      kind: NetworkPolicy
+      name: allow-gateway-and-clients
+    patch: |-
+      - op: replace
+        path: /spec/ingress
+        value:
+          - from:
+              - podSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: axiom-phase0-probe
+              - podSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: axiom
+                    app.kubernetes.io/instance: axiom
+            ports:
+              - protocol: TCP
+                port: 8084
+              - protocol: TCP
+                port: 8080

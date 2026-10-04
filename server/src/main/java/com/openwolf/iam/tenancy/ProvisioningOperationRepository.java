@@ -15,8 +15,13 @@ import java.util.UUID;
 @Repository
 public interface ProvisioningOperationRepository extends JpaRepository<ProvisioningOperation, UUID> {
 
-    /** Serialize same-key retries before the unique idempotency row is read or inserted. */
-    @Query(value = "SELECT pg_advisory_xact_lock(hashtextextended(:idempotencyKey, 0))", nativeQuery = true)
+    /**
+     * Serialize same-key retries before the unique idempotency row is read or inserted. The lock key is namespaced:
+     * the tenant lifecycle session lock uses {@code hashtextextended(tenantId)}, so an idempotency key equal to the
+     * tenant id (a natural client choice) used to wait on the request's own session lock forever.
+     */
+    @Query(value = "SELECT pg_advisory_xact_lock(hashtextextended('provisioning-idempotency:' || :idempotencyKey, 0))",
+            nativeQuery = true)
     void lockIdempotencyKey(String idempotencyKey);
 
     Optional<ProvisioningOperation> findByIdempotencyKey(String idempotencyKey);

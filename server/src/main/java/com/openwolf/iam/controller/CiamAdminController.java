@@ -2,6 +2,7 @@ package com.openwolf.iam.controller;
 
 import com.openwolf.iam.dto.CiamContracts.AgentWorkloadResponse;
 import com.openwolf.iam.dto.CiamContracts.CustomerResponse;
+import com.openwolf.iam.dto.CiamContracts.ProvisionCustomerRequest;
 import com.openwolf.iam.dto.CiamContracts.RegisterAgentWorkloadRequest;
 import com.openwolf.iam.dto.CiamContracts.DelegationGrantResponse;
 import com.openwolf.iam.dto.CiamContracts.CiamLifecycleEventResponse;
@@ -53,6 +54,14 @@ public class CiamAdminController {
     @GetMapping("/agent-workloads")
     public ResponseEntity<List<AgentWorkloadResponse>> listWorkloads(@PathVariable String tenantId) {
         return ResponseEntity.ok(delegations.listWorkloads(tenantId));
+    }
+
+    @PostMapping("/customers")
+    public ResponseEntity<CustomerResponse> provisionCustomer(
+            @PathVariable String tenantId, @Valid @RequestBody ProvisionCustomerRequest request,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.status(201).body(customers.provision(tenantId, request.email(), request.displayName(),
+                request.initialPassword(), audit.currentActor(), correlation(httpRequest)));
     }
 
     @GetMapping("/customers")

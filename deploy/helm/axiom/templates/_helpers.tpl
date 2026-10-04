@@ -40,10 +40,51 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if .Values.serviceAccount.create }}{{ default (include "axiom.fullname" .) .Values.serviceAccount.name }}{{ else }}{{ default "default" .Values.serviceAccount.name }}{{ end }}
 {{- end }}
 
+{{/*
+Per-component ServiceAccount (admin, bootstrap, preflight, test). The server keeps axiom.serviceAccountName, so its
+existing name and workload-identity annotations are unchanged; no other component shares it.
+Usage: include "axiom.componentServiceAccountName" (dict "root" . "component" "admin")
+*/}}
+{{- define "axiom.componentServiceAccountName" -}}
+{{- $sa := .root.Values.serviceAccount -}}
+{{- $component := default (dict) (index $sa .component) -}}
+{{- if $sa.create }}{{ default (printf "%s-%s" (include "axiom.fullname" .root) .component) $component.name }}{{ else }}{{ default "default" $component.name }}{{ end }}
+{{- end }}
+
+{{/*
+Owner-only Secret files (0400). With the pod fsGroup the kubelet adds group read for that group only, so the
+non-root process user can read them and no other user can.
+*/}}
+{{- define "axiom.secretFileMode" -}}
+256
+{{- end }}
+
+{{/*
+Runtime Secret keys a workload may read, as Secret volume items. Every component gets the database password and the
+secrets master key; only the bootstrap path ("bootstrap" true: bootstrap job and preflight) gets the bootstrap
+administrator password. Redis and S3 credentials are projected only when the chart is configured to use them.
+Usage: include "axiom.runtimeSecretItems" (dict "root" . "bootstrap" false)
+*/}}
+{{- define "axiom.runtimeSecretItems" -}}
+{{- $values := .root.Values -}}
+{{- $keys := $values.runtimeSecret.keys -}}
+{{- $selected := list $keys.databasePassword $keys.masterKey -}}
+{{- if .bootstrap }}{{ $selected = append $selected $keys.adminPassword }}{{ end -}}
+{{- if $values.redis.passwordEnabled }}{{ $selected = append $selected $keys.redisPassword }}{{ end -}}
+{{- if and (eq $values.policyRuntime.backend "s3") $values.policyRuntime.s3.credentialsFromRuntimeSecret }}
+{{- $selected = append $selected $keys.s3AccessKey }}{{ $selected = append $selected $keys.s3SecretKey }}
+{{- end -}}
+{{- range $selected }}
+- key: {{ . | quote }}
+  path: {{ . | quote }}
+{{- end }}
+{{- end }}
+
 {{- define "axiom.validateValues" -}}
 {{- if ne (int .Values.server.replicaCount) 1 }}{{ fail "server.replicaCount must remain 1 until session, Policy Studio, tenant-cache, and scheduler state are externalized" }}{{ end }}
 {{- if not .Values.runtimeSecret.existingSecret }}{{ fail "runtimeSecret.existingSecret is required" }}{{ end }}
 {{- if not .Values.signingKey.existingSecret }}{{ fail "signingKey.existingSecret is required" }}{{ end }}
+{{- include "axiom.validateRuntimeSecretKeys" . }}
 {{- if eq .Values.policyRuntime.backend "s3" }}
   {{- if not .Values.policyRuntime.s3.bucket }}{{ fail "policyRuntime.s3.bucket is required for the s3 backend" }}{{ end }}
 {{- else if eq .Values.policyRuntime.backend "pvc" }}
@@ -86,6 +127,18 @@ app.kubernetes.io/instance: {{ .Release.Name }}
   value: {{ .Values.config.approvedBusinessScopes | quote }}
 - name: IAM_CIAM_LOCAL_DEMO_CHALLENGE_DISCLOSURE
   value: {{ .Values.config.ciam.localDemoChallengeDisclosure | quote }}
+- name: IAM_AUTH_LEGACY_PASSWORD_LOGIN_ENABLED
+  value: {{ .Values.config.auth.legacyPasswordLogin | default false | quote }}
+- name: IAM_AUTH_IMPERSONATION_ENABLED
+  value: {{ .Values.config.auth.impersonation | default false | quote }}
+- name: IAM_OAUTH2_INTERACTIVE_ACCESS_TOKEN_TTL
+  value: {{ .Values.config.oauth2.interactiveAccessTokenTtl | default "PT1H" | quote }}
+- name: IAM_OAUTH2_INTERACTIVE_ACCESS_TOKEN_MAX_TTL
+  value: {{ .Values.config.oauth2.interactiveAccessTokenMaxTtl | default "PT1H" | quote }}
+- name: IAM_OAUTH2_REFRESH_TOKEN_TTL
+  value: {{ .Values.config.oauth2.refreshTokenTtl | default "PT8H" | quote }}
+- name: IAM_OAUTH2_REFRESH_TOKEN_MAX_TTL
+  value: {{ .Values.config.oauth2.refreshTokenMaxTtl | default "P30D" | quote }}
 - name: CERBOS_HOST
   value: {{ .Values.cerbos.host | quote }}
 - name: CERBOS_PORT
@@ -117,6 +170,31 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 
+{{/*
+Each runtime-Secret role must name its own Secret key. Volumes project keys by name, so two roles sharing a key would
+give a workload the other role's value: an adminPassword equal to any server-projected key (database, master, Redis
+or S3) would mount the bootstrap administrator password into the long-running server. Checked for every role,
+whether or not its feature is enabled, so enabling Redis or S3 later cannot create an alias. Names must also be
+valid Secret keys and safe projected file names.
+*/}}
+{{- define "axiom.validateRuntimeSecretKeys" -}}
+{{- $keys := .Values.runtimeSecret.keys -}}
+{{- range $role := list "databasePassword" "masterKey" "adminPassword" "redisPassword" "s3AccessKey" "s3SecretKey" }}
+{{- if not (index $keys $role) }}{{ fail (printf "runtimeSecret.keys.%s is required" $role) }}{{ end }}
+{{- end }}
+{{- $seen := dict -}}
+{{- range $role, $raw := $keys }}
+{{- $name := toString $raw -}}
+{{- if or (not (regexMatch "^[-._a-zA-Z0-9]{1,253}$" $name)) (eq $name ".") (eq $name "..") }}
+{{- fail (printf "runtimeSecret.keys.%s %q is not a valid Secret key name" $role $name) }}
+{{- end }}
+{{- if hasKey $seen $name }}
+{{- fail (printf "runtimeSecret.keys.%s and runtimeSecret.keys.%s both name Secret key %q; each role needs its own key" (get $seen $name) $role $name) }}
+{{- end }}
+{{- $_ := set $seen $name $role }}
+{{- end }}
+{{- end }}
+
 {{- define "axiom.serverVolumeMounts" -}}
 - name: signing-key
   mountPath: /app/keys/signing-key.json
@@ -133,22 +211,30 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 
+{{/*
+Usage: include "axiom.serverVolumes" (dict "root" . "bootstrap" false)
+*/}}
 {{- define "axiom.serverVolumes" -}}
+{{- $root := .root -}}
 - name: signing-key
   secret:
-    secretName: {{ .Values.signingKey.existingSecret | quote }}
+    secretName: {{ $root.Values.signingKey.existingSecret | quote }}
+    defaultMode: {{ include "axiom.secretFileMode" . }}
     items:
-      - key: {{ .Values.signingKey.privateJwkKey | quote }}
+      - key: {{ $root.Values.signingKey.privateJwkKey | quote }}
         path: signing-key.json
 - name: runtime-secret
   secret:
-    secretName: {{ .Values.runtimeSecret.existingSecret | quote }}
+    secretName: {{ $root.Values.runtimeSecret.existingSecret | quote }}
+    defaultMode: {{ include "axiom.secretFileMode" . }}
+    items:
+      {{- include "axiom.runtimeSecretItems" (dict "root" $root "bootstrap" .bootstrap) | nindent 6 }}
 - name: tmp
   emptyDir:
     sizeLimit: 256Mi
-{{- if eq .Values.policyRuntime.backend "pvc" }}
+{{- if eq $root.Values.policyRuntime.backend "pvc" }}
 - name: runtime-policies
   persistentVolumeClaim:
-    claimName: {{ .Values.policyRuntime.pvc.existingClaim | quote }}
+    claimName: {{ $root.Values.policyRuntime.pvc.existingClaim | quote }}
 {{- end }}
 {{- end }}

@@ -1,10 +1,14 @@
 package com.openwolf.iam.policystudio.api;
 
+import com.openwolf.iam.scim.ScimCredentialService;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
+
+import static org.mockito.Mockito.mock;
 
 /**
  * Minimal security for the studio @WebMvcTest slices: it enables {@code @PreAuthorize} method security
@@ -16,6 +20,18 @@ import org.springframework.security.web.SecurityFilterChain;
 @TestConfiguration
 @EnableMethodSecurity
 class StudioTestSecurityConfig {
+
+    // MVC slices discover the production authorization-code filter, but these
+    // controller tests never redeem a code and do not start Redis.
+    @Bean
+    StringRedisTemplate testStringRedisTemplate() {
+        return mock(StringRedisTemplate.class);
+    }
+
+    @Bean
+    ScimCredentialService testScimCredentialService() {
+        return mock(ScimCredentialService.class);
+    }
 
     @Bean
     SecurityFilterChain testFilterChain(HttpSecurity http) throws Exception {

@@ -20,4 +20,14 @@ public class LoginController {
         model.addAttribute("loginError", error != null);
         return "login";
     }
+
+    /**
+     * Customer (CIAM) sign-in page, reached only from an authorization request of a customer-facing client. A separate
+     * page and form for a separate population: workforce credentials are never accepted here and vice versa.
+     */
+    @GetMapping("/login/customer")
+    public String customerLoginPage(@RequestParam(name = "error", required = false) String error, Model model) {
+        model.addAttribute("loginError", error != null);
+        return "customer-login";
+    }
 }

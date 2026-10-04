@@ -165,9 +165,12 @@ Customer records are in `ciam/customers.jsonl`, separate from workforce users an
 ```
 
 The publisher uses Axiom's normal customer registration and verification APIs. In a local demonstration,
-`axiom.ciam.local-demo-challenge-disclosure` must be enabled so the registration API can return the one-time
-verification action. In production this remains disabled, and customers complete verification through the
-configured delivery channel or arrive through federation. The publisher fails rather than bypassing verification.
+`iam.ciam.local-demo-challenge-disclosure` (`IAM_CIAM_LOCAL_DEMO_CHALLENGE_DISCLOSURE`) must be enabled so the
+registration API can return the one-time verification action. Axiom refuses to start with it enabled unless the
+issuer is a loopback host (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`) and no delivery provider is configured,
+and it never returns a recovery code: without a real delivery provider, recovery is refused (503). In production the
+setting remains disabled, and customers complete verification through the configured delivery channel or arrive
+through federation. The publisher fails rather than bypassing verification.
 
 Customer consent and delegation grants are deliberately not stored in this package. A customer must grant and
 revoke delegated authority through the CIAM journey. Preloading a grant would fabricate consent.
@@ -192,10 +195,44 @@ For Kubernetes workloads, declare the credential destination on the workload rec
 {"applicationKey":"wealth-orchestrator","clientId":"wealth-orchestrator","workloadRef":"agent:wealth-orchestrator:development","name":"Wealth Orchestrator","scopes":["wealth:review.invoke"],"kubernetesSecret":{"namespace":"wealth","name":"wealth-orchestrator-workload-oauth-client"}}
 ```
 
-The publisher checks Kubernetes access before creating any confidential client. It then writes the reveal-once
-credential directly to the named opaque Secret with keys `client_id` and `client_secret`. It does not put that
-credential in the local output file. A replay verifies that the Secret exists and still belongs to the expected
-client, but never reads or prints the secret value.
+The publisher checks Kubernetes access (`get` and `create` on Secrets) before creating any confidential client.
+The operator, not Axiom, generates every confidential-client secret, so no credential ever exists only in an HTTP
+response. For each new confidential client the publisher:
+
+1. runs a server-side dry run of the exact Secret create with a placeholder value (Kubernetes destinations), and
+   refuses if the Secret already exists or the server would reject it;
+2. generates a secret from 256 CSPRNG bits, base64url-encodes it, and escrows it in `.local/pending-kubernetes-client-secrets.json`
+   (mode `0600`, directory `0700`, gitignored) **before** calling Axiom;
+3. creates the client with that `clientSecret`; Axiom stores only its BCrypt hash and returns no secret;
+4. proves possession with a `client_credentials` token request (then attempts token revocation), then delivers the secret to
+   its declared opaque Secret with `kubectl create` (never `kubectl apply`) or to the local output file;
+5. verifies the delivery and removes the escrow entry.
+
+Recovery is a rerun of the same command. A crash before the create call reuses the escrowed value; a lost
+response or a `409` is resolved by the possession proof, never by minting again. The run stops with the escrow
+intact when the escrowed secret does not authenticate the client, when possession cannot be proved (non-200, non-401),
+when the client is disabled, or when the destination changed. If Axiom ignores `clientSecret` and returns its own
+secret (an older server), nothing is delivered: both values are quarantined in the escrow file for a deliberate,
+approval-gated rotation.
+
+Rotation stays two-person:
+
+```bash
+python3 scripts/configure_axiom.py --tenant meridian --rotate-client <client-id>      # escrow, then propose
+# a second tenant administrator approves the identity-control request
+python3 scripts/configure_axiom.py --tenant meridian --complete-rotation <client-id>  # apply, prove, deliver
+```
+
+`--rotate-client` escrows the new secret and a separate random recovery ID before proposing. Axiom exposes only a
+fingerprint of that ID for lost-response matching; it does not expose a hash of the replacement secret. The API
+validates the secret's encoding and length, but cannot prove that an arbitrary caller used a CSPRNG; operators must
+generate supplied secrets securely. The encrypted payload is authenticated again when approved rotation is applied.
+The script finds an earlier proposal by its recovery fingerprint after a
+lost response. `--complete-rotation` reports a pending request, discards the escrow of a rejected, cancelled or
+expired one, and after approval applies it, proves the new secret and replaces the Secret with `kubectl replace`
+(which needs `update` on Secrets, includes the fetched `resourceVersion`, preserves unrelated keys and annotations,
+and removes any credential-bearing last-applied annotation). A conflict leaves the escrow intact for retry. The credential is never printed or
+passed on a command line.
 
 ### Workforce authority, trusted broker, and Agent exchange routes
 

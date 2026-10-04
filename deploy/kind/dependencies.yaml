@@ -133,6 +133,11 @@ spec:
         - name: runtime-secret
           secret:
             secretName: axiom-runtime
+            # Only the database password, owner-only (0400); fsGroup 999 adds group read for the postgres user.
+            defaultMode: 256
+            items:
+              - key: spring.datasource.password
+                path: spring.datasource.password
         - name: postgres-run
           emptyDir:
             sizeLimit: 32Mi

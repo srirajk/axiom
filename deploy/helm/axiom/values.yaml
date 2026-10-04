@@ -37,8 +37,26 @@ admin:
 
 serviceAccount:
   create: true
+  # Server ServiceAccount (default: the release fullname). Workload-identity annotations here apply to the
+  # server only; no other component uses this account.
   name: ""
   annotations: {}
+  # Separate accounts, so the admin UI, hook Jobs and test pods never inherit the server's identity.
+  # Defaults: <fullname>-admin, -bootstrap, -preflight and -test. With create: false each falls back to "default"
+  # unless a name is set. The bootstrap Job writes the policy runtime, so an S3 workload-identity role it needs
+  # goes in bootstrap.annotations.
+  admin:
+    name: ""
+    annotations: {}
+  bootstrap:
+    name: ""
+    annotations: {}
+  preflight:
+    name: ""
+    annotations: {}
+  test:
+    name: ""
+    annotations: {}
 
 service:
   serverPort: 8084
@@ -86,6 +104,19 @@ config:
     tenantId: meridian
     customerClientId: ciam-card-customer-spa
     customerScopes: cards:incident.read
+  # Secure defaults (IDP baseline): people sign in through the browser authorization-code flow. Enable the legacy
+  # password-to-token endpoints (/auth/login, /auth/token) or persona impersonation only for an environment whose
+  # scripts or test harness still depend on them; Axiom logs a startup warning when either is on.
+  auth:
+    legacyPasswordLogin: false
+    impersonation: false
+  # Interactive (person/customer) token policy. Per-client values may be set lower at client registration; the
+  # maximum caps them. Refresh tokens are issued only to confidential web clients granted offline_access.
+  oauth2:
+    interactiveAccessTokenTtl: PT1H
+    interactiveAccessTokenMaxTtl: PT1H
+    refreshTokenTtl: PT8H
+    refreshTokenMaxTtl: P30D
 
 postgresql:
   host: axiom-postgresql

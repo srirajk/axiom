@@ -45,8 +45,9 @@ public final class DelegatedTokenAuthorityValidator implements OAuth2TokenValida
             String workloadRef = String.valueOf(actor.get("sub"));
             String workloadId = String.valueOf(actor.get("workload_id"));
             if (!actorClientId.equals(String.valueOf(actor.get("client_id")))) return failure();
+            // Re-check the exact grant the token names (Phase 3.2), not whichever grant happens to match now.
             CiamDelegationAuthorityService.AuthorizedDelegation approved = authority.requireAuthorized(
-                    tenantId, customerId, actorClientId, audiences.getFirst(), scopes(token));
+                    tenantId, customerId, actorClientId, audiences.getFirst(), scopes(token), null, delegationId);
             if (!delegationId.equals(approved.grantId()) || !purpose.equals(approved.purpose())
                     || !workloadRef.equals(approved.workloadRef())
                     || !workloadId.equals(approved.workloadId().toString())) return failure();

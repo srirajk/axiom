@@ -26,6 +26,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -43,7 +44,13 @@ public class AgentExchangeAuthorityService {
     private static final OAuth2Error INVALID_TARGET = new OAuth2Error("invalid_target");
     private static final OAuth2Error UNAUTHORIZED_CLIENT = new OAuth2Error(OAuth2ErrorCodes.UNAUTHORIZED_CLIENT);
 
-    public enum Profile { CIAM_CUSTOMER, WORKFORCE, WORKLOAD_CONTINUATION, GATEWAY_BACKEND }
+    /**
+     * {@code CUSTOMER_SESSION}: a customer's browser-login token (OIDC authorization code through a customer-facing
+     * client) redeemed by a workload of the same application; the customer stays the subject and the chain continues
+     * along explicit edges exactly like {@code WORKFORCE}. {@code CIAM_CUSTOMER} is the separate, optional consent-grant
+     * extension (terminal tokens).
+     */
+    public enum Profile { CIAM_CUSTOMER, WORKFORCE, WORKLOAD_CONTINUATION, GATEWAY_BACKEND, CUSTOMER_SESSION }
     public enum TokenUse { DELEGATED_ACCESS, EXCHANGE_SUBJECT, GATEWAY_AUTHORIZATION }
 
     public record ResolvedAuthority(
@@ -103,6 +110,7 @@ public class AgentExchangeAuthorityService {
     public TrustedBrokerResponse registerBroker(String tenantId, RegisterTrustedBrokerRequest request,
                                                  String actorId, String correlationId) {
         String clientId = request.oauthClientId().trim();
+        applications.lockClientForIdentityRegistration(clientId);
         if (workloads.findByOauthClientId(clientId).isPresent()) {
             throw new ResourceConflictException("trusted Gateway broker cannot be an Agent workload");
         }
@@ -181,9 +189,7 @@ public class AgentExchangeAuthorityService {
                 request.destinationType(), destinationId, audience, scopes.stream().toList(),
                 request.purpose().trim(), request.expiresAt(), now));
         audit.record(tenantId, actorId, "AGENT_EXCHANGE_ROUTE_CREATED", "agent_exchange_route",
-                route.getId().toString(), Map.of("sourceWorkloadId", source.getId(),
-                        "destinationType", route.getDestinationType(), "audience", audience,
-                        "scopes", scopes, "expiresAt", request.expiresAt()), correlationId);
+                route.getId().toString(), routeAuditDetails(route), correlationId);
         return response(route);
     }
 
@@ -198,13 +204,42 @@ public class AgentExchangeAuthorityService {
         boolean changed = route.getStatus() == AgentExchangeRoute.Status.ACTIVE;
         route.revoke(clock.instant());
         if (changed) audit.record(tenantId, actorId, "AGENT_EXCHANGE_ROUTE_REVOKED", "agent_exchange_route",
-                routeId.toString(), Map.of("audience", route.getAudience()), correlationId);
+                routeId.toString(), routeAuditDetails(route), correlationId);
         return response(route);
+    }
+
+    private static Map<String, Object> routeAuditDetails(AgentExchangeRoute route) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("sourceWorkloadId", route.getSourceWorkloadId());
+        details.put("destinationType", route.getDestinationType());
+        if (route.getDestinationWorkloadId() != null) {
+            details.put("destinationWorkloadId", route.getDestinationWorkloadId());
+        }
+        details.put("audience", route.getAudience());
+        details.put("scopes", route.getAllowedScopes());
+        details.put("expiresAt", route.getExpiresAt());
+        return details;
     }
 
     @Transactional(readOnly = true)
     public ResolvedAuthority resolve(Jwt subject, String requesterClientId, String audience,
                                      Set<String> requestedScopes) {
+        return resolve(subject, requesterClientId, audience, requestedScopes, null);
+    }
+
+    /** {@code delegationPurpose} (Phase 3.2) is accepted only on the customer-delegation profile. */
+    @Transactional(readOnly = true)
+    public ResolvedAuthority resolve(Jwt subject, String requesterClientId, String audience,
+                                     Set<String> requestedScopes, String delegationPurpose) {
+        ResolvedAuthority resolved = resolveAny(subject, requesterClientId, audience, requestedScopes, delegationPurpose);
+        if (delegationPurpose != null && resolved.profile() != Profile.CIAM_CUSTOMER) {
+            fail(new OAuth2Error(OAuth2ErrorCodes.INVALID_REQUEST));
+        }
+        return resolved;
+    }
+
+    private ResolvedAuthority resolveAny(Jwt subject, String requesterClientId, String audience,
+                                         Set<String> requestedScopes, String delegationPurpose) {
         String tenantId = required(subject, "tenant_id");
         TrustedExchangeBroker broker = brokers.findByOauthClientId(requesterClientId)
                 .filter(value -> value.getStatus() == TrustedExchangeBroker.Status.ACTIVE)
@@ -213,7 +248,9 @@ public class AgentExchangeAuthorityService {
         AgentWorkloadIdentity requester = activeWorkloadByClient(requesterClientId, tenantId);
         if (!subject.getClaims().containsKey("act")) {
             return switch (required(subject, "identity_kind")) {
-                case "customer" -> resolveCustomer(subject, requester, audience, requestedScopes);
+                case "customer" -> singleAudience(subject, TokenExchangeConstants.SUBJECT_AUDIENCE)
+                        ? resolveCustomer(subject, requester, audience, requestedScopes, delegationPurpose)
+                        : resolveCustomerSession(subject, requester, audience, requestedScopes);
                 case "workforce" -> resolveWorkforce(subject, requester, audience, requestedScopes);
                 case "workload" -> resolveAutonomousWorkload(subject, requester, audience, requestedScopes);
                 default -> throw new OAuth2AuthenticationException(INVALID_GRANT);
@@ -225,6 +262,7 @@ public class AgentExchangeAuthorityService {
     /** Decoder-time validation. This runs before requester-specific exchange resolution. */
     @Transactional(readOnly = true)
     public void requireValidNonCustomerSubject(Jwt subject) {
+        requireCurrentInvocationContext(subject);
         String tenantId = required(subject, "tenant_id");
         String identityKind = required(subject, "identity_kind");
         if (!subject.getClaims().containsKey("act")) {
@@ -233,7 +271,7 @@ public class AgentExchangeAuthorityService {
                     .filter(value -> value.tenantId().equals(tenantId))
                     .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
             if ("workforce".equals(identityKind)) {
-                if (client.clientType() != TenantApplicationClient.Type.PUBLIC_BROWSER
+                if (!client.workforceSignIn()
                         || !singleAudience(subject, client.audience())
                         || applicationAccess.decisionAuthority(tenantId, client.applicationId(), subject.getSubject()).isEmpty()) {
                     fail(INVALID_GRANT);
@@ -253,9 +291,21 @@ public class AgentExchangeAuthorityService {
 
         Actor current = actor(subject);
         AgentWorkloadIdentity actor = requireActiveActor(current, tenantId);
-        if (!Set.of("workforce", "workload").contains(identityKind)) fail(INVALID_GRANT);
+        if (!Set.of("workforce", "workload", "customer").contains(identityKind)) fail(INVALID_GRANT);
         String tokenUse = required(subject, "token_use");
         String profile = required(subject, "authority_profile");
+        if ("customer".equals(identityKind)) {
+            // A customer chain exists only under the customer-session profile and while the customer is still active.
+            if (Profile.CIAM_CUSTOMER.name().toLowerCase().equals(profile)) fail(INVALID_GRANT);
+            requireActiveCustomer(tenantId, subject.getSubject());
+        }
+        if (TokenUse.EXCHANGE_SUBJECT.name().toLowerCase().equals(tokenUse)
+                && Profile.CUSTOMER_SESSION.name().toLowerCase().equals(profile)) {
+            if (!required(subject, "client_id").equals(actor.getOauthClientId())
+                    || !singleAudience(subject, receivingAudience(actor))) fail(INVALID_GRANT);
+            requireCustomerAuthority(subject, actor, subjectScopes(subject));
+            return;
+        }
         if (TokenUse.EXCHANGE_SUBJECT.name().toLowerCase().equals(tokenUse)
                 && Profile.WORKFORCE.name().toLowerCase().equals(profile)) {
             if (!required(subject, "client_id").equals(actor.getOauthClientId())
@@ -292,12 +342,43 @@ public class AgentExchangeAuthorityService {
         fail(INVALID_GRANT);
     }
 
+    private com.openwolf.iam.authority.approval.ActionApprovalService actionApprovals;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setActionApprovals(com.openwolf.iam.authority.approval.ActionApprovalService actionApprovals) {
+        this.actionApprovals = actionApprovals;
+    }
+
+    private com.openwolf.iam.authority.standing.StandingGrantService standingGrants;
+    private com.openwolf.iam.authority.standing.StandingGrantService.TaskBinding taskBinding;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setStandingGrants(com.openwolf.iam.authority.standing.StandingGrantService standingGrants,
+                           com.openwolf.iam.authority.task.DurableTaskService tasks) {
+        this.standingGrants = standingGrants;
+        this.taskBinding = tasks;
+    }
+
     /** Introspection-time validation for non-CIAM exchange results. */
     @Transactional(readOnly = true)
     public void requireValidIssuedToken(Jwt token) {
+        // Phase 3.3: standing-grant tokens are validated against the grant's current state, never by signature alone.
+        if (com.openwolf.iam.authority.standing.StandingGrantService.PROFILE.equals(token.getClaimAsString("authority_profile"))) {
+            if (standingGrants == null) fail(INVALID_GRANT);
+            standingGrants.requireCurrent(token, taskBinding);
+            return;
+        }
+        // Phase 3.8: approved-action tokens are valid only while their consumed approval stands.
+        if (com.openwolf.iam.authority.approval.ActionApprovalService.PROFILE.equals(token.getClaimAsString("authority_profile"))) {
+            if (actionApprovals == null) fail(INVALID_GRANT);
+            actionApprovals.requireCurrent(token);
+            return;
+        }
+        requireCurrentInvocationContext(token);
         if (TokenUse.DELEGATED_ACCESS.name().toLowerCase().equals(token.getClaimAsString("token_use"))
                 && Profile.GATEWAY_BACKEND.name().toLowerCase().equals(token.getClaimAsString("authority_profile"))) {
             String tenantId = required(token, "tenant_id");
+            if ("customer".equals(token.getClaimAsString("identity_kind"))) requireActiveCustomer(tenantId, token.getSubject());
             AgentWorkloadIdentity actor = requireActiveActor(actor(token), tenantId);
             AgentExchangeRoute route = routeByAuthority(token, tenantId);
             if (route.getDestinationType() != AgentExchangeRoute.DestinationType.RESOURCE
@@ -312,8 +393,28 @@ public class AgentExchangeAuthorityService {
         requireValidNonCustomerSubject(token);
     }
 
+    private com.openwolf.iam.invocation.InvocationContextService invocationContexts;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setInvocationContexts(com.openwolf.iam.invocation.InvocationContextService invocationContexts) {
+        this.invocationContexts = invocationContexts;
+    }
+
+    /** A context-bound token is valid only while its invocation context is current (Phase 2.6, fail closed). */
+    private void requireCurrentInvocationContext(Jwt token) {
+        if (!token.getClaims().containsKey(com.openwolf.iam.invocation.InvocationContextService.CLAIM_CONTEXT)) return;
+        if (invocationContexts == null) fail(INVALID_GRANT);
+        invocationContexts.requireCurrent(token);
+    }
+
+    /** The active trusted broker registered for an authenticated client (establishment provenance). */
+    @Transactional(readOnly = true)
+    public TrustedExchangeBroker activeBroker(String tenantId, String clientId) {
+        return activeBrokerByClient(tenantId, clientId);
+    }
+
     private ResolvedAuthority resolveCustomer(Jwt subject, AgentWorkloadIdentity requester, String audience,
-                                              Set<String> scopes) {
+                                              Set<String> scopes, String delegationPurpose) {
         if (!singleAudience(subject, TokenExchangeConstants.SUBJECT_AUDIENCE)) fail(INVALID_GRANT);
         var actorClient = confidentialAuthority(requester.getOauthClientId(), requester.getTenantId());
         if (!actorClient.audience().equals(audience)) fail(INVALID_TARGET);
@@ -329,7 +430,7 @@ public class AgentExchangeAuthorityService {
         CiamDelegationAuthorityService.AuthorizedDelegation approved;
         try {
             approved = customerAuthority.requireAuthorized(requester.getTenantId(), customerId,
-                    requester.getOauthClientId(), audience, scopes);
+                    requester.getOauthClientId(), audience, scopes, delegationPurpose, null);
         } catch (RuntimeException denied) {
             throw new OAuth2AuthenticationException(INVALID_GRANT);
         }
@@ -345,10 +446,13 @@ public class AgentExchangeAuthorityService {
         if (!actorClient.audience().equals(audience)) fail(INVALID_TARGET);
         String sourceClientId = required(subject, "client_id");
         var sourceClient = applications.activeAuthority(sourceClientId)
-                .filter(value -> value.clientType() == TenantApplicationClient.Type.PUBLIC_BROWSER)
+                .filter(TenantApplicationService.ClientAuthority::workforceSignIn)
                 .filter(value -> value.tenantId().equals(requester.getTenantId()))
                 .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
         if (!singleAudience(subject, sourceClient.audience())) fail(INVALID_GRANT);
+        // A human token from another application cannot borrow this workload's entitlements.
+        // Cross-application delegation needs a separate explicit authority contract.
+        if (!sourceClient.applicationId().equals(actorClient.applicationId())) fail(INVALID_GRANT);
         var workforce = applicationAccess.decisionAuthority(requester.getTenantId(),
                         actorClient.applicationId(), subject.getSubject())
                 .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
@@ -395,6 +499,18 @@ public class AgentExchangeAuthorityService {
             return routeAuthority(Profile.WORKLOAD_CONTINUATION, TokenUse.GATEWAY_AUTHORIZATION,
                     subject, requester, outbound, required(subject, "identity_kind"), scopes);
         }
+        if (Profile.CUSTOMER_SESSION.name().toLowerCase().equals(profile)) {
+            Actor initialActor = actor(subject);
+            AgentWorkloadIdentity initial = requireActiveActor(initialActor, requester.getTenantId());
+            if (!initial.getId().equals(requester.getId())) fail(INVALID_GRANT);
+            requireCustomerAuthority(subject, requester, scopes);
+            AgentExchangeRoute outbound = activeRoute(requester.getTenantId(), requester.getId(), audience,
+                    AgentExchangeRoute.DestinationType.GATEWAY, scopes);
+            TrustedExchangeBroker broker = activeBrokerByAudience(requester.getTenantId(), audience);
+            requireScopeSubset(scopes, subjectScopes(subject), outbound.getAllowedScopes(), broker.getAllowedScopes());
+            return routeAuthority(Profile.WORKLOAD_CONTINUATION, TokenUse.GATEWAY_AUTHORIZATION,
+                    subject, requester, outbound, "customer", scopes);
+        }
         if (!Profile.GATEWAY_BACKEND.name().toLowerCase().equals(profile)) fail(INVALID_GRANT);
         Actor previous = actor(subject);
         AgentExchangeRoute inbound = routeByAuthority(subject, requester.getTenantId());
@@ -409,6 +525,87 @@ public class AgentExchangeAuthorityService {
         requireScopeSubset(scopes, subjectScopes(subject), outbound.getAllowedScopes(), broker.getAllowedScopes());
         return routeAuthority(Profile.WORKLOAD_CONTINUATION, TokenUse.GATEWAY_AUTHORIZATION,
                 subject, requester, outbound, required(subject, "identity_kind"), scopes);
+    }
+
+    /**
+     * Customer browser login → a workload of the same application. The authority is the customer's own sign-in to that
+     * application's customer-facing client (with the scopes the customer granted there), re-checked live: the client
+     * and application are active, the customer is ACTIVE at the signed-in token version. Scopes never widen beyond the
+     * customer's token and the workload client's registration.
+     */
+    private ResolvedAuthority resolveCustomerSession(Jwt subject, AgentWorkloadIdentity requester, String audience,
+                                                     Set<String> scopes) {
+        var actorClient = confidentialAuthority(requester.getOauthClientId(), requester.getTenantId());
+        if (!actorClient.audience().equals(audience)) fail(INVALID_TARGET);
+        String sourceClientId = required(subject, "client_id");
+        var sourceClient = applications.activeAuthority(sourceClientId)
+                .filter(TenantApplicationService.ClientAuthority::customerSignIn)
+                .filter(value -> value.tenantId().equals(requester.getTenantId()))
+                .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
+        if (!singleAudience(subject, sourceClient.audience())) fail(INVALID_GRANT);
+        // A customer token from another application cannot borrow this workload's registration.
+        if (!sourceClient.applicationId().equals(actorClient.applicationId())) fail(INVALID_GRANT);
+        long version = requireCurrentCustomerVersion(requester.getTenantId(), subject);
+        requireScopeSubset(scopes, subjectScopes(subject), actorClient.scopes(), sourceClient.scopes());
+        String authorityId = customerAuthorityId(actorClient.applicationId(), subject.getSubject(), version);
+        return new ResolvedAuthority(Profile.CUSTOMER_SESSION, TokenUse.EXCHANGE_SUBJECT, subject,
+                requester.getTenantId(), audience, scopes, "customer",
+                "Customer authority delegated to " + requester.getWorkloadRef(), authorityId,
+                null, requester, subject.getExpiresAt());
+    }
+
+    /** The exchanged customer token's authority is still current for its acting workload. */
+    private void requireCustomerAuthority(Jwt subject, AgentWorkloadIdentity requester, Set<String> scopes) {
+        var actorClient = confidentialAuthority(requester.getOauthClientId(), requester.getTenantId());
+        requireScopeSubset(scopes, actorClient.scopes());
+        String authorityId = required(subject, "authority_id");
+        String prefix = "customer:" + actorClient.applicationId() + ":" + subject.getSubject() + ":";
+        if (!authorityId.startsWith(prefix)) fail(INVALID_GRANT);
+        long version;
+        try { version = Long.parseLong(authorityId.substring(prefix.length())); }
+        catch (NumberFormatException malformed) { throw new OAuth2AuthenticationException(INVALID_GRANT); }
+        if (customers == null) fail(INVALID_GRANT);
+        UUID customerId;
+        try { customerId = UUID.fromString(subject.getSubject()); }
+        catch (RuntimeException invalid) { throw new OAuth2AuthenticationException(INVALID_GRANT); }
+        customers.findByTenantIdAndId(requester.getTenantId(), customerId)
+                .filter(value -> value.getStatus() == com.openwolf.iam.entity.CustomerIdentity.Status.ACTIVE)
+                .filter(value -> value.getTokenVersion() == version)
+                .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
+    }
+
+    private long requireCurrentCustomerVersion(String tenantId, Jwt subject) {
+        Number tokenVersion = subject.getClaim("token_version");
+        if (tokenVersion == null || customers == null) fail(INVALID_GRANT);
+        UUID customerId;
+        try { customerId = UUID.fromString(subject.getSubject()); }
+        catch (RuntimeException invalid) { throw new OAuth2AuthenticationException(INVALID_GRANT); }
+        return customers.findByTenantIdAndId(tenantId, customerId)
+                .filter(value -> value.getStatus() == com.openwolf.iam.entity.CustomerIdentity.Status.ACTIVE)
+                .filter(value -> value.getTokenVersion() == tokenVersion.longValue())
+                .map(com.openwolf.iam.entity.CustomerIdentity::getTokenVersion)
+                .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
+    }
+
+    private void requireActiveCustomer(String tenantId, String subject) {
+        if (customers == null) fail(INVALID_GRANT);
+        UUID customerId;
+        try { customerId = UUID.fromString(subject); }
+        catch (RuntimeException invalid) { throw new OAuth2AuthenticationException(INVALID_GRANT); }
+        customers.findByTenantIdAndId(tenantId, customerId)
+                .filter(value -> value.getStatus() == com.openwolf.iam.entity.CustomerIdentity.Status.ACTIVE)
+                .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
+    }
+
+    private static String customerAuthorityId(UUID applicationId, String customerId, long version) {
+        return "customer:" + applicationId + ":" + customerId + ":" + version;
+    }
+
+    private com.openwolf.iam.repository.CustomerIdentityRepository customers;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCustomers(com.openwolf.iam.repository.CustomerIdentityRepository customers) {
+        this.customers = customers;
     }
 
     private ApplicationAccessService.DecisionAuthority requireWorkforceAuthority(
@@ -432,6 +629,9 @@ public class AgentExchangeAuthorityService {
                 || !singleAudience(subject, broker.getGatewayAudience())) fail(INVALID_GRANT);
         Actor currentActor = actor(subject);
         AgentWorkloadIdentity source = requireActiveActor(currentActor, broker.getTenantId());
+        if ("customer".equals(subject.getClaimAsString("identity_kind"))) {
+            requireActiveCustomer(broker.getTenantId(), subject.getSubject());
+        }
         if (!source.getOauthClientId().equals(required(subject, "client_id"))) fail(INVALID_GRANT);
         AgentExchangeRoute gatewayRoute = routeByAuthority(subject, broker.getTenantId());
         if (gatewayRoute.getDestinationType() != AgentExchangeRoute.DestinationType.GATEWAY
@@ -486,9 +686,19 @@ public class AgentExchangeAuthorityService {
     }
 
     private AgentWorkloadIdentity requireActiveActor(Actor actor, String tenantId) {
-        AgentWorkloadIdentity workload = activeWorkload(tenantId, actor.workloadId());
+        AgentWorkloadIdentity workload;
+        try {
+            workload = activeWorkload(tenantId, actor.workloadId());
+        } catch (EntityNotFoundException unknownActor) {
+            throw new OAuth2AuthenticationException(INVALID_GRANT);
+        }
         if (!workload.getWorkloadRef().equals(actor.workloadRef())
                 || !workload.getOauthClientId().equals(actor.clientId())) fail(INVALID_GRANT);
+        // Phase 0.5 freshness: workload authority is re-evaluated from current state at every exchange and
+        // introspection, including the OAuth client that authenticates the workload (disable = authority withdrawn).
+        if (applications.activeAuthority(workload.getOauthClientId())
+                .filter(value -> value.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_SERVICE)
+                .filter(value -> value.tenantId().equals(tenantId)).isEmpty()) fail(INVALID_GRANT);
         return workload;
     }
 
@@ -522,16 +732,30 @@ public class AgentExchangeAuthorityService {
                 value.getRevision());
     }
 
+
+    private com.openwolf.iam.authority.lifecycle.WorkloadLifecycleService lifecycle;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setLifecycle(@org.springframework.context.annotation.Lazy com.openwolf.iam.authority.lifecycle.WorkloadLifecycleService lifecycle) {
+        this.lifecycle = lifecycle;
+    }
+
+    /** ACTIVE and, once ownership is assigned, still validly owned (Phase 3.10/3.15). */
+    private boolean usable(com.openwolf.iam.entity.AgentWorkloadIdentity workload) {
+        return lifecycle == null ? workload.getStatus() == com.openwolf.iam.entity.AgentWorkloadIdentity.Status.ACTIVE
+                : lifecycle.usable(workload);
+    }
+
     private AgentWorkloadIdentity activeWorkloadByClient(String clientId, String tenantId) {
         return workloads.findByOauthClientId(clientId)
                 .filter(value -> value.getTenantId().equals(tenantId))
-                .filter(value -> value.getStatus() == AgentWorkloadIdentity.Status.ACTIVE)
+                .filter(this::usable)
                 .orElseThrow(() -> new OAuth2AuthenticationException(UNAUTHORIZED_CLIENT));
     }
 
     private AgentWorkloadIdentity activeWorkload(String tenantId, UUID id) {
         return workloads.findByTenantIdAndId(tenantId, id)
-                .filter(value -> value.getStatus() == AgentWorkloadIdentity.Status.ACTIVE)
+                .filter(this::usable)
                 .orElseThrow(() -> EntityNotFoundException.forId("Agent workload identity", id));
     }
 
@@ -553,9 +777,14 @@ public class AgentExchangeAuthorityService {
     }
 
     private TrustedExchangeBroker activeBrokerByClient(String tenantId, String clientId) {
-        return brokers.findByTenantIdAndOauthClientId(tenantId, clientId)
+        TrustedExchangeBroker broker = brokers.findByTenantIdAndOauthClientId(tenantId, clientId)
                 .filter(value -> value.getStatus() == TrustedExchangeBroker.Status.ACTIVE)
                 .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
+        // A broker-issued token stays valid only while the broker's own OAuth client is active (Phase 0.5).
+        if (applications.activeAuthority(clientId).filter(value -> value.tenantId().equals(tenantId)).isEmpty()) {
+            fail(INVALID_GRANT);
+        }
+        return broker;
     }
 
     private TreeSet<String> approvedScopes(Collection<String> values) {

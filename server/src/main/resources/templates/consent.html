@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Consent required</title>
+  <link rel="stylesheet" th:href="@{/css/axiom-login.css}">
+</head>
+<body>
+<div class="page">
+  <div class="form-panel">
+    <main class="login-card" aria-labelledby="consent-title">
+      <div class="form-header">
+        <div class="for-label">Consent required</div>
+        <h2 class="form-title" id="consent-title"><span th:text="${clientName}">Application</span> requests access</h2>
+        <p class="form-subtitle">Select the permissions you approve. Nothing is shared unless you submit.</p>
+      </div>
+      <form name="consent_form" method="post" th:action="${authorizationEndpoint}" class="login-form">
+        <input type="hidden" name="client_id" th:value="${clientId}">
+        <input type="hidden" name="state" th:value="${state}">
+        <div class="field" th:each="scope : ${scopes}">
+          <label><input type="checkbox" name="scope" th:value="${scope}" th:id="${scope}" checked>
+            <span th:text="${scope}">scope</span></label>
+        </div>
+        <div class="field" th:if="${!previouslyApprovedScopes.isEmpty()}">
+          <p class="form-subtitle">Already approved:</p>
+          <p th:each="scope : ${previouslyApprovedScopes}" th:text="${scope}">scope</p>
+        </div>
+        <button type="submit" class="btn-sign-in" id="submit-consent">Approve</button>
+        <button type="submit" class="btn-sign-in" id="cancel-consent" name="consent_action" value="cancel"
+                onclick="document.querySelectorAll('input[name=scope]').forEach(function (e) { e.checked = false; });">Deny</button>
+      </form>
+    </main>
+  </div>
+</div>
+</body>
+</html>

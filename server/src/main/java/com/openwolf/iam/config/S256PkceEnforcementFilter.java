@@ -39,14 +39,27 @@ public final class S256PkceEnforcementFilter extends OncePerRequestFilter {
     private final ObjectProvider<ApplicationAccessService> applicationAccess;
     private final ObjectProvider<PrincipalRepository> principals;
 
+    private final ObjectProvider<com.openwolf.iam.service.CiamCustomerAuthenticationService> customers;
+
     public S256PkceEnforcementFilter(ObjectProvider<RegisteredClientRepository> registeredClients,
                                      ObjectProvider<TenantApplicationService> applications,
                                      ObjectProvider<ApplicationAccessService> applicationAccess,
                                      ObjectProvider<PrincipalRepository> principals) {
+        this(registeredClients, applications, applicationAccess, principals, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public S256PkceEnforcementFilter(ObjectProvider<RegisteredClientRepository> registeredClients,
+                                     ObjectProvider<TenantApplicationService> applications,
+                                     ObjectProvider<ApplicationAccessService> applicationAccess,
+                                     ObjectProvider<PrincipalRepository> principals,
+                                     ObjectProvider<com.openwolf.iam.service.CiamCustomerAuthenticationService> customers) {
         this.registeredClients = registeredClients;
         this.applications = applications;
         this.applicationAccess = applicationAccess;
         this.principals = principals;
+        this.customers = customers == null ? new org.springframework.beans.factory.support.StaticListableBeanFactory()
+                .getBeanProvider(com.openwolf.iam.service.CiamCustomerAuthenticationService.class) : customers;
     }
 
     @Override
@@ -67,7 +80,12 @@ public final class S256PkceEnforcementFilter extends OncePerRequestFilter {
         }
         RegisteredClientRepository repository = registeredClients.getIfAvailable();
         RegisteredClient client = repository == null || clientId == null ? null : repository.findByClientId(clientId);
-        if (client != null && client.getClientSettings().isRequireProofKey()
+        // PKCE parameters belong to the authorization request (it carries response_type). The consent form's POST to
+        // the same endpoint carries only client_id, state and the approved scopes; its PKCE binding is the original
+        // request's, already verified when that request was accepted.
+        boolean consentSubmission = "POST".equalsIgnoreCase(request.getMethod())
+                && request.getParameter("response_type") == null;
+        if (client != null && client.getClientSettings().isRequireProofKey() && !consentSubmission
                 && (!"S256".equals(request.getParameter("code_challenge_method"))
                 || request.getParameter("code_challenge") == null
                 || request.getParameter("code_challenge").isBlank())) {
@@ -79,6 +97,27 @@ public final class S256PkceEnforcementFilter extends OncePerRequestFilter {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !authentication.isAuthenticated()
                 || "anonymousUser".equals(authentication.getPrincipal())) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
+        // Population boundary: a customer login never obtains a code for a workforce client and vice versa. A login of
+        // the other population is cleared and the browser is sent to the login page of the client's population.
+        boolean customerClient = applicationService != null && applicationService.signInPopulation(clientId)
+                .map(com.openwolf.iam.entity.TenantApplicationClient.Population.CUSTOMER::equals).orElse(false);
+        if (authentication instanceof com.openwolf.iam.auth.CustomerAuthenticationToken customer) {
+            com.openwolf.iam.service.CiamCustomerAuthenticationService customerService = customers.getIfAvailable();
+            boolean current = customerClient && customerService != null
+                    && applicationService.activeAuthority(clientId)
+                            .map(authority -> authority.tenantId().equals(customer.tenantId())).orElse(false)
+                    && customerService.current(customer.tenantId(), java.util.UUID.fromString(customer.getName()),
+                            customer.tokenVersion()).isPresent();
+            if (!current) clearStaleLogin(request);
+            filterChain.doFilter(request, response);
+            return;
+        }
+        if (customerClient) {
+            clearStaleLogin(request);
             filterChain.doFilter(request, response);
             return;
         }

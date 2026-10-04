@@ -19,6 +19,7 @@ spec:
         {{- include "axiom.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: bootstrap
     spec:
+      serviceAccountName: {{ include "axiom.componentServiceAccountName" (dict "root" . "component" "bootstrap") }}
       automountServiceAccountToken: false
       restartPolicy: Never
       {{- with .Values.imagePullSecrets }}
@@ -66,7 +67,7 @@ spec:
           volumeMounts:
             {{- include "axiom.serverVolumeMounts" . | nindent 12 }}
       volumes:
-        {{- include "axiom.serverVolumes" . | nindent 8 }}
+        {{- include "axiom.serverVolumes" (dict "root" . "bootstrap" true) | nindent 8 }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -50,7 +50,38 @@ public final class TokenExchangeAuthenticationConverter implements Authenticatio
         additional.put(TokenExchangeConstants.REQUESTED_TOKEN_TYPE, TokenExchangeConstants.ACCESS_TOKEN_TYPE);
         additional.put(audience != null ? TokenExchangeConstants.AUDIENCE : TokenExchangeConstants.RESOURCE, target);
         additional.put("scope", String.join(" ", scopes));
-        return new TokenExchangeAuthenticationToken(clientPrincipal, subjectToken, target, scopes, additional);
+        TokenExchangeAuthenticationToken token =
+                new TokenExchangeAuthenticationToken(clientPrincipal, subjectToken, target, scopes, additional);
+        token.invocation(invocation(request));
+        String delegationPurpose = optionalSingle(request, TokenExchangeConstants.DELEGATION_PURPOSE);
+        if (delegationPurpose != null && !delegationPurpose.matches("[a-z][a-z0-9._-]{1,63}")) invalidRequest();
+        token.delegationPurpose(delegationPurpose);
+        return token;
+    }
+
+    /** Phase 2 extension parameters: optional, single-valued, bounded; secrets never echoed. */
+    private static com.openwolf.iam.invocation.InvocationContextService.Request invocation(HttpServletRequest request) {
+        String evidence = optionalSingle(request, TokenExchangeConstants.INVOCATION_AUTHORIZATION);
+        if (evidence != null && evidence.length() > 8192) invalidRequest();
+        String run = label(request, TokenExchangeConstants.INVOCATION_RUN);
+        String key = label(request, TokenExchangeConstants.INVOCATION_IDEMPOTENCY_KEY);
+        String branch = label(request, TokenExchangeConstants.INVOCATION_BRANCH);
+        String context = optionalSingle(request, TokenExchangeConstants.INVOCATION_CONTEXT);
+        if (context != null && !context.matches("[0-9a-fA-F-]{36}")) invalidRequest();
+        String ttlValue = optionalSingle(request, TokenExchangeConstants.INVOCATION_TTL);
+        Long ttl = null;
+        if (ttlValue != null) {
+            if (!ttlValue.matches("[0-9]{1,6}")) invalidRequest();
+            ttl = Long.parseLong(ttlValue);
+            if (ttl < 1) invalidRequest();
+        }
+        return new com.openwolf.iam.invocation.InvocationContextService.Request(evidence, run, ttl, key, branch, context);
+    }
+
+    private static String label(HttpServletRequest request, String name) {
+        String value = optionalSingle(request, name);
+        if (value != null && !value.matches("[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}")) invalidRequest();
+        return value;
     }
 
     private static Set<String> parseScopes(String value) {

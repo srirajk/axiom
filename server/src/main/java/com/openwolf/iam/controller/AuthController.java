@@ -72,6 +72,31 @@ public class AuthController {
     @Value("${iam.oauth2.manual-client-id:axiom-admin}")
     private String manualClientId;
 
+    /**
+     * Story 0.6 secure default: the legacy password-to-token endpoints ({@code /auth/login}, {@code /auth/token}) and
+     * persona impersonation are OFF unless a deployment explicitly enables them (for example a test harness or a
+     * provisioning script that has not yet moved to the browser authorization-code flow). Disabled endpoints answer
+     * 404, exactly like an absent route. Enabling either is logged as a warning at startup.
+     */
+    @Value("${iam.auth.legacy-password-login.enabled:false}")
+    private boolean legacyPasswordLoginEnabled = false;
+
+    @Value("${iam.auth.impersonation.enabled:false}")
+    private boolean impersonationEnabled = false;
+
+    @jakarta.annotation.PostConstruct
+    void warnAboutLegacyEndpoints() {
+        if (legacyPasswordLoginEnabled) {
+            log.warn("Legacy password-to-token login (/auth/login, /auth/token) is ENABLED by configuration "
+                    + "(iam.auth.legacy-password-login.enabled=true); people should sign in through the browser "
+                    + "authorization-code flow");
+        }
+        if (impersonationEnabled) {
+            log.warn("Persona impersonation (/auth/impersonate) is ENABLED by configuration (iam.auth.impersonation.enabled=true)");
+        }
+    }
+
+
 
     private final AuthenticationManager authenticationManager;
     private final JwtEncoder jwtEncoder;
@@ -102,6 +127,7 @@ public class AuthController {
      */
     @PostMapping("/auth/login")
     public ResponseEntity<LoginResponse> login(@Valid @RequestBody TokenRequest req) {
+        if (!legacyPasswordLoginEnabled) return ResponseEntity.notFound().build();
         return issueToken(req);
     }
 
@@ -110,6 +136,7 @@ public class AuthController {
      */
     @PostMapping("/auth/token")
     public ResponseEntity<LoginResponse> token(@Valid @RequestBody TokenRequest req) {
+        if (!legacyPasswordLoginEnabled) return ResponseEntity.notFound().build();
         return issueToken(req);
     }
 
@@ -124,6 +151,7 @@ public class AuthController {
     public ResponseEntity<LoginResponse> impersonate(
             @Valid @RequestBody ImpersonateRequest req,
             HttpServletRequest httpReq) {
+        if (!impersonationEnabled) return ResponseEntity.notFound().build();
         Principal subject = principalRepository.findById(req.userId())
                 .or(() -> principalRepository.findByUsername(req.userId()))
                 .orElseThrow(() -> EntityNotFoundException.forId("User", req.userId()));
@@ -207,7 +235,7 @@ public class AuthController {
 
         UserResponse userResponse = userService.toUserResponse(principal);
         List<String> adminDomains = userResponse.adminDomains() != null ? userResponse.adminDomains() : List.of();
-        UUID sessionId = iamSessions.issue("manual:" + UUID.randomUUID(), tenantId, principal.getId(), null,
+        UUID sessionId = iamSessions.issueForWorkforce("manual:" + UUID.randomUUID(), tenantId, principal.getId(), null,
                 manualClientId, expiry);
 
         // JWT carries identity + structural claims only. No book claim.
@@ -229,6 +257,10 @@ public class AuthController {
                 .claim("tenant_id", tenantId)
                 .claim("sid", sessionId.toString())
                 .claim("impersonation", "impersonation".equals(purpose))
+                .claims(all -> {
+                    // Phase 3.9: only an interactive password login records assurance; impersonation never does.
+                    if ("login".equals(purpose)) all.putAll(com.openwolf.iam.auth.AuthenticationAssurance.passwordClaims(now));
+                })
                 .build();
 
         String tokenValue = jwtEncoder.encode(JwtEncoderParameters.from(jwsHeader, claims)).getTokenValue();

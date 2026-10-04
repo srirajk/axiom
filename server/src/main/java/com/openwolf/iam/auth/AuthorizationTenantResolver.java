@@ -13,16 +13,35 @@ import java.util.Set;
 public final class AuthorizationTenantResolver {
     private final PrincipalRepository principals;
     private final TenantApplicationService applications;
+    private final com.openwolf.iam.repository.CustomerIdentityRepository customers;
 
     public AuthorizationTenantResolver(PrincipalRepository principals, TenantApplicationService applications) {
+        this(principals, applications, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public AuthorizationTenantResolver(PrincipalRepository principals, TenantApplicationService applications,
+                                       com.openwolf.iam.repository.CustomerIdentityRepository customers) {
         this.principals = principals;
         this.applications = applications;
+        this.customers = customers;
     }
 
     public String resolve(String subject) {
         Set<String> candidates = new LinkedHashSet<>();
         principals.findById(subject).filter(Principal::isActive).map(Principal::getTenantId).ifPresent(candidates::add);
         principals.findByUsername(subject).filter(Principal::isActive).map(Principal::getTenantId).ifPresent(candidates::add);
+        // A customer browser login (CIAM): the customer's own tenant. Customer ids are UUIDs; an ambiguous match with a
+        // workforce principal id is refused below like any other ambiguity.
+        if (customers != null) {
+            try {
+                customers.findById(java.util.UUID.fromString(subject))
+                        .filter(customer -> customer.getStatus() == com.openwolf.iam.entity.CustomerIdentity.Status.ACTIVE)
+                        .map(com.openwolf.iam.entity.CustomerIdentity::getTenantId).ifPresent(candidates::add);
+            } catch (IllegalArgumentException notACustomerId) {
+                // not a customer id
+            }
+        }
         applications.activeAuthority(subject)
                 .map(TenantApplicationService.ClientAuthority::tenantId)
                 .ifPresent(candidates::add);

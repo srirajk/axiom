@@ -1,0 +1,175 @@
+{
+  "_note": "Axiom provider profile for the IDP baseline (checklist worksheet). Endpoint paths and capabilities were taken from a live isolated Axiom (OIDC discovery and RFC 8414 metadata, 2026-10-03) and the source; {issuer} is the deployment's configured issuer URL. Credentials are references to protected material only, never values.",
+  "issuer": "{issuer}",
+  "discovery": {
+    "openid_configuration": "{issuer}/.well-known/openid-configuration",
+    "authorization_server_metadata": "{issuer}/.well-known/oauth-authorization-server",
+    "jwks_uri": "{issuer}/oauth2/jwks",
+    "signing_algorithms": [
+      "RS256"
+    ],
+    "scopes_supported": [
+      "openid",
+      "profile",
+      "email",
+      "offline_access",
+      "roles",
+      "<deployment-approved business scopes>"
+    ]
+  },
+  "endpoints": {
+    "authorization": "{issuer}/oauth/authorize",
+    "token": "{issuer}/oauth/token",
+    "introspection": "{issuer}/oauth/introspect",
+    "revocation": "{issuer}/oauth/revoke",
+    "end_session": "{issuer}/connect/logout",
+    "userinfo": "{issuer}/oauth/userinfo (any session-backed access token of this issuer with openid; software tokens refused)",
+    "workforce_login_page": "{issuer}/login",
+    "customer_login_page": "{issuer}/login/customer",
+    "consent_page": "{issuer}/oauth2/consent"
+  },
+  "grants": {
+    "authorization_code": {
+      "standard": "RFC 6749 4.1 + RFC 7636 (S256 only) + OIDC Core",
+      "clients": [
+        "PUBLIC_BROWSER",
+        "CONFIDENTIAL_WEB"
+      ]
+    },
+    "refresh_token": {
+      "standard": "RFC 6749 6",
+      "clients": [
+        "CONFIDENTIAL_WEB"
+      ],
+      "requires_scope": "offline_access",
+      "rotation": "every use; reuse withdraws the family"
+    },
+    "client_credentials": {
+      "standard": "RFC 6749 4.4",
+      "clients": [
+        "CONFIDENTIAL_SERVICE"
+      ]
+    },
+    "urn:ietf:params:oauth:grant-type:token-exchange": {
+      "standard": "RFC 8693 (Axiom delegation profile)",
+      "clients": [
+        "CONFIDENTIAL_SERVICE"
+      ],
+      "subject_token_types": [
+        "urn:ietf:params:oauth:token-type:access_token"
+      ],
+      "actor_token": "not accepted (the actor is the authenticated workload)",
+      "target": "audience or resource (exactly one)"
+    },
+    "urn:openwolf:params:oauth:grant-type:standing-grant": {
+      "standard": "none",
+      "label": "optional Axiom extension (not portable)"
+    },
+    "urn:openwolf:params:oauth:grant-type:approved-action": {
+      "standard": "none",
+      "label": "optional Axiom extension (not portable)"
+    }
+  },
+  "client_authentication": {
+    "none": "public browser clients (PKCE required)",
+    "client_secret_basic": "confidential web and service clients",
+    "private_key_jwt": {
+      "standard": "RFC 7523 2.2 / OIDC Core 9",
+      "algorithms": [
+        "RS256",
+        "ES256"
+      ],
+      "assertion_audience": "{issuer}/oauth/token (or {issuer})",
+      "max_lifetime_seconds": 300,
+      "jti": "required, single use"
+    }
+  },
+  "tokens": {
+    "access_token": {
+      "format": "JWT, header typ=at+jwt (RFC 9068 shape), RS256",
+      "audience": "exactly one: the application audience (or the exchange target)",
+      "portable_claims": [
+        "iss",
+        "sub",
+        "aud",
+        "exp",
+        "iat",
+        "jti",
+        "client_id",
+        "scope",
+        "act (exchange only)",
+        "auth_time/acr/amr (interactive)"
+      ],
+      "axiom_specific_claims_not_required_by_the_portable_contract": [
+        "tenant_id",
+        "identity_kind",
+        "sid",
+        "subject_sid",
+        "token_use",
+        "authority_profile",
+        "authority_id",
+        "roles",
+        "permissions",
+        "entitlement_revision",
+        "token_version",
+        "delegation_id",
+        "purpose",
+        "ctx*"
+      ]
+    },
+    "id_token": {
+      "audience": "the client",
+      "nonce": "echoed",
+      "customer_claims": [
+        "sub",
+        "email",
+        "email_verified",
+        "name"
+      ]
+    },
+    "refresh_token": {
+      "format": "opaque",
+      "family_lifetime": "refresh TTL counted from sign-in (no sliding extension)"
+    },
+    "scope_policy": "business scopes are issued to a workforce person only where the person holds that application permission (narrowed, response reports the issued scope); customers receive what the customer-facing client offers and, if required, what they consent to"
+  },
+  "lifetimes": {
+    "interactive_access_token": "iam.oauth2.interactive-access-token.ttl (default PT1H, max iam.oauth2.interactive-access-token.max-ttl PT1H); per-client accessTokenTtlSeconds >= 60",
+    "refresh_token": "iam.oauth2.refresh-token.ttl (default PT8H, max P30D); per-client refreshTokenTtlSeconds",
+    "client_credentials": "iam.oauth2.client-credentials.ttl (default PT5M, max PT1H)",
+    "token_exchange": "iam.oauth2.token-exchange.ttl (default PT5M, max PT10M) and never beyond the subject token",
+    "clock_tolerance_recommendation_seconds": 5
+  },
+  "status_and_revocation": {
+    "introspection": "authenticated (client_secret_basic or private_key_jwt); same-tenant callers only; other tenants learn {active:false}; no server-side cache",
+    "revocation": "RFC 7009; revoking an access or refresh token ends that login's session, refresh family and exchanged descendants for online checks",
+    "logout": "OIDC RP-Initiated Logout 1.0, form POST with id_token_hint; ends the named login (session, refresh family, descendants) and the browser session",
+    "offline_residual_window": "until exp of each already-issued JWT"
+  },
+  "populations": {
+    "workforce": {
+      "login": "/login",
+      "clients": "population WORKFORCE",
+      "directory": "SCIM 2.0 /scim/v2 or management API /users, /teams, application memberships/roles"
+    },
+    "customer": {
+      "login": "/login/customer",
+      "clients": "population CUSTOMER",
+      "directory": "management API /admin/tenants/{t}/ciam/customers; verification by the customer (delivery provider required outside loopback demos)",
+      "consent": "standard OAuth consent page when the client requires it; self-service list/withdraw at /ciam/tenants/{t}/customers/{c}/oauth-consents"
+    }
+  },
+  "provider_specific_setup_adapter": {
+    "applications_and_clients": "/admin/tenants/{t}/applications[/{a}/clients]",
+    "access": "/admin/tenants/{t}/applications/{a}/access/{roles,memberships}",
+    "workload_registration_and_exchange_edges": "/admin/tenants/{t}/ciam/agent-workloads, /admin/tenants/{t}/agent-exchange/{brokers,routes} (historical path names; generic workloads and edges)",
+    "two_person_credential_changes": "/admin/tenants/{t}/identity-control-requests (ROTATE_APPLICATION_CLIENT_SECRET, REPLACE_APPLICATION_CLIENT_KEYS, ...)",
+    "audit": "/admin/audit (tenant-scoped)",
+    "dynamic_client_registration": "not offered (RFC 7591 optional)"
+  },
+  "conditional_profiles": {
+    "IDP-13_sender_constraint": "not selected (bearer tokens only)",
+    "IDP-14_external_assertion": "not selected (jwt-bearer grant and federation assertions refused)",
+    "IDP-15_assurance": "partial: password-level acr/amr/auth_time asserted and preserved; acr_values/max_age enforcement and MFA not available"
+  }
+}

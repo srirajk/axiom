@@ -1,7 +1,9 @@
 package com.openwolf.iam.repository;
 
 import com.openwolf.iam.entity.Principal;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -17,6 +19,11 @@ public interface PrincipalRepository extends JpaRepository<Principal, String> {
     Optional<Principal> findByUsername(String username);
 
     Optional<Principal> findByIdAndTenantId(String id, String tenantId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select p from Principal p where p.id = :id and p.tenantId = :tenantId")
+    Optional<Principal> findByIdAndTenantIdForUpdate(@Param("id") String id,
+                                                      @Param("tenantId") String tenantId);
 
     List<Principal> findByTenantId(String tenantId);
 

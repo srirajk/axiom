@@ -9,6 +9,8 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class SessionTokenValidatorTest {
@@ -37,6 +39,22 @@ class SessionTokenValidatorTest {
                 org.mockito.ArgumentMatchers.any(Instant.class))).thenReturn(true);
 
         assertThat(validator.validate(token).hasErrors()).isFalse();
+    }
+
+    @Test
+    void sessionStoreOutageFailsClosedWithoutTouchingSession() {
+        IamSessionService sessions = mock(IamSessionService.class);
+        UUID sessionId = UUID.randomUUID();
+        SessionTokenValidator validator = new SessionTokenValidator(sessions);
+        Jwt token = Jwt.withTokenValue("token").header("alg", "RS256").subject("principal-a")
+                .claim("tenant_id", "tenant-a").claim("sid", sessionId.toString())
+                .issuedAt(Instant.now().minusSeconds(5)).expiresAt(Instant.now().plusSeconds(60)).build();
+        when(sessions.active(org.mockito.ArgumentMatchers.eq(sessionId), org.mockito.ArgumentMatchers.eq("tenant-a"),
+                org.mockito.ArgumentMatchers.any(Instant.class))).thenThrow(new IllegalStateException("store unavailable"));
+
+        assertThat(validator.validate(token).hasErrors()).isTrue();
+        verify(sessions, never()).touch(org.mockito.ArgumentMatchers.any(UUID.class),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(Instant.class));
     }
 
     @Test

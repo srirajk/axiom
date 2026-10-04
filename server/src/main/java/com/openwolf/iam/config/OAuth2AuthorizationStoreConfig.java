@@ -35,8 +35,15 @@ public class OAuth2AuthorizationStoreConfig {
             StringRedisTemplate stringRedisTemplate,
             @Value("${iam.oauth2.authorization-store.redis.key-prefix:iam:oauth2}") String keyPrefix,
             @Value("${iam.oauth2.authorization-store.tenant-claim:tenant_id}") String tenantClaim,
-            AuthorizationTenantResolver tenantResolver) {
-        return new RedisOAuth2AuthorizationService(
+            AuthorizationTenantResolver tenantResolver,
+            org.springframework.beans.factory.ObjectProvider<com.openwolf.iam.service.IamSessionService> sessions) {
+        RedisOAuth2AuthorizationService service = new RedisOAuth2AuthorizationService(
                 oauth2AuthorizationRedisTemplate, stringRedisTemplate, keyPrefix, tenantClaim, tenantResolver);
+        // Resolved per call: the session service is created after the authorization store.
+        service.setSessionRevoker((tenant, authorizationId, reason) -> {
+            com.openwolf.iam.service.IamSessionService resolved = sessions.getIfAvailable();
+            if (resolved != null) resolved.revokeForAuthorization(tenant, authorizationId, reason);
+        });
+        return service;
     }
 }

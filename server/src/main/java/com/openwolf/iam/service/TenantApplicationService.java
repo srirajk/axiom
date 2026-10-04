@@ -40,6 +40,7 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -49,6 +50,10 @@ import java.util.UUID;
 @Transactional
 public class TenantApplicationService {
     private static final Set<String> PUBLIC_SCOPES = Set.of(OidcScopes.OPENID, OidcScopes.PROFILE, OidcScopes.EMAIL, "roles");
+    /** Customers are a separate population: no workforce roles scope. */
+    private static final Set<String> CUSTOMER_SCOPES = Set.of(OidcScopes.OPENID, OidcScopes.PROFILE, OidcScopes.EMAIL);
+    /** OIDC Core section 11: requesting it (and being granted it) is what makes a refresh token issuable. */
+    public static final String OFFLINE_ACCESS = "offline_access";
     private static final Set<String> SERVICE_SCOPES = Set.of(
             ApplicationScopes.APPLICATION_READ,
             ApplicationScopes.SUBJECT_CONTEXT_READ,
@@ -100,6 +105,9 @@ public class TenantApplicationService {
         requireTenantAdmin(tenantId);
         requireActiveTenant(tenantId);
         if (tenants.findById(tenantId).isEmpty()) throw EntityNotFoundException.forId("Tenant", tenantId);
+        if (com.openwolf.iam.auth.AxiomApiJwtValidator.isReservedAudience(request.audience())) {
+            throw new IllegalArgumentException("Application audience is reserved for the Axiom platform API");
+        }
         if (applications.existsByTenantIdAndApplicationKey(tenantId, request.applicationKey())) {
             throw new ResourceConflictException("Application key already exists for this tenant");
         }
@@ -122,19 +130,31 @@ public class TenantApplicationService {
                                                                  HttpServletRequest httpRequest) {
         TenantApplication app = applicationForTenant(tenantId, applicationId);
         if (app.getStatus() != TenantApplication.Status.ACTIVE) throw new ResourceConflictException("Application is disabled");
+        String supplied = request.clientSecret();
+        boolean keyAuthenticated = ClientAssertionKeys.PRIVATE_KEY_JWT.equals(request.tokenEndpointAuthMethod());
+        if (supplied != null) {
+            if (request.clientType() != TenantApplicationClient.Type.CONFIDENTIAL_SERVICE || keyAuthenticated) {
+                throw new IllegalArgumentException("Only secret-authenticated confidential service clients accept a client secret");
+            }
+            OperatorSuppliedClientSecrets.requireValid(supplied);
+        }
+        TenantApplicationClient.Population population = population(request);
         if (registeredClients.findByClientId(request.clientId()) != null || clients.findByClientId(request.clientId()).isPresent()) {
             throw new ResourceConflictException("Client id already exists");
         }
-        List<String> scopes = approvedScopes(request.clientType(), request.scopes());
-        String secret = request.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_SERVICE ? generatedSecret() : null;
-        RegisteredClient registered = registeredClient(app, request, scopes, secret);
+        List<String> scopes = approvedScopes(request.clientType(), population, request.scopes());
+        boolean hasSecret = request.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_WEB
+                || (request.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_SERVICE && !keyAuthenticated);
+        String secret = hasSecret ? (supplied != null ? supplied : generatedSecret()) : null;
+        RegisteredClient registered = registeredClient(app, request, scopes, secret, population);
         registeredClients.save(registered);
         TenantApplicationClient client = clients.save(new TenantApplicationClient(app.getId(), request.clientId(),
-                request.clientType(), scopes));
+                request.clientType(), scopes, population));
         TenantApplicationClientResponse response = clientResponse(client, registered);
         audit.logRequired(tenantId, audit.currentActor(), "CREATE_APPLICATION_CLIENT", "application_client",
                 client.getId().toString(), null, response, correlation(httpRequest));
-        return new CreatedTenantApplicationClientResponse(response, secret);
+        // An operator-supplied secret is never echoed: the caller already holds it.
+        return new CreatedTenantApplicationClientResponse(response, supplied != null ? null : secret);
     }
 
     public void disableApplication(String tenantId, UUID applicationId, HttpServletRequest httpRequest) {
@@ -144,6 +164,9 @@ public class TenantApplicationService {
         app.disable(); applications.save(app);
         audit.logRequired(tenantId, audit.currentActor(), "DISABLE_APPLICATION", "application", app.getId().toString(),
                 before, applicationResponse(app), correlation(httpRequest));
+        // Disabling an application ends every session issued to any of its clients.
+        clients.findByApplicationIdOrderByClientId(app.getId())
+                .forEach(c -> endClientSessions(tenantId, c.getClientId(), "application disabled"));
     }
 
     public void disableClient(String tenantId, UUID applicationId, UUID clientId, HttpServletRequest httpRequest) {
@@ -155,26 +178,80 @@ public class TenantApplicationService {
         client.disable(); clients.save(client);
         audit.logRequired(tenantId, audit.currentActor(), "DISABLE_APPLICATION_CLIENT", "application_client", client.getId().toString(),
                 before, clientResponse(client), correlation(httpRequest));
+        endClientSessions(tenantId, client.getClientId(), "client disabled");
     }
 
     /** Rotates a confidential service credential and returns its plaintext exactly once. */
     public CreatedTenantApplicationClientResponse rotateClientSecret(
             String tenantId, UUID applicationId, UUID clientId,
             RotateTenantApplicationClientSecretRequest request, HttpServletRequest httpRequest) {
+        return rotateClientSecret(tenantId, applicationId, clientId, request, null, httpRequest);
+    }
+
+    /**
+     * Rotates to {@code suppliedSecret} when given (operator-supplied, never returned) or to a generated secret
+     * (returned once). Reached only through the approved identity-control apply path.
+     */
+    public CreatedTenantApplicationClientResponse rotateClientSecret(
+            String tenantId, UUID applicationId, UUID clientId,
+            RotateTenantApplicationClientSecretRequest request, String suppliedSecret, HttpServletRequest httpRequest) {
+        if (suppliedSecret != null) OperatorSuppliedClientSecrets.requireValid(suppliedSecret);
         TenantApplicationClient client = clientForTenant(tenantId, applicationId, clientId);
         requireServiceClient(client);
         requireRevision(client, request.expectedRevision());
         RegisteredClient registered = registeredClientFor(client);
-        String secret = generatedSecret();
+        if (!registered.getClientAuthenticationMethods().contains(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)) {
+            throw new ResourceConflictException("This client authenticates with registered keys; replace its keys instead");
+        }
+        String secret = suppliedSecret != null ? suppliedSecret : generatedSecret();
         registeredClients.save(RegisteredClient.from(registered)
                 .clientSecret(passwordEncoder.encode(secret)).build());
+        // Phase 3.15: the previous secret stays valid only for the declared overlap (default: none).
+        if (secretOverlaps != null) secretOverlaps.rotated(registered.getClientId(), registered.getClientSecret());
         client.rotateSecret();
         clients.save(client);
         TenantApplicationClientResponse response = clientResponse(client, registeredClientFor(client), client.getRevision() + 1);
         audit.logRequired(tenantId, audit.currentActor(), "ROTATE_APPLICATION_CLIENT_SECRET", "application_client",
                 client.getId().toString(), clientResponse(client, registered, client.getRevision()), response,
                 correlation(httpRequest));
-        return new CreatedTenantApplicationClientResponse(response, secret);
+        return new CreatedTenantApplicationClientResponse(response, suppliedSecret != null ? null : secret);
+    }
+
+    /**
+     * Replaces the public keys of a {@code private_key_jwt} client (credential rotation by key: include the old and the
+     * new key for an overlap, then replace again with only the new key). Only public keys are accepted; the private key
+     * never leaves the client. Key ids are audited, key material is not.
+     */
+    public TenantApplicationClientResponse replaceClientKeys(String tenantId, UUID applicationId, UUID clientId,
+                                                             Map<String, Object> jwks, long expectedRevision,
+                                                             HttpServletRequest httpRequest) {
+        TenantApplicationClient client = clientForTenant(tenantId, applicationId, clientId);
+        requireServiceClient(client);
+        requireRevision(client, expectedRevision);
+        RegisteredClient registered = registeredClientFor(client);
+        if (!registered.getClientAuthenticationMethods().contains(ClientAuthenticationMethod.PRIVATE_KEY_JWT)) {
+            throw new ResourceConflictException("This client authenticates with a secret, not registered keys");
+        }
+        ClientAssertionKeys.Registered keys = ClientAssertionKeys.validate(jwks);
+        TenantApplicationClientResponse before = clientResponse(client, registered, client.getRevision());
+        registeredClients.save(RegisteredClient.from(registered)
+                .clientSettings(ClientSettings.withSettings(registered.getClientSettings().getSettings())
+                        .tokenEndpointAuthenticationSigningAlgorithm(keys.algorithm())
+                        .setting(ClientAssertionKeys.SETTING, keys.json()).build())
+                .build());
+        client.rotateSecret();
+        clients.save(client);
+        TenantApplicationClientResponse after = clientResponse(client, registeredClientFor(client), client.getRevision() + 1);
+        audit.logRequired(tenantId, audit.currentActor(), "REPLACE_APPLICATION_CLIENT_KEYS", "application_client",
+                client.getId().toString(), before, after, correlation(httpRequest));
+        return after;
+    }
+
+    /** The sign-in population of an active interactive client; empty for service clients and system clients. */
+    @Transactional(readOnly = true)
+    public Optional<TenantApplicationClient.Population> signInPopulation(String clientId) {
+        return activeAuthority(clientId).filter(authority -> authority.clientType().interactive())
+                .map(ClientAuthority::population);
     }
 
     /** Immediately invalidates the protocol credential and disables the tenant client. */
@@ -187,13 +264,36 @@ public class TenantApplicationService {
         RegisteredClient registered = registeredClientFor(client);
         TenantApplicationClientResponse before = clientResponse(client, registered, client.getRevision());
         client.disable();
-        registeredClients.save(RegisteredClient.from(registered)
-                .clientSecret(passwordEncoder.encode(generatedSecret())).build());
+        if (registered.getClientAuthenticationMethods().contains(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)) {
+            registeredClients.save(RegisteredClient.from(registered)
+                    .clientSecret(passwordEncoder.encode(generatedSecret())).build());
+        }
+        if (secretOverlaps != null) secretOverlaps.revoked(registered.getClientId());
+        endClientSessions(tenantId, registered.getClientId(), "client secret revoked");
         clients.save(client);
         TenantApplicationClientResponse after = clientResponse(client, registeredClientFor(client), client.getRevision() + 1);
         audit.logRequired(tenantId, audit.currentActor(), "REVOKE_APPLICATION_CLIENT_SECRET", "application_client",
                 client.getId().toString(), before, after, correlation(httpRequest));
         return after;
+    }
+
+    private IamSessionService sessionService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setSessionService(@org.springframework.context.annotation.Lazy IamSessionService sessionService) {
+        this.sessionService = sessionService;
+    }
+
+    /** Issued tokens of a disabled client stop at once: their durable sessions end (status checks then refuse). */
+    private void endClientSessions(String tenantId, String clientId, String reason) {
+        if (sessionService != null) sessionService.revokeAllForClient(tenantId, clientId, reason);
+    }
+
+    private com.openwolf.iam.authority.lifecycle.ClientSecretOverlapStore secretOverlaps;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setSecretOverlaps(com.openwolf.iam.authority.lifecycle.ClientSecretOverlapStore secretOverlaps) {
+        this.secretOverlaps = secretOverlaps;
     }
 
     /** Token-time authority; empty means a deployment-owned system client, not a permissive fallback. */
@@ -203,7 +303,14 @@ public class TenantApplicationService {
                 .filter(app -> activeTenants.isActive(app.getTenantId()))
                 .filter(app -> app.getStatus() == TenantApplication.Status.ACTIVE)
                 .filter(app -> client.getStatus() == TenantApplicationClient.Status.ACTIVE)
-                .map(app -> new ClientAuthority(app.getTenantId(), app.getAudience(), client.getClientType(), client.getAllowedScopes(), app.getId())));
+                .map(app -> new ClientAuthority(app.getTenantId(), app.getAudience(), client.getClientType(),
+                        client.getAllowedScopes(), app.getId(), client.getPopulation())));
+    }
+
+    /** Serialize broker/workload registration on their shared OAuth client row. Caller must be transactional. */
+    public void lockClientForIdentityRegistration(String clientId) {
+        clients.findByClientIdForUpdate(clientId)
+                .orElseThrow(() -> new IllegalArgumentException("identity registration requires a tenant application client"));
     }
 
     /** Server-owned resource-audience authority for exchange-route registration and token use. */
@@ -224,7 +331,7 @@ public class TenantApplicationService {
     public void requireHumanClientTenant(String clientId, String tenantId) {
         ClientAuthority authority = activeAuthority(clientId)
                 .orElseThrow(() -> new IllegalStateException("application client is disabled or unknown"));
-        if (authority.clientType() != TenantApplicationClient.Type.PUBLIC_BROWSER || !authority.tenantId().equals(tenantId)) {
+        if (!authority.clientType().interactive() || !authority.tenantId().equals(tenantId)) {
             throw new IllegalStateException("client is not authorized for this tenant principal");
         }
     }
@@ -249,8 +356,8 @@ public class TenantApplicationService {
     }
 
     private static void requireServiceClient(TenantApplicationClient client) {
-        if (client.getClientType() != TenantApplicationClient.Type.CONFIDENTIAL_SERVICE) {
-            throw new ResourceConflictException("Only confidential service clients have service credentials");
+        if (client.getClientType() == TenantApplicationClient.Type.PUBLIC_BROWSER) {
+            throw new ResourceConflictException("Only confidential clients have client credentials");
         }
         if (client.getStatus() != TenantApplicationClient.Status.ACTIVE) {
             throw new ResourceConflictException("Application client is disabled");
@@ -277,42 +384,141 @@ public class TenantApplicationService {
     }
 
     private RegisteredClient registeredClient(TenantApplication app, CreateTenantApplicationClientRequest request,
-                                              List<String> scopes, String secret) {
+                                              List<String> scopes, String secret,
+                                              TenantApplicationClient.Population population) {
+        TenantApplicationClient.Type type = request.clientType();
+        TokenSettings.Builder tokens = TokenSettings.builder().accessTokenTimeToLive(accessTokenTtl(request));
         RegisteredClient.Builder builder = RegisteredClient.withId(UUID.randomUUID().toString())
-                .clientId(request.clientId()).clientName(app.getDisplayName())
-                .tokenSettings(TokenSettings.builder().accessTokenTimeToLive(Duration.ofHours(1)).build());
+                .clientId(request.clientId()).clientName(app.getDisplayName());
         scopes.forEach(builder::scope);
-        if (request.clientType() == TenantApplicationClient.Type.PUBLIC_BROWSER) {
+        if (type.interactive()) {
+            if (request.tokenEndpointAuthMethod() != null && !request.tokenEndpointAuthMethod().equals(
+                    type == TenantApplicationClient.Type.PUBLIC_BROWSER ? "none" : "client_secret_basic")) {
+                throw new IllegalArgumentException("Unsupported client authentication method for this client type");
+            }
+            if (request.jwks() != null) throw new IllegalArgumentException("Interactive clients do not register keys");
             List<String> redirects = requireBrowserUris(request.redirectUris(), "redirect URI");
             List<String> logoutRedirects = optionalBrowserUris(request.postLogoutRedirectUris(), "post-logout redirect URI");
-            builder.clientAuthenticationMethod(ClientAuthenticationMethod.NONE)
-                    .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
-                    .clientSettings(ClientSettings.builder().requireProofKey(true).requireAuthorizationConsent(false).build());
+            builder.authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                    .clientSettings(ClientSettings.builder().requireProofKey(true)
+                            .requireAuthorizationConsent(Boolean.TRUE.equals(request.requireConsent()))
+                            .setting(POPULATION_SETTING, population.name()).build());
+            if (type == TenantApplicationClient.Type.PUBLIC_BROWSER) {
+                if (request.refreshTokenTtlSeconds() != null) {
+                    throw new IllegalArgumentException("Public browser clients receive no refresh tokens");
+                }
+                builder.clientAuthenticationMethod(ClientAuthenticationMethod.NONE);
+            } else {
+                builder.clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                        .clientSecret(passwordEncoder.encode(secret))
+                        .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN);
+                // Rotation on every use (RFC 9700 section 4.14.2); reuse of a spent token withdraws the family.
+                tokens.reuseRefreshTokens(false).refreshTokenTimeToLive(refreshTokenTtl(request));
+            }
             redirects.forEach(builder::redirectUri); logoutRedirects.forEach(builder::postLogoutRedirectUri);
         } else {
             if (!empty(request.redirectUris()) || !empty(request.postLogoutRedirectUris())) {
                 throw new IllegalArgumentException("Confidential service clients cannot register browser redirects");
             }
-            builder.clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
-                    .clientSecret(passwordEncoder.encode(secret))
-                    .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
-                    .authorizationGrantType(TokenExchangeConstants.GRANT_TYPE)
-                    .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build());
+            if (request.requireConsent() != null || request.accessTokenTtlSeconds() != null
+                    || request.refreshTokenTtlSeconds() != null) {
+                throw new IllegalArgumentException("Service clients use the deployment's client-credentials lifetime");
+            }
+            builder.authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+                    .authorizationGrantType(TokenExchangeConstants.GRANT_TYPE);
+            String method = request.tokenEndpointAuthMethod() == null ? "client_secret_basic" : request.tokenEndpointAuthMethod();
+            if (ClientAssertionKeys.PRIVATE_KEY_JWT.equals(method)) {
+                ClientAssertionKeys.Registered keys = ClientAssertionKeys.validate(request.jwks());
+                builder.clientAuthenticationMethod(ClientAuthenticationMethod.PRIVATE_KEY_JWT)
+                        .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false)
+                                .tokenEndpointAuthenticationSigningAlgorithm(keys.algorithm())
+                                .setting(ClientAssertionKeys.SETTING, keys.json()).build());
+            } else if ("client_secret_basic".equals(method)) {
+                if (request.jwks() != null) throw new IllegalArgumentException("Keys require private_key_jwt");
+                builder.clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                        .clientSecret(passwordEncoder.encode(secret))
+                        .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build());
+            } else {
+                throw new IllegalArgumentException("Unsupported client authentication method");
+            }
         }
-        return builder.build();
+        return builder.tokenSettings(tokens.build()).build();
+    }
+
+    /** Client setting naming the interactive client's sign-in population (read by the authorization server). */
+    public static final String POPULATION_SETTING = "settings.client.axiom.population";
+
+    private static TenantApplicationClient.Population population(CreateTenantApplicationClientRequest request) {
+        if (request.population() == null) return TenantApplicationClient.Population.WORKFORCE;
+        if (!request.clientType().interactive() && request.population() != TenantApplicationClient.Population.WORKFORCE) {
+            throw new IllegalArgumentException("Only interactive clients have a sign-in population");
+        }
+        return request.population();
+    }
+
+    private Duration accessTokenTtl(CreateTenantApplicationClientRequest request) {
+        if (request.accessTokenTtlSeconds() == null) return interactiveTtl;
+        Duration requested = Duration.ofSeconds(request.accessTokenTtlSeconds());
+        if (requested.compareTo(Duration.ofSeconds(60)) < 0 || requested.compareTo(interactiveMaxTtl) > 0) {
+            throw new IllegalArgumentException("accessTokenTtlSeconds must be between 60 and "
+                    + interactiveMaxTtl.toSeconds());
+        }
+        return requested;
+    }
+
+    private Duration refreshTokenTtl(CreateTenantApplicationClientRequest request) {
+        if (request.refreshTokenTtlSeconds() == null) return refreshTtl;
+        Duration requested = Duration.ofSeconds(request.refreshTokenTtlSeconds());
+        if (requested.compareTo(Duration.ofSeconds(60)) < 0 || requested.compareTo(refreshMaxTtl) > 0) {
+            throw new IllegalArgumentException("refreshTokenTtlSeconds must be between 60 and " + refreshMaxTtl.toSeconds());
+        }
+        return requested;
+    }
+
+    private Duration interactiveTtl = Duration.ofHours(1);
+    private Duration interactiveMaxTtl = Duration.ofHours(1);
+    private Duration refreshTtl = Duration.ofHours(8);
+    private Duration refreshMaxTtl = Duration.ofDays(30);
+
+    /**
+     * Deployment policy for interactive (person/customer) access tokens and refresh tokens. The defaults keep today's
+     * one-hour access tokens; a deployment that needs a shorter offline-withdrawal window lowers them.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setTokenLifetimes(
+            @org.springframework.beans.factory.annotation.Value("${iam.oauth2.interactive-access-token.ttl:PT1H}") Duration ttl,
+            @org.springframework.beans.factory.annotation.Value("${iam.oauth2.interactive-access-token.max-ttl:PT1H}") Duration max,
+            @org.springframework.beans.factory.annotation.Value("${iam.oauth2.refresh-token.ttl:PT8H}") Duration refresh,
+            @org.springframework.beans.factory.annotation.Value("${iam.oauth2.refresh-token.max-ttl:P30D}") Duration refreshMax) {
+        if (max.compareTo(Duration.ofMinutes(1)) < 0 || max.compareTo(Duration.ofHours(24)) > 0
+                || ttl.compareTo(Duration.ofMinutes(1)) < 0 || ttl.compareTo(max) > 0) {
+            throw new IllegalArgumentException("interactive access-token TTL must be between one minute and its maximum (at most 24 h)");
+        }
+        if (refreshMax.compareTo(Duration.ofMinutes(1)) < 0 || refreshMax.compareTo(Duration.ofDays(90)) > 0
+                || refresh.compareTo(Duration.ofMinutes(1)) < 0 || refresh.compareTo(refreshMax) > 0) {
+            throw new IllegalArgumentException("refresh-token TTL must be between one minute and its maximum (at most 90 days)");
+        }
+        this.interactiveTtl = ttl; this.interactiveMaxTtl = max; this.refreshTtl = refresh; this.refreshMaxTtl = refreshMax;
     }
 
     private List<String> approvedScopes(TenantApplicationClient.Type type, List<String> requested) {
+        return approvedScopes(type, TenantApplicationClient.Population.WORKFORCE, requested);
+    }
+
+    private List<String> approvedScopes(TenantApplicationClient.Type type, TenantApplicationClient.Population population,
+                                        List<String> requested) {
         Set<String> scopes = new LinkedHashSet<>(requested == null ? Set.of() : requested);
-        Set<String> allowed = type == TenantApplicationClient.Type.PUBLIC_BROWSER ? PUBLIC_SCOPES : SERVICE_SCOPES;
+        Set<String> allowed = new LinkedHashSet<>(!type.interactive() ? SERVICE_SCOPES
+                : population == TenantApplicationClient.Population.CUSTOMER ? CUSTOMER_SCOPES : PUBLIC_SCOPES);
+        if (type == TenantApplicationClient.Type.CONFIDENTIAL_WEB) allowed.add(OFFLINE_ACCESS);
         if (scopes.isEmpty()) scopes.addAll(allowed);
         for (String scope : scopes) {
             if (!allowed.contains(scope) && !businessScopes.isApproved(scope)) {
                 throw new IllegalArgumentException("Requested scopes are not approved for client posture");
             }
         }
-        if (type == TenantApplicationClient.Type.PUBLIC_BROWSER && !scopes.contains(OidcScopes.OPENID)) {
-            throw new IllegalArgumentException("Public browser clients require openid scope");
+        if (type.interactive() && !scopes.contains(OidcScopes.OPENID)) {
+            throw new IllegalArgumentException("Interactive clients require openid scope");
         }
         return scopes.stream().sorted().toList();
     }
@@ -346,19 +552,41 @@ public class TenantApplicationService {
         return clientResponse(client, registered, client.getRevision());
     }
     private TenantApplicationClientResponse clientResponse(TenantApplicationClient client, RegisteredClient registered, long revision) {
+        boolean refresh = registered.getAuthorizationGrantTypes().contains(AuthorizationGrantType.REFRESH_TOKEN);
         return new TenantApplicationClientResponse(client.getId(), client.getClientId(), client.getClientType(), client.getStatus(),
                 client.getAllowedScopes(), registered.getRedirectUris().stream().sorted().toList(),
                 registered.getPostLogoutRedirectUris().stream().sorted().toList(),
                 registered.getAuthorizationGrantTypes().stream().map(AuthorizationGrantType::getValue).sorted().toList(),
-                registered.getClientSettings().isRequireProofKey(), revision, client.getCreatedAt(), client.getUpdatedAt());
+                registered.getClientSettings().isRequireProofKey(), revision, client.getCreatedAt(), client.getUpdatedAt(),
+                client.getPopulation(),
+                registered.getClientAuthenticationMethods().stream().map(ClientAuthenticationMethod::getValue).sorted().toList(),
+                client.getClientType().interactive() ? registered.getTokenSettings().getAccessTokenTimeToLive().toSeconds() : 0,
+                refresh ? registered.getTokenSettings().getRefreshTokenTimeToLive().toSeconds() : null,
+                registered.getClientSettings().isRequireAuthorizationConsent(),
+                ClientAssertionKeys.keyIds(registered));
     }
     private static String generatedSecret() { byte[] bytes = new byte[32]; SECRET_RANDOM.nextBytes(bytes); return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes); }
     private static String correlation(HttpServletRequest request) { return request == null ? null : request.getHeader("X-Correlation-ID"); }
 
     public record ClientAuthority(String tenantId, String audience, TenantApplicationClient.Type clientType,
-                                  List<String> scopes, UUID applicationId) {
+                                  List<String> scopes, UUID applicationId, TenantApplicationClient.Population population) {
+        public ClientAuthority {
+            if (population == null) population = TenantApplicationClient.Population.WORKFORCE;
+        }
+        public ClientAuthority(String tenantId, String audience, TenantApplicationClient.Type clientType,
+                               List<String> scopes, UUID applicationId) {
+            this(tenantId, audience, clientType, scopes, applicationId, TenantApplicationClient.Population.WORKFORCE);
+        }
         public ClientAuthority(String tenantId, String audience, TenantApplicationClient.Type clientType, List<String> scopes) {
             this(tenantId, audience, clientType, scopes, null);
+        }
+        /** An interactive client through which customers (CIAM) sign in. */
+        public boolean customerSignIn() {
+            return clientType.interactive() && population == TenantApplicationClient.Population.CUSTOMER;
+        }
+        /** An interactive client through which workforce people sign in. */
+        public boolean workforceSignIn() {
+            return clientType.interactive() && population == TenantApplicationClient.Population.WORKFORCE;
         }
     }
 }

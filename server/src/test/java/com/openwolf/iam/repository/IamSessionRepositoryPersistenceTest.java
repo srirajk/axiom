@@ -1,6 +1,7 @@
 package com.openwolf.iam.repository;
 
 import com.openwolf.iam.entity.IamSession;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
@@ -20,6 +21,31 @@ class IamSessionRepositoryPersistenceTest {
 
     @Autowired
     private IamSessionRepository sessions;
+
+    @Autowired
+    private EntityManager entityManager;
+
+    @Test
+    void touchCoalescesRecentWritesAndNeverTouchesRevokedSession() {
+        IamSession session = new IamSession(UUID.randomUUID(), TENANT, "user-1", null,
+                "browser-client", NOW, NOW.plusSeconds(600));
+        sessions.saveAndFlush(session);
+        entityManager.clear();
+
+        assertThat(sessions.touch(session.getId(), TENANT, NOW.plusSeconds(20),
+                IamSession.Status.ACTIVE, NOW.minusSeconds(10))).isZero();
+        assertThat(sessions.touch(session.getId(), TENANT, NOW.plusSeconds(31),
+                IamSession.Status.ACTIVE, NOW.plusSeconds(1))).isEqualTo(1);
+        entityManager.clear();
+        IamSession updated = sessions.findById(session.getId()).orElseThrow();
+        assertThat(updated.getLastSeenAt()).isEqualTo(NOW.plusSeconds(31));
+
+        updated.revoke();
+        sessions.saveAndFlush(updated);
+        entityManager.clear();
+        assertThat(sessions.touch(session.getId(), TENANT, NOW.plusSeconds(100),
+                IamSession.Status.ACTIVE, NOW.plusSeconds(100))).isZero();
+    }
 
     @Test
     void selectsOnlyActiveRecoverySessionsForOperatorAndTenant() {

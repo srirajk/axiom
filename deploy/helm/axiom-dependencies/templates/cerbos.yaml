@@ -1,0 +1,99 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "axiomdeps.name" . }}-cerbos
+  labels:
+    app.kubernetes.io/name: {{ include "axiomdeps.name" . }}-cerbos
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "axiomdeps.name" . }}-cerbos
+  ports:
+    - {name: http, port: 3592, targetPort: http}
+    - {name: grpc, port: 3593, targetPort: grpc}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "axiomdeps.name" . }}-cerbos
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "axiomdeps.name" . }}-cerbos
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "axiomdeps.name" . }}-cerbos
+      annotations:
+        checksum/policy-configmaps: {{ include (print $.Template.BasePath "/configmaps.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: cerbos
+          image: {{ include "axiomdeps.image" .Values.cerbos.image | quote }}
+          imagePullPolicy: {{ .Values.cerbos.image.pullPolicy }}
+          env:
+            - {name: CERBOS_NO_TELEMETRY, value: "1"}
+          args: ["server", "--config=/conf/config.yaml"]
+          ports:
+            - {name: http, containerPort: 3592}
+            - {name: grpc, containerPort: 3593}
+          startupProbe:
+            exec: {command: ["/cerbos", "healthcheck", "--config=/conf/config.yaml"]}
+            periodSeconds: 3
+            failureThreshold: 30
+          readinessProbe:
+            exec: {command: ["/cerbos", "healthcheck", "--config=/conf/config.yaml"]}
+            periodSeconds: 5
+          livenessProbe:
+            exec: {command: ["/cerbos", "healthcheck", "--config=/conf/config.yaml"]}
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.cerbos.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /conf/config.yaml, subPath: config.yaml, readOnly: true}
+            - {name: base-policies, mountPath: /policies/base, readOnly: true}
+            - {name: runtime-policies, mountPath: /policies/runtime}
+            - {name: audit, mountPath: /var/log/cerbos}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "axiomdeps.name" . }}-cerbos-config
+        - name: base-policies
+          configMap:
+            name: {{ include "axiomdeps.name" . }}-platform-policies
+        - name: runtime-policies
+          persistentVolumeClaim:
+            claimName: {{ include "axiomdeps.name" . }}-policy-runtime
+        - name: audit
+          persistentVolumeClaim:
+            claimName: {{ include "axiomdeps.name" . }}-cerbos-audit
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}

@@ -30,6 +30,11 @@ import java.util.UUID;
  * owner-qualified Redis lock spans validation and persistence. Invalid attempts release it without
  * consuming the code; after the first valid request completes, the framework's persisted consumed
  * marker makes every replay fail closed.</p>
+ *
+ * <p>Refresh-token redemption is serialized the same way, but without waiting: a second request presenting the same
+ * refresh token while the first is in flight is refused at once ({@code invalid_grant}); one presenting it after the
+ * first completed is a reuse of a spent token, which withdraws the whole refresh family
+ * ({@link RedisOAuth2AuthorizationService}). Exactly one of several concurrent redemptions can succeed.</p>
  */
 @Component
 public final class AuthorizationCodeRedemptionLockFilter extends OncePerRequestFilter {
@@ -63,9 +68,10 @@ public final class AuthorizationCodeRedemptionLockFilter extends OncePerRequestF
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
+        String grant = request.getParameter("grant_type");
         return !TOKEN_ENDPOINT.equals(request.getRequestURI())
                 || !"POST".equalsIgnoreCase(request.getMethod())
-                || !"authorization_code".equals(request.getParameter("grant_type"));
+                || !("authorization_code".equals(grant) || "refresh_token".equals(grant));
     }
 
     @Override
@@ -73,15 +79,16 @@ public final class AuthorizationCodeRedemptionLockFilter extends OncePerRequestF
             HttpServletRequest request,
             HttpServletResponse response,
             FilterChain filterChain) throws ServletException, IOException {
-        String code = request.getParameter("code");
+        boolean refresh = "refresh_token".equals(request.getParameter("grant_type"));
+        String code = request.getParameter(refresh ? "refresh_token" : "code");
         if (code == null || code.isBlank()) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        String key = keyPrefix + ":code-redemption-lock:" + sha256(code);
+        String key = keyPrefix + (refresh ? ":refresh-redemption-lock:" : ":code-redemption-lock:") + sha256(code);
         String owner = UUID.randomUUID().toString();
-        if (!acquire(key, owner)) {
+        if (!acquire(key, owner, refresh ? 0 : waitMillis)) {
             invalidGrant(response);
             return;
         }
@@ -92,8 +99,8 @@ public final class AuthorizationCodeRedemptionLockFilter extends OncePerRequestF
         }
     }
 
-    private boolean acquire(String key, String owner) {
-        long deadline = System.nanoTime() + Duration.ofMillis(waitMillis).toNanos();
+    private boolean acquire(String key, String owner, long waitFor) {
+        long deadline = System.nanoTime() + Duration.ofMillis(waitFor).toNanos();
         do {
             if (Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(key, owner, LOCK_TTL))) {
                 return true;

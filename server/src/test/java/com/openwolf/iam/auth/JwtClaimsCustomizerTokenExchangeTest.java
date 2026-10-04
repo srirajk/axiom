@@ -44,6 +44,10 @@ class JwtClaimsCustomizerTokenExchangeTest {
                 .claim("tenant_id", "meridian")
                 .claim("identity_kind", "workforce")
                 .claim("sid", "root-session")
+                .claim("use_case_id", "caller-supplied-wealth")
+                .claim("run_id", "caller-supplied-run")
+                .claim("context_id", "caller-supplied-context")
+                .claim("branch_id", "caller-supplied-branch")
                 .build();
         Authentication clientPrincipal = mock(Authentication.class);
         TokenExchangeAuthenticationToken exchange = new TokenExchangeAuthenticationToken(
@@ -71,7 +75,7 @@ class JwtClaimsCustomizerTokenExchangeTest {
                 .containsEntry("authority_id", routeId.toString())
                 .containsEntry("token_use", "exchange_subject")
                 .containsEntry("subject_sid", "root-session")
-                .doesNotContainKey("delegation_id");
+                .doesNotContainKeys("delegation_id", "use_case_id", "run_id", "context_id", "branch_id");
         @SuppressWarnings("unchecked")
         Map<String, Object> actor = (Map<String, Object>) claims.get("act");
         assertThat(actor)

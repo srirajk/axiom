@@ -1,0 +1,44 @@
+{{- if .Values.tests.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "axiomdeps.name" . }}-dependencies-test
+  labels:
+    app.kubernetes.io/name: {{ .Values.app.name | quote }}
+    app.kubernetes.io/instance: {{ .Values.app.instance | quote }}
+    app.kubernetes.io/component: dependency-test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  activeDeadlineSeconds: 120
+  {{- with .Values.nodeSelector }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: connectivity
+      image: {{ include "axiomdeps.image" .Values.tests.image | quote }}
+      imagePullPolicy: {{ .Values.tests.image.pullPolicy }}
+      command: ["/bin/sh", "-ec"]
+      args:
+        - |
+          nc -z -w 5 {{ include "axiomdeps.name" . }}-postgresql 5432
+          redis-cli -h {{ include "axiomdeps.name" . }}-redis ping | grep -qx PONG
+          wget -qO- http://{{ include "axiomdeps.name" . }}-cerbos:3592/_cerbos/health | grep -q '"status"'
+          echo "Axiom dependency connectivity passed."
+      resources:
+        requests: {cpu: 10m, memory: 32Mi}
+        limits: {cpu: 100m, memory: 64Mi}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: {drop: [ALL]}
+{{- end }}

@@ -231,8 +231,9 @@ public class ApplicationAccessService {
     public Map<String, Object> tokenClaims(String clientId, String principalId) {
         TenantApplicationClient client = clients.findByClientId(clientId)
                 .filter(value -> value.getStatus() == TenantApplicationClient.Status.ACTIVE)
-                .filter(value -> value.getClientType() == TenantApplicationClient.Type.PUBLIC_BROWSER)
-                .orElseThrow(() -> new IllegalStateException("public application client is not active"));
+                .filter(value -> value.getClientType().interactive())
+                .filter(value -> value.getPopulation() == TenantApplicationClient.Population.WORKFORCE)
+                .orElseThrow(() -> new IllegalStateException("workforce sign-in client is not active"));
         TenantApplication application = applications.findById(client.getApplicationId())
                 .filter(value -> value.getStatus() == TenantApplication.Status.ACTIVE)
                 .orElseThrow(() -> new IllegalStateException("application is not active"));

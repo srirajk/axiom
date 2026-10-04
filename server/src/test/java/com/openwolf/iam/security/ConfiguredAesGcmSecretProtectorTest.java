@@ -22,7 +22,11 @@ class ConfiguredAesGcmSecretProtectorTest {
     void rejectsTamperedCiphertext() {
         ConfiguredAesGcmSecretProtector protector = new ConfiguredAesGcmSecretProtector(KEY);
         String ciphertext = protector.protect("upstream-client-secret");
-        String tampered = ciphertext.substring(0, ciphertext.length() - 1) + (ciphertext.endsWith("A") ? "B" : "A");
+        int payloadStart = ciphertext.lastIndexOf(':') + 1;
+        byte[] payload = Base64.getUrlDecoder().decode(ciphertext.substring(payloadStart));
+        payload[payload.length - 1] ^= 1;
+        String tampered = ciphertext.substring(0, payloadStart)
+                + Base64.getUrlEncoder().withoutPadding().encodeToString(payload);
         assertThatThrownBy(() -> protector.reveal(tampered)).isInstanceOf(IllegalStateException.class);
     }
 

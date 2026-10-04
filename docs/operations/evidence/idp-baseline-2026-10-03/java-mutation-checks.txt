@@ -1,0 +1,11 @@
+M1 secure default for legacy login: rc=1 [ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0
+M2 type-specific token lookup: rc=1 [ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0
+M3 refresh reuse withdraws the family: rc=1 [ERROR] Tests run: 1, Failures: 0, Errors: 1, Skipped: 0
+M4 CORS exemption for RP-initiated logout: rc=1 [ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0
+M5 consent POST is not an authorization request: rc=1 [ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0
+M6 business scope narrowed to entitlement: rc=1 [ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0
+M7 population boundary at the authorize endpoint: rc=1 [ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0
+M8 single-use client assertions (jti): rc=1 [ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0
+M9 customer continuation re-checks the customer: rc=0 [INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
+all sources restored byte-identical
+exit=0

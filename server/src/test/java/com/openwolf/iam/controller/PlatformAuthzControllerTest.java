@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -41,6 +42,7 @@ class PlatformAuthzControllerTest {
     @MockitoBean SubjectContextService service;
     @MockitoBean ApplicationDecisionService decisions;
     @MockitoBean ScimCredentialService scimCredentialService;
+    @MockitoBean StringRedisTemplate redis;
 
     @Test
     void returnsOnlyTheServiceDerivedContext() throws Exception {

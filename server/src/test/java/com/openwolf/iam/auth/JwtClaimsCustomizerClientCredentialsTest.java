@@ -145,7 +145,8 @@ class JwtClaimsCustomizerClientCredentialsTest {
                 "permissions", List.of("record.read"), "attributes", Map.of(), "entitlement_revision", 3L));
         when(enricher.enrichIdToken("principal-a")).thenReturn(Map.of());
         TokenContext fixture = sessionContextFor(OAuth2TokenType.ACCESS_TOKEN);
-        when(sessions.issue(eq("authorization-a"), eq("tenant-a"), eq("principal-a"), eq(applicationId),
+        // Workforce (authorization-code) sessions go through the principal-locked issuance path (G-13).
+        when(sessions.issueForWorkforce(eq("authorization-a"), eq("tenant-a"), eq("principal-a"), eq(applicationId),
                 eq("sample-portal"), any())).thenReturn(sessionId);
 
         customizer.jwtTokenCustomizer().customize(fixture.context());
@@ -167,14 +168,15 @@ class JwtClaimsCustomizerClientCredentialsTest {
         when(enricher.enrichIdToken("principal-a")).thenReturn(Map.of("email", "principal@example.test"));
         TokenContext fixture = sessionContextFor(new OAuth2TokenType(OidcParameterNames.ID_TOKEN));
         fixture.claims().claim("sid", "framework-oidc-session");
-        when(sessions.issue(eq("authorization-a"), eq("tenant-a"), eq("principal-a"), eq(applicationId),
+        when(sessions.issueForWorkforce(eq("authorization-a"), eq("tenant-a"), eq("principal-a"), eq(applicationId),
                 eq("sample-portal"), any())).thenReturn(UUID.randomUUID());
 
         customizer.jwtTokenCustomizer().customize(fixture.context());
 
         assertThat(fixture.claims().build().getClaims().get("sid")).isEqualTo("framework-oidc-session");
-        verify(sessions).issue(eq("authorization-a"), eq("tenant-a"), eq("principal-a"), eq(applicationId),
-                eq("sample-portal"), any());
+        verify(sessions).issueForWorkforce(eq("authorization-a"), eq("tenant-a"), eq("principal-a"),
+                eq(applicationId), eq("sample-portal"), any());
+        verify(sessions, never()).issue(any(), any(), any(), any(), any(), any());
     }
 
     private static TokenContext contextFor(String clientId) {
