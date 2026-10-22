@@ -7,6 +7,7 @@ import com.openwolf.iam.entity.AgentExchangeRoute;
 import com.openwolf.iam.entity.AgentWorkloadIdentity;
 import com.openwolf.iam.entity.TenantApplicationClient;
 import com.openwolf.iam.entity.TrustedExchangeBroker;
+import com.openwolf.iam.entity.TrustedExchangeBrokerTarget;
 import com.openwolf.iam.exception.ResourceConflictException;
 import com.openwolf.iam.repository.AgentExchangeRouteRepository;
 import com.openwolf.iam.repository.AgentWorkloadIdentityRepository;
@@ -40,6 +41,7 @@ class AgentExchangeAuthorityServiceTest {
     private static final String SOURCE_CLIENT = "card-assistance-agent";
     private static final String DESTINATION_CLIENT = "card-actions-agent";
     private static final String GATEWAY_CLIENT = "argus-gateway-broker";
+    private static final String BROKER_SCOPE = "gateway:exchange";
     private static final String SOURCE_AUDIENCE = "cards-api";
     private static final String DESTINATION_AUDIENCE = "card-actions-api";
     private static final String GATEWAY_AUDIENCE = "argus-gateway";
@@ -52,6 +54,7 @@ class AgentExchangeAuthorityServiceTest {
     private final ApplicationAccessService applicationAccess = mock(ApplicationAccessService.class);
     private final CiamDelegationAuthorityService customerAuthority = mock(CiamDelegationAuthorityService.class);
     private final CiamLifecycleAuditService audit = mock(CiamLifecycleAuditService.class);
+    private final TrustedBrokerTargetService targetService = mock(TrustedBrokerTargetService.class);
     private AgentExchangeAuthorityService service;
     private AgentWorkloadIdentity source;
     private AgentWorkloadIdentity destination;
@@ -65,12 +68,13 @@ class AgentExchangeAuthorityServiceTest {
         service = new AgentExchangeAuthorityService(brokers, routes, workloads, applications,
                 applicationAccess, customerAuthority, audit, new BusinessScopeRegistry(SCOPE),
                 Clock.fixed(NOW, ZoneOffset.UTC));
+        service.setBrokerTargets(targetService);
         source = new AgentWorkloadIdentity(TENANT, "agent:card-assistance:development",
                 "Card Assistance Agent", SOURCE_CLIENT, NOW);
         destination = new AgentWorkloadIdentity(TENANT, "agent:card-actions:development",
                 "Card Actions Agent", DESTINATION_CLIENT, NOW);
         broker = new TrustedExchangeBroker(TENANT, GATEWAY_CLIENT, GATEWAY_AUDIENCE,
-                List.of(SCOPE), NOW);
+                List.of(BROKER_SCOPE), NOW);
         gatewayRoute = new AgentExchangeRoute(TENANT, source.getId(),
                 AgentExchangeRoute.DestinationType.GATEWAY, null, GATEWAY_AUDIENCE,
                 List.of(SCOPE), "Route bounded work through Argus Gateway", NOW.plusSeconds(3600), NOW);
@@ -107,6 +111,7 @@ class AgentExchangeAuthorityServiceTest {
                 TENANT, source.getId(), DESTINATION_AUDIENCE, AgentExchangeRoute.Status.ACTIVE))
                 .thenReturn(List.of(agentRoute));
         when(routes.save(any(AgentExchangeRoute.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(targetService.resolve(eq(TENANT), eq(broker.getId()), any())).thenReturn(Optional.empty());
     }
 
     @Test
@@ -219,6 +224,254 @@ class AgentExchangeAuthorityServiceTest {
         assertThat(resolved.actingWorkload().getId()).isEqualTo(source.getId());
         assertThatThrownBy(() -> service.resolve(gatewaySubject, GATEWAY_CLIENT,
                 "sibling-agent-api", Set.of(SCOPE)))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+    }
+
+    @Test
+    void brokerOwnedTargetReplacesPerSourceTargetRouteButNotGatewayEntryRoute() {
+        TrustedExchangeBrokerTarget target = new TrustedExchangeBrokerTarget(broker.getId(), TENANT,
+                DESTINATION_AUDIENCE, AgentExchangeRoute.DestinationType.AGENT, destination.getId(),
+                List.of(SCOPE), "Broker target", NOW);
+        when(targetService.resolve(TENANT, broker.getId(), DESTINATION_AUDIENCE)).thenReturn(Optional.of(target));
+        Jwt gatewaySubject = gatewayAuthorization(TENANT);
+
+        var result = service.resolve(gatewaySubject, GATEWAY_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE));
+
+        assertThat(result.authorityId()).isEqualTo("broker-target:" + target.getId());
+        assertThat(result.tokenUse()).isEqualTo(AgentExchangeAuthorityService.TokenUse.EXCHANGE_SUBJECT);
+        org.mockito.Mockito.verify(routes, org.mockito.Mockito.never())
+                .findByTenantIdAndSourceWorkloadIdAndAudienceAndStatus(TENANT, source.getId(),
+                        DESTINATION_AUDIENCE, AgentExchangeRoute.Status.ACTIVE);
+        verify(routes).findByTenantIdAndId(TENANT, gatewayRoute.getId());
+    }
+
+    @Test
+    void brokerTargetScopesAreBoundBySubjectAndDestinationNotBrokerScopes() {
+        TrustedExchangeBrokerTarget target = new TrustedExchangeBrokerTarget(broker.getId(), TENANT,
+                DESTINATION_AUDIENCE, AgentExchangeRoute.DestinationType.AGENT, destination.getId(),
+                List.of(SCOPE), "Broker target", NOW);
+        when(targetService.resolve(TENANT, broker.getId(), DESTINATION_AUDIENCE)).thenReturn(Optional.of(target));
+
+        var resolved = service.resolve(gatewayAuthorization(TENANT), GATEWAY_CLIENT,
+                DESTINATION_AUDIENCE, Set.of(SCOPE));
+        assertThat(resolved.scopes()).containsExactly(SCOPE);
+        assertThat(broker.getAllowedScopes()).containsExactly(BROKER_SCOPE);
+
+        TrustedExchangeBrokerTarget narrower = new TrustedExchangeBrokerTarget(broker.getId(), TENANT,
+                DESTINATION_AUDIENCE, AgentExchangeRoute.DestinationType.AGENT, destination.getId(),
+                List.of("other:scope"), "Narrower target", NOW);
+        when(targetService.resolve(TENANT, broker.getId(), DESTINATION_AUDIENCE)).thenReturn(Optional.of(narrower));
+        assertThatThrownBy(() -> service.resolve(gatewayAuthorization(TENANT), GATEWAY_CLIENT,
+                DESTINATION_AUDIENCE, Set.of(SCOPE)))
+                .isInstanceOf(OAuth2AuthenticationException.class)
+                .satisfies(error -> assertThat(((OAuth2AuthenticationException) error).getError().getErrorCode())
+                        .isEqualTo("invalid_scope"));
+
+        Jwt subjectWithoutRequestedScope = token("meridian-1008", GATEWAY_AUDIENCE, Map.of(
+                "tenant_id", TENANT, "identity_kind", "workforce", "client_id", SOURCE_CLIENT,
+                "scope", "", "token_use", "gateway_authorization", "authority_profile", "workload_continuation",
+                "authority_id", gatewayRoute.getId().toString(), "act", actor(source)));
+        when(targetService.resolve(TENANT, broker.getId(), DESTINATION_AUDIENCE)).thenReturn(Optional.of(target));
+        assertThatThrownBy(() -> service.resolve(subjectWithoutRequestedScope, GATEWAY_CLIENT,
+                DESTINATION_AUDIENCE, Set.of(SCOPE)))
+                .isInstanceOf(OAuth2AuthenticationException.class)
+                .satisfies(error -> assertThat(((OAuth2AuthenticationException) error).getError().getErrorCode())
+                        .isEqualTo("invalid_scope"));
+    }
+
+    @Test
+    void gatewayRouteMayCarryBusinessScopesBeyondBrokerInvocationScopes() {
+        var request = new CreateAgentExchangeRouteRequest(source.getId(),
+                AgentExchangeRoute.DestinationType.GATEWAY, null, GATEWAY_AUDIENCE, Set.of(SCOPE),
+                "Route business scope through trusted Gateway", NOW.plusSeconds(3600));
+
+        var created = service.createRoute(TENANT, request, "admin", "route-create");
+
+        assertThat(created.scopes()).containsExactly(SCOPE);
+        assertThat(broker.getAllowedScopes()).containsExactly(BROKER_SCOPE);
+    }
+
+    @Test
+    void brokerTargetRequiresAnActiveGatewayEntryAndDoesNotRequireAPerSourceTargetRoute() {
+        TrustedExchangeBrokerTarget target = new TrustedExchangeBrokerTarget(broker.getId(), TENANT,
+                DESTINATION_AUDIENCE, AgentExchangeRoute.DestinationType.AGENT, destination.getId(),
+                List.of(SCOPE), "Broker target", NOW);
+        when(targetService.resolve(TENANT, broker.getId(), DESTINATION_AUDIENCE)).thenReturn(Optional.of(target));
+
+        var result = service.resolve(gatewayAuthorization(TENANT), GATEWAY_CLIENT,
+                DESTINATION_AUDIENCE, Set.of(SCOPE));
+        assertThat(result.authorityId()).isEqualTo("broker-target:" + target.getId());
+        org.mockito.Mockito.verify(routes, org.mockito.Mockito.never())
+                .findByTenantIdAndSourceWorkloadIdAndAudienceAndStatus(TENANT, source.getId(),
+                        DESTINATION_AUDIENCE, AgentExchangeRoute.Status.ACTIVE);
+
+        gatewayRoute.revoke(NOW.plusSeconds(1));
+        assertThatThrownBy(() -> service.resolve(gatewayAuthorization(TENANT), GATEWAY_CLIENT,
+                DESTINATION_AUDIENCE, Set.of(SCOPE)))
+                .isInstanceOf(OAuth2AuthenticationException.class)
+                .satisfies(error -> assertThat(((OAuth2AuthenticationException) error).getError().getErrorCode())
+                        .isEqualTo("invalid_grant"));
+    }
+
+    @Test
+    void brokerTargetTokenExpiryCannotOutliveTheGatewayEntryRoute() {
+        TrustedExchangeBrokerTarget target = new TrustedExchangeBrokerTarget(broker.getId(), TENANT,
+                DESTINATION_AUDIENCE, AgentExchangeRoute.DestinationType.AGENT, destination.getId(),
+                List.of(SCOPE), "Broker target", NOW);
+        when(targetService.resolve(TENANT, broker.getId(), DESTINATION_AUDIENCE)).thenReturn(Optional.of(target));
+        Jwt original = Jwt.withTokenValue("long-lived-source").header("alg", "RS256")
+                .subject(SOURCE_CLIENT).issuedAt(NOW.minusSeconds(30)).expiresAt(NOW.plusSeconds(7200))
+                .audience(List.of(SOURCE_AUDIENCE)).claim("tenant_id", TENANT)
+                .claim("identity_kind", "workload").claim("client_id", SOURCE_CLIENT)
+                .claim("scope", SCOPE).build();
+
+        var gateway = service.resolve(original, SOURCE_CLIENT, GATEWAY_AUDIENCE, Set.of(SCOPE));
+        assertThat(gateway.authorityExpiresAt()).isEqualTo(gatewayRoute.getExpiresAt());
+        Jwt gatewayToken = Jwt.withTokenValue("route-bounded-gateway-token").header("alg", "RS256")
+                .subject(SOURCE_CLIENT).issuedAt(NOW.minusSeconds(30)).expiresAt(gateway.authorityExpiresAt())
+                .audience(List.of(GATEWAY_AUDIENCE)).claim("tenant_id", TENANT)
+                .claim("identity_kind", "workload").claim("client_id", SOURCE_CLIENT)
+                .claim("scope", SCOPE).claim("token_use", "gateway_authorization")
+                .claim("authority_profile", "workload_continuation")
+                .claim("authority_id", gatewayRoute.getId().toString()).build();
+
+        var backend = service.resolve(gatewayToken, GATEWAY_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE));
+        assertThat(backend.authorityExpiresAt()).isEqualTo(gatewayRoute.getExpiresAt());
+    }
+
+    @Test
+    void brokerTargetPreservesThePersonActorChainAndSelfActingSourceHasNoActor() {
+        TrustedExchangeBrokerTarget target = new TrustedExchangeBrokerTarget(broker.getId(), TENANT,
+                DESTINATION_AUDIENCE, AgentExchangeRoute.DestinationType.AGENT, destination.getId(),
+                List.of(SCOPE), "Broker target", NOW);
+        when(targetService.resolve(TENANT, broker.getId(), DESTINATION_AUDIENCE)).thenReturn(Optional.of(target));
+        Map<String, Object> prior = Map.of("sub", "agent:prior", "client_id", "prior-client",
+                "workload_id", UUID.randomUUID().toString());
+        Map<String, Object> chain = Map.of("sub", source.getWorkloadRef(), "client_id", SOURCE_CLIENT,
+                "workload_id", source.getId().toString(), "act", prior);
+        Jwt person = gatewayAuthorizationWithActor(chain);
+
+        var personResult = service.resolve(person, GATEWAY_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE));
+        assertThat((Object) personResult.subject().getClaim("act")).isEqualTo(chain);
+        assertThat(personResult.actingWorkload().getId()).isEqualTo(source.getId());
+        assertThat(personResult.authorityId()).isEqualTo("broker-target:" + target.getId());
+
+        Jwt self = token(SOURCE_CLIENT, GATEWAY_AUDIENCE, Map.of(
+                "tenant_id", TENANT, "identity_kind", "workload", "client_id", SOURCE_CLIENT,
+                "scope", SCOPE, "token_use", "gateway_authorization",
+                "authority_profile", "workload_continuation", "authority_id", gatewayRoute.getId().toString()));
+        var selfResult = service.resolve(self, GATEWAY_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE));
+        assertThat(selfResult.subject().getClaims()).doesNotContainKey("act");
+        assertThat(selfResult.actingWorkload().getOauthClientId()).isEqualTo(SOURCE_CLIENT);
+    }
+
+    @Test
+    void anotherBrokerCannotBorrowAnExistingBrokersTarget() {
+        TrustedExchangeBroker other = new TrustedExchangeBroker(TENANT, "other-broker", "other-gateway",
+                List.of(SCOPE), NOW);
+        when(brokers.findByOauthClientId("other-broker")).thenReturn(Optional.of(other));
+        TrustedExchangeBrokerTarget target = new TrustedExchangeBrokerTarget(broker.getId(), TENANT,
+                DESTINATION_AUDIENCE, AgentExchangeRoute.DestinationType.AGENT, destination.getId(),
+                List.of(SCOPE), "Broker target", NOW);
+        when(targetService.resolve(TENANT, broker.getId(), DESTINATION_AUDIENCE)).thenReturn(Optional.of(target));
+
+        assertThatThrownBy(() -> service.resolve(gatewayAuthorization(TENANT), "other-broker",
+                DESTINATION_AUDIENCE, Set.of(SCOPE)))
+                .isInstanceOf(OAuth2AuthenticationException.class)
+                .satisfies(error -> assertThat(((OAuth2AuthenticationException) error).getError().getErrorCode())
+                        .isEqualTo("invalid_grant"));
+        org.mockito.Mockito.verify(targetService, org.mockito.Mockito.never())
+                .resolve(TENANT, other.getId(), DESTINATION_AUDIENCE);
+    }
+
+    @Test
+    void brokerOwnedTargetRevocationInvalidatesAlreadyIssuedToken() {
+        TrustedExchangeBrokerTarget target = new TrustedExchangeBrokerTarget(broker.getId(), TENANT,
+                DESTINATION_AUDIENCE, AgentExchangeRoute.DestinationType.AGENT, destination.getId(),
+                List.of(SCOPE), "Broker target", NOW);
+        when(targetService.requireActive(TENANT, broker.getId(), target.getId())).thenReturn(target);
+        Jwt issued = token("meridian-1008", DESTINATION_AUDIENCE, Map.of(
+                "tenant_id", TENANT, "identity_kind", "workforce", "client_id", GATEWAY_CLIENT,
+                "scope", SCOPE, "token_use", "exchange_subject", "authority_profile", "gateway_backend",
+                "authority_id", "broker-target:" + target.getId(), "act", actor(source),
+                "source_gateway_route_id", gatewayRoute.getId().toString()));
+
+        service.requireValidNonCustomerSubject(issued);
+        target.revoke(NOW.plusSeconds(1));
+        when(targetService.requireActive(TENANT, broker.getId(), target.getId()))
+                .thenThrow(new OAuth2AuthenticationException(new org.springframework.security.oauth2.core.OAuth2Error("invalid_grant")));
+        assertThatThrownBy(() -> service.requireValidNonCustomerSubject(issued))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+    }
+
+    @Test
+    void gatewayEntryRevocationInvalidatesAlreadyIssuedBrokerTargetToken() {
+        TrustedExchangeBrokerTarget target = new TrustedExchangeBrokerTarget(broker.getId(), TENANT,
+                DESTINATION_AUDIENCE, AgentExchangeRoute.DestinationType.AGENT, destination.getId(),
+                List.of(SCOPE), "Broker target", NOW);
+        when(targetService.requireActive(TENANT, broker.getId(), target.getId())).thenReturn(target);
+        Jwt issued = token("meridian-1008", DESTINATION_AUDIENCE, Map.of(
+                "tenant_id", TENANT, "identity_kind", "workforce", "client_id", GATEWAY_CLIENT,
+                "scope", SCOPE, "token_use", "exchange_subject", "authority_profile", "gateway_backend",
+                "authority_id", "broker-target:" + target.getId(), "act", actor(source),
+                "source_gateway_route_id", gatewayRoute.getId().toString()));
+
+        service.requireValidNonCustomerSubject(issued);
+        gatewayRoute.revoke(NOW.plusSeconds(1));
+        assertThatThrownBy(() -> service.requireValidNonCustomerSubject(issued))
+                .isInstanceOf(OAuth2AuthenticationException.class)
+                .satisfies(error -> assertThat(((OAuth2AuthenticationException) error).getError().getErrorCode())
+                        .isEqualTo("invalid_grant"));
+    }
+
+    @Test
+    void revokedBrokerTargetCannotFallBackToExistingSourceRoute() {
+        when(targetService.resolve(TENANT, broker.getId(), DESTINATION_AUDIENCE))
+                .thenThrow(new OAuth2AuthenticationException(new org.springframework.security.oauth2.core.OAuth2Error("invalid_target")));
+
+        assertThatThrownBy(() -> service.resolve(gatewayAuthorization(TENANT), GATEWAY_CLIENT,
+                DESTINATION_AUDIENCE, Set.of(SCOPE)))
+                .isInstanceOf(OAuth2AuthenticationException.class)
+                .satisfies(error -> assertThat(((OAuth2AuthenticationException) error).getError().getErrorCode())
+                        .isEqualTo("invalid_target"));
+        org.mockito.Mockito.verify(routes, org.mockito.Mockito.never())
+                .findByTenantIdAndSourceWorkloadIdAndAudienceAndStatus(TENANT, source.getId(),
+                        DESTINATION_AUDIENCE, AgentExchangeRoute.Status.ACTIVE);
+    }
+
+    @Test
+    void selfActingWorkloadResourceTokenKeepsSourceBindingWithoutAct() {
+        TrustedExchangeBrokerTarget target = new TrustedExchangeBrokerTarget(broker.getId(), TENANT,
+                "orders-api", AgentExchangeRoute.DestinationType.RESOURCE, null,
+                List.of(SCOPE), "Broker resource target", NOW);
+        when(targetService.requireActive(TENANT, broker.getId(), target.getId())).thenReturn(target);
+        when(applications.isActiveAudience(TENANT, "orders-api")).thenReturn(true);
+        Jwt issued = token(SOURCE_CLIENT, "orders-api", Map.of(
+                "tenant_id", TENANT, "identity_kind", "workload", "client_id", GATEWAY_CLIENT,
+                "scope", SCOPE, "token_use", "delegated_access", "authority_profile", "gateway_backend",
+                "authority_id", "broker-target:" + target.getId(),
+                "source_workload_id", source.getId().toString(),
+                "source_gateway_route_id", gatewayRoute.getId().toString()));
+
+        service.requireValidIssuedToken(issued);
+        org.mockito.Mockito.verify(workloads).findByOauthClientId(SOURCE_CLIENT);
+        assertThatThrownBy(() -> service.requireValidIssuedToken(token("unregistered-client", "orders-api", Map.of(
+                "tenant_id", TENANT, "identity_kind", "workload", "client_id", GATEWAY_CLIENT,
+                "scope", SCOPE, "token_use", "delegated_access", "authority_profile", "gateway_backend",
+                "authority_id", "broker-target:" + target.getId(),
+                "source_workload_id", source.getId().toString(),
+                "source_gateway_route_id", gatewayRoute.getId().toString()))))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+        assertThatThrownBy(() -> service.requireValidIssuedToken(token(SOURCE_CLIENT, "orders-api", Map.of(
+                "tenant_id", TENANT, "identity_kind", "workload", "client_id", GATEWAY_CLIENT,
+                "scope", SCOPE, "token_use", "delegated_access", "authority_profile", "gateway_backend",
+                "authority_id", "broker-target:" + target.getId(),
+                "source_workload_id", UUID.randomUUID().toString(),
+                "source_gateway_route_id", gatewayRoute.getId().toString()))))
+                .as("a new registration using the old client ID cannot inherit the old token")
+                .isInstanceOf(OAuth2AuthenticationException.class);
+        source.revoke(NOW.plusSeconds(1));
+        assertThatThrownBy(() -> service.requireValidIssuedToken(issued))
                 .isInstanceOf(OAuth2AuthenticationException.class);
     }
 

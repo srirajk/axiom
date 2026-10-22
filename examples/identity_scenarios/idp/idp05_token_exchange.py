@@ -82,8 +82,8 @@ def run(ctx: Context) -> Outcome:
     own = oauth.tokens(oauth.client_credentials(http, top.portal_svc, [READ]).expect(200)).access_token
     sw = oauth.tokens(oauth.exchange(http, top.portal_svc, own, top.edge_audience, [READ]).expect(200))
     sc = v.access_token(sw.access_token, top.edge_audience)
-    out.ok(sc["sub"] == top.portal_svc.client_id and sc["act"]["client_id"] == top.portal_svc.client_id,
-           "software only: the workload is both subject and actor; no person is invented")
+    out.ok(sc["sub"] == top.portal_svc.client_id and "act" not in sc,
+           "software only: the workload is the subject acting for itself (no act, RFC 8693); no person is invented")
 
     # Denials.
     out.refused(oauth.exchange(http, top.reports_svc, person_token, top.reports_app["audience"], [READ]).status == 400,

@@ -17,10 +17,21 @@ public record UserResponse(
         String id,
         String username,
         String email,
+        String name,
+        String givenName,
+        String familyName,
+        String displayNameOverride,
         boolean isActive,
         List<String> roles,
         Map<String, String> segments,
         String classification,
         List<String> adminDomains,
         Instant createdAt
-) {}
+) {
+    public UserResponse(String id, String username, String email, boolean isActive,
+                        List<String> roles, Map<String, String> segments, String classification,
+                        List<String> adminDomains, Instant createdAt) {
+        this(id, username, email, null, null, null, null, isActive, roles, segments,
+                classification, adminDomains, createdAt);
+    }
+}

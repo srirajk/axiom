@@ -64,7 +64,10 @@ public final class SessionAwareIntrospectionAuthenticationProvider implements Au
         }
         OAuth2TokenIntrospection claims = introspection.getTokenClaims();
         if (claims == null) return result;
-        if (claims.getClaims().containsKey("delegation_id") || claims.getClaims().containsKey("act")) {
+        // Exchange results (token_use; a self-acting service's has no act) and delegated tokens are re-validated against
+        // current authority state through the local decoder, never by session status alone.
+        if (claims.getClaims().containsKey("delegation_id") || claims.getClaims().containsKey("act")
+                || claims.getClaims().containsKey("token_use")) {
             return locallyIssued(introspection);
         }
         Object rawSession = claims.getClaims().get("sid");
@@ -132,7 +135,8 @@ public final class SessionAwareIntrospectionAuthenticationProvider implements Au
     private boolean sessionlessClientActive(java.util.Map<String, Object> claims, String tenant) {
         Object kind = claims.get("identity_kind");
         Object clientId = claims.get("client_id");
-        if (!"workload".equals(kind) || claims.containsKey("act") || !(clientId instanceof String client)
+        if (!"workload".equals(kind) || claims.containsKey("act") || claims.containsKey("token_use")
+                || !(clientId instanceof String client)
                 || !client.equals(claims.get("sub"))) return false;
         var applicationService = applications.get();
         if (applicationService == null) return false;

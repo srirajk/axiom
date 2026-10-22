@@ -75,7 +75,7 @@ public class CiamCustomerTokenService {
                 .orElseThrow(() -> new IllegalArgumentException("customer client is disabled or unknown"));
         TreeSet<String> scopes = new TreeSet<>(requestedScopes);
         if (scopes.isEmpty() || !client.scopes().containsAll(scopes)
-                || scopes.stream().anyMatch(scope -> !businessScopes.isApproved(scope))) {
+                || scopes.stream().anyMatch(scope -> !businessScopes.isApproved(tenantId, scope))) {
             throw new IllegalArgumentException("customer token scopes are not approved for this client");
         }
         Instant now = clock.instant();

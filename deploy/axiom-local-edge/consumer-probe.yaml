@@ -1,0 +1,66 @@
+# Temporary contract probe: apply only after creating the restricted axiom-consumer-probe namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-axiom-consumer-probe
+  namespace: axiom
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: axiom
+      app.kubernetes.io/instance: axiom
+      app.kubernetes.io/component: server
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: axiom-consumer-probe
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: axiom-consumer-probe
+      ports: [{protocol: TCP, port: 8084}]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: axiom-consumer-probe
+  namespace: axiom-consumer-probe
+  labels:
+    app.kubernetes.io/name: axiom-consumer-probe
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  activeDeadlineSeconds: 90
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: probe
+      image: redis:7-alpine
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/sh", "-ec"]
+      args:
+        - |
+          base=http://axiom.axiom.svc.cluster.local:8084
+          wget -qO /tmp/readiness "${base}/actuator/health/readiness"
+          grep -q '"status":"UP"' /tmp/readiness
+          wget -qO /tmp/metadata "${base}/.well-known/openid-configuration"
+          grep -q '"issuer":"https://identity.meridian.com:8443"' /tmp/metadata
+          wget -qO /tmp/jwks "${base}/oauth2/jwks"
+          grep -q '"keys"' /tmp/jwks
+          echo "Cross-namespace Axiom readiness, exact issuer metadata and JWKS passed."
+      resources:
+        requests: {cpu: 10m, memory: 32Mi}
+        limits: {cpu: 100m, memory: 64Mi}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: {drop: [ALL]}
+      volumeMounts:
+        - {name: tmp, mountPath: /tmp}
+  volumes:
+    - name: tmp
+      emptyDir: {sizeLimit: 8Mi}

@@ -1,4 +1,7 @@
-# Disposable `axiom-test` release on Docker Desktop
+# Disposable internal-only `axiom-test` release on Docker Desktop
+
+For the current fresh-cluster Axiom + Envoy Gateway edge, use
+[`deploy/axiom-local-edge/README.md`](../axiom-local-edge/README.md) instead. This profile has no Envoy edge.
 
 This is the **new** isolated Axiom test estate. It does not use the old `axiom-phase0-test` namespace, the original
 `axiom` installation, the Argus rollout, a GatewayClass, Ingress, NodePort or LoadBalancer. Both Helm releases are

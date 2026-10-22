@@ -57,7 +57,8 @@ public class TenantApplicationService {
     private static final Set<String> SERVICE_SCOPES = Set.of(
             ApplicationScopes.APPLICATION_READ,
             ApplicationScopes.SUBJECT_CONTEXT_READ,
-            ApplicationScopes.PLATFORM_AUTHZ_DECIDE);
+            ApplicationScopes.PLATFORM_AUTHZ_DECIDE,
+            ApplicationScopes.USERS_READ_PROFILE);
     private static final SecureRandom SECRET_RANDOM = new SecureRandom();
 
     private final TenantApplicationRepository applications;
@@ -142,7 +143,7 @@ public class TenantApplicationService {
         if (registeredClients.findByClientId(request.clientId()) != null || clients.findByClientId(request.clientId()).isPresent()) {
             throw new ResourceConflictException("Client id already exists");
         }
-        List<String> scopes = approvedScopes(request.clientType(), population, request.scopes());
+        List<String> scopes = approvedScopes(tenantId, request.clientType(), population, request.scopes());
         boolean hasSecret = request.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_WEB
                 || (request.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_SERVICE && !keyAuthenticated);
         String secret = hasSecret ? (supplied != null ? supplied : generatedSecret()) : null;
@@ -501,19 +502,15 @@ public class TenantApplicationService {
         this.interactiveTtl = ttl; this.interactiveMaxTtl = max; this.refreshTtl = refresh; this.refreshMaxTtl = refreshMax;
     }
 
-    private List<String> approvedScopes(TenantApplicationClient.Type type, List<String> requested) {
-        return approvedScopes(type, TenantApplicationClient.Population.WORKFORCE, requested);
-    }
-
-    private List<String> approvedScopes(TenantApplicationClient.Type type, TenantApplicationClient.Population population,
-                                        List<String> requested) {
+    private List<String> approvedScopes(String tenantId, TenantApplicationClient.Type type,
+                                        TenantApplicationClient.Population population, List<String> requested) {
         Set<String> scopes = new LinkedHashSet<>(requested == null ? Set.of() : requested);
         Set<String> allowed = new LinkedHashSet<>(!type.interactive() ? SERVICE_SCOPES
                 : population == TenantApplicationClient.Population.CUSTOMER ? CUSTOMER_SCOPES : PUBLIC_SCOPES);
         if (type == TenantApplicationClient.Type.CONFIDENTIAL_WEB) allowed.add(OFFLINE_ACCESS);
         if (scopes.isEmpty()) scopes.addAll(allowed);
         for (String scope : scopes) {
-            if (!allowed.contains(scope) && !businessScopes.isApproved(scope)) {
+            if (!allowed.contains(scope) && !businessScopes.isApproved(tenantId, scope)) {
                 throw new IllegalArgumentException("Requested scopes are not approved for client posture");
             }
         }

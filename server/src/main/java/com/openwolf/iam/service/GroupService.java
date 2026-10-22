@@ -7,6 +7,7 @@ import com.openwolf.iam.dto.AddMemberRequest;
 import com.openwolf.iam.dto.CreateGroupRequest;
 import com.openwolf.iam.dto.GroupResponse;
 import com.openwolf.iam.dto.UserResponse;
+import com.openwolf.iam.dto.UserProfileResponse;
 import com.openwolf.iam.auth.ExecutionTenant;
 import com.openwolf.iam.entity.Group;
 import com.openwolf.iam.entity.Principal;
@@ -186,6 +187,19 @@ public class GroupService {
         return membersFor(g).stream()
                 .map(userService::toUserResponse)
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public org.springframework.data.domain.Page<UserProfileResponse> pageMemberProfiles(
+            UUID groupId, int page, int size) {
+        String tenantId = executionTenant.require();
+        Group group = groupRepository.findByIdAndTenantId(groupId, tenantId)
+                .orElseThrow(() -> EntityNotFoundException.forId("Group", groupId));
+        var pageable = org.springframework.data.domain.PageRequest.of(page, size);
+        var members = isDomainBacked(group)
+                ? principalRepository.findPageByTenantIdAndCanonicalDomain(tenantId, group.getDomainId(), pageable)
+                : groupRepository.findMemberPage(groupId, tenantId, pageable);
+        return members.map(userService::toProfileResponse);
     }
 
     // -------------------------------------------------------

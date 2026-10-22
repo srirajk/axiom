@@ -390,6 +390,36 @@ The first tenant and administrator still come from the Axiom bootstrap settings.
 requires platform-admin authority. Directory and CIAM data are then published with an administrator authenticated
 to the target tenant.
 
+## Custom business scopes (tenant catalog API)
+
+Business scopes such as `quickstart:invoke` must be approved before a client, exchange edge, consent purpose or grant
+may use them. There are two sources, and both are checked live:
+
+| Source | Who changes it | Applies to | Change takes effect |
+|---|---|---|---|
+| Deployment baseline: Helm `config.approvedBusinessScopes` (`IAM_OAUTH2_APPROVED_BUSINESS_SCOPES`) | platform operator, by release change | every tenant; published in discovery `scopes_supported` | after a rollout (legacy seed list) |
+| Tenant catalog: `POST /admin/tenants/{tenantId}/business-scopes` | that tenant's `tenant_admin`, or a `platform_admin` | that tenant only; never published globally | immediately, no restart |
+
+```http
+POST /admin/tenants/meridian/business-scopes
+Authorization: Bearer <tenant_admin token for meridian>
+Content-Type: application/json
+
+{"scope": "quickstart:invoke", "description": "Quickstart invocation"}
+```
+
+Responses: `201` created; `200` identical repeat (same entry); `400` invalid or reserved name (lowercase segments joined
+by `.` or `:`, at most 128 characters; first segment not `axiom`, `urn`, `openid`, `oidc`, `oauth`, `offline_access`,
+`profile`, `email`, `roles`, `phone` or `address`); `409` the name is already in the deployment baseline, or is registered
+with a different description; `404` another tenant's path. `GET` on the same path returns
+`{"tenantId", "configured": [...], "registered": [...]}`. Every registration attempt is audited (`REGISTER_BUSINESS_SCOPE`,
+with tenant, actor, name and outcome).
+
+Registration is **vocabulary only**: it grants no user, workload, client, route, consent or receiver authority. A client
+must still be registered for the scope, a person must still hold the matching application permission (issuance narrows
+everything else), and receivers must still authorize each request. There is no delete or disable endpoint yet; see the
+deactivation semantics in `docs/architecture/axiom-identity-provider-contract.md`.
+
 ## What this package does not do
 
 - It does not store configuration in a ConfigMap.

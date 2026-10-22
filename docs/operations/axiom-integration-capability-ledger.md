@@ -240,3 +240,25 @@ Docker Desktop deployment smoke of this source was completed in namespace `axiom
 The running server image is `axiom-server:axiom-test-20261003b`; the chart smoke test and live discovery passed.
 The full 74-test Python cookbook was **not** run against that Kubernetes release. See
 `docs/operations/axiom-test-helm-evidence.md` for image digest, namespace isolation and rollback evidence.
+
+### Delegation chain (RFC 8693 `act`, 2026-10-05)
+
+Corrected contract: `docs/architecture/axiom-token-delegation-chain.md` (R3 and R5 corrected, R6/R7 made precise,
+R2 for exchanged software-only tokens left as an open owner decision, Argus impact unverified). Exchanged tokens now
+nest prior actors verbatim on an actor change; malformed or over-deep (more than 5 levels) chains are refused with
+`invalid_grant` and audited, never truncated. Evidence: `evidence/delegation-chain-2026-10-05/` (source fingerprint
+`e4c0b269…`, 606 files; jar `1b2694a4…`).
+
+```text
+# focused: DelegationChainTest 6/6, JwtClaimsCustomizerTokenExchangeTest 3/3, DelegationChainIT 4/4
+# mvn -o -B clean verify: surefire 419/419; failsafe 204 tests: 195 passed, 1 failure, 5 errors, 3 skipped
+#   (SelfContainedBundleIT, PromotionReachesRuntimeEnforcementBlobIT, ProvisioningSagaConcurrencyIT: environmental, as before)
+# Python cookbook: 76 passed, 0 failed (includes C06 delegation chain)
+```
+
+R2 decided 2026-10-05 (standards-first): a service acting only for itself has no `act`, including after a self-exchange
+and across a broker hop; a takeover names only the new actor. Source binding now uses verified state (route named by
+`authority_id`, its registered source workload, client = signed `sub`), not a self-referential `act`; exchange results are
+recognised by `token_use`. Evidence: `evidence/delegation-chain-2026-10-05/r2-standards-first.txt` (surefire 424/424;
+failsafe 193/206 with the 3 environmental classes plus 2 JDBC-loss classes that pass 5/5 and 12/12 in isolation;
+Python 76/76).

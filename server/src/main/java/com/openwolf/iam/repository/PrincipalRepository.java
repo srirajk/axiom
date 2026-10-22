@@ -27,6 +27,8 @@ public interface PrincipalRepository extends JpaRepository<Principal, String> {
 
     List<Principal> findByTenantId(String tenantId);
 
+    List<Principal> findByTenantIdAndIdIn(String tenantId, List<String> ids);
+
     Page<Principal> findByTenantId(String tenantId, Pageable pageable);
 
     List<Principal> findByTenantIdAndIsActiveTrue(String tenantId);
@@ -45,6 +47,23 @@ public interface PrincipalRepository extends JpaRepository<Principal, String> {
             """, nativeQuery = true)
     List<Principal> findByTenantIdAndCanonicalDomain(@Param("tenantId") String tenantId,
                                                       @Param("domain") String domain);
+
+    @Query(value = """
+            SELECT * FROM principals
+            WHERE tenant_id = :tenantId AND is_active = true
+              AND (jsonb_exists(COALESCE(attributes -> 'admin_domains', '[]'::jsonb), :domain)
+                   OR jsonb_exists(COALESCE(attributes -> 'segments', '[]'::jsonb), :domain))
+            ORDER BY id
+            """,
+            countQuery = """
+            SELECT count(*) FROM principals
+            WHERE tenant_id = :tenantId AND is_active = true
+              AND (jsonb_exists(COALESCE(attributes -> 'admin_domains', '[]'::jsonb), :domain)
+                   OR jsonb_exists(COALESCE(attributes -> 'segments', '[]'::jsonb), :domain))
+            """, nativeQuery = true)
+    Page<Principal> findPageByTenantIdAndCanonicalDomain(@Param("tenantId") String tenantId,
+                                                           @Param("domain") String domain,
+                                                           Pageable pageable);
 
     /**
      * Find all principals whose password_hash equals the given placeholder (used by DataSeeder).

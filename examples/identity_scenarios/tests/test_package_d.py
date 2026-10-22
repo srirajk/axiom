@@ -13,6 +13,7 @@ EXAMPLES = [
     "consumer_contracts.c03_workload_chains",
     "consumer_contracts.c04_untrusted_issuers",
     "consumer_contracts.c05_authentication_assurance",
+    "consumer_contracts.c06_delegation_chain",
 ]
 
 

@@ -122,7 +122,7 @@ public class ActionApprovalService {
                 .orElseThrow(() -> new IllegalArgumentException("agent workload client is not active"));
         TreeSet<String> scopes = new TreeSet<>();
         for (String s : requestedScopes) scopes.add(s.trim());
-        if (scopes.isEmpty() || scopes.stream().anyMatch(s -> s.isBlank() || !businessScopes.isApproved(s))
+        if (scopes.isEmpty() || scopes.stream().anyMatch(s -> s.isBlank() || !businessScopes.isApproved(tenantId, s))
                 || !client.scopes().containsAll(scopes)) {
             throw new IllegalArgumentException("approval scopes must be approved scopes of the agent client");
         }
@@ -332,7 +332,8 @@ public class ActionApprovalService {
 
     /** Only a person's own interactive Axiom token, never a delegated, workload or recovery token. */
     private static String human(Jwt token) {
-        if (token.getClaims().containsKey("act") || Boolean.TRUE.equals(token.getClaims().get("impersonation"))
+        if (token.getClaims().containsKey("act") || token.getClaims().containsKey("token_use")
+                || Boolean.TRUE.equals(token.getClaims().get("impersonation"))
                 || Boolean.TRUE.equals(token.getClaims().get("recovery"))) {
             throw new AccessDeniedException("a person's own token is required");
         }

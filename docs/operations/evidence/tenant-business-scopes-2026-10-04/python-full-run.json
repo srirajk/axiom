@@ -1,0 +1,1313 @@
+{
+  "cleanup": {
+    "estate_down_skipped": []
+  },
+  "collected": 75,
+  "command": "pytest -q -rs tests/",
+  "counts": {
+    "errors": 0,
+    "failed": 0,
+    "passed": 75,
+    "skipped": 0,
+    "xfailed": 0,
+    "xpassed": 0
+  },
+  "dependencies": {
+    "docker": "29.8.0",
+    "images": {
+      "ghcr.io/cerbos/cerbos:0.53.0": "sha256:c3fe64202e3793b7e9c41c5cbfcf390a51fb28ebce0a7d70754155e70db839c4",
+      "postgres:16": "sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54",
+      "redis:7-alpine": "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+    },
+    "java": "openjdk version \"25.0.3\" 2026-04-21 LTS",
+    "packages": {
+      "PyJWT": "2.15.1",
+      "cryptography": "50.0.2",
+      "playwright": "1.63.0",
+      "pytest": "8.4.2",
+      "requests": "2.34.2"
+    },
+    "python": "3.12.7",
+    "server_jar_sha256": "85635c64b9233d15eaf8625f15d866d1901a5006f6e58717d9556e5e670de6fe"
+  },
+  "dirty_entries": 26,
+  "dirty_status_hash": "008ec8d684e6a742",
+  "exit_status": 0,
+  "failed": 0,
+  "finished_utc": "2026-10-04T17:49:57.820841+00:00",
+  "git_head": "475ca72044f82a9393b0a223ed757a319941f963",
+  "opt_ins": {
+    "AXIOM_COOKBOOK_ALLOW_DISRUPTIVE": "set"
+  },
+  "outcomes": [
+    {
+      "allowed": [
+        "the catalog lists the deployment-configured baseline separately from the tenant's registered names",
+        "a tenant administrator registers the name",
+        "an identical repeat is idempotent (200, same entry)",
+        "the name is listed for this tenant",
+        "a client is registered for the new name at once (no restart)",
+        "the client obtains a token carrying the new scope"
+      ],
+      "consumer_must": [
+        "a scope name is a label, not permission: authorize each request at the resource",
+        "register only names you need; the API cannot yet withdraw a name"
+      ],
+      "denied": [
+        "the same name with a different description is a conflict (409)",
+        "invalid or reserved name 'NoSeparator' is refused (400)",
+        "invalid or reserved name 'Upper:Case' is refused (400)",
+        "invalid or reserved name 'axiom:anything' is refused (400)",
+        "invalid or reserved name 'urn:ietf:params:oauth' is refused (400)",
+        "invalid or reserved name 'openid:x' is refused (400)",
+        "another tenant's catalog path is refused (the cross-tenant case with a real second tenant is in the Java IT)",
+        "a token request beyond the client's registration is refused (invalid_scope)",
+        "a client registration with an unregistered name is refused",
+        "discovery publishes only the deployment baseline, never a tenant's private catalog"
+      ],
+      "example": "B12 custom business scopes (tenant catalog API)",
+      "facts": {}
+    },
+    {
+      "allowed": [
+        "after recovery the token is active again (within 60s)",
+        "after recovery exchange works again"
+      ],
+      "consumer_must": [],
+      "denied": [
+        "Redis down: introspection never says active",
+        "Redis down: no token is issued",
+        "PostgreSQL down: no exchange"
+      ],
+      "example": "O06/O05 dependency outages (disruptive)",
+      "facts": {
+        "recovery_seconds": 0.2
+      }
+    },
+    {
+      "allowed": [
+        "signing keys survive the restart unchanged",
+        "an active session survives the restart",
+        "new logins work after the restart",
+        "a standing grant approved before the restart still renews with its current handle"
+      ],
+      "consumer_must": [],
+      "denied": [
+        "a session revoked before the restart stays revoked",
+        "a standing grant withdrawn before the restart is not revived"
+      ],
+      "example": "O08 restart recovery (disruptive)",
+      "facts": {}
+    },
+    {
+      "allowed": [
+        "OIDC discovery and RFC 8414 metadata name the configured issuer",
+        "every advertised endpoint lives on the issuer's origin",
+        "advertised grants: the four standard grants plus Axiom-namespaced optional extensions only",
+        "client authentication advertised: client_secret_basic, private_key_jwt, none",
+        "PKCE: S256 only",
+        "no sender-constraint feature is advertised (none is enforced; IDP-13 not selected)",
+        "ID tokens: RS256",
+        "scopes_supported names the enabled OIDC scopes, offline_access and the approved business scopes",
+        "JWKS publishes keyed RSA public keys only",
+        "UserInfo answers for a workforce application token",
+        "UserInfo answers for a customer application token"
+      ],
+      "consumer_must": [
+        "pin the issuer and discovery URL in configuration; reject tokens from any other iss",
+        "validate against jwks_uri; refetch on an unknown kid; never accept alg=none",
+        "treat Axiom-namespaced grants as optional extensions, not part of the portable contract"
+      ],
+      "denied": [
+        "unadvertised grant password is refused",
+        "unadvertised grant urn:ietf:params:oauth:grant-type:device_code is refused",
+        "unadvertised grant urn:ietf:params:oauth:grant-type:jwt-bearer is refused",
+        "client_secret_post (not advertised) is refused",
+        "a token signed by a substitute key under Axiom's kid fails local validation",
+        "Axiom reports the substituted-key token inactive",
+        "UserInfo refuses a software token (no user)"
+      ],
+      "example": "IDP-01 discovery, metadata and keys",
+      "facts": {
+        "worksheet": {
+          "authorization_endpoint": "http://127.0.0.1:57234/oauth/authorize",
+          "end_session_endpoint": "http://127.0.0.1:57234/connect/logout",
+          "grant_types_supported": [
+            "authorization_code",
+            "client_credentials",
+            "refresh_token",
+            "urn:ietf:params:oauth:grant-type:token-exchange",
+            "urn:openwolf:params:oauth:grant-type:approved-action",
+            "urn:openwolf:params:oauth:grant-type:standing-grant"
+          ],
+          "introspection_endpoint": "http://127.0.0.1:57234/oauth/introspect",
+          "issuer": "http://127.0.0.1:57234",
+          "jwks_uri": "http://127.0.0.1:57234/oauth2/jwks",
+          "optional_axiom_extension_grants": [
+            "urn:openwolf:params:oauth:grant-type:approved-action",
+            "urn:openwolf:params:oauth:grant-type:standing-grant"
+          ],
+          "revocation_endpoint": "http://127.0.0.1:57234/oauth/revoke",
+          "scopes_supported": [
+            "openid",
+            "profile",
+            "email",
+            "offline_access",
+            "roles",
+            "ledger.read",
+            "ledger.write",
+            "orders.read",
+            "orders.write",
+            "payments.admin",
+            "payments.execute",
+            "reports.read"
+          ],
+          "token_endpoint": "http://127.0.0.1:57234/oauth/token",
+          "token_endpoint_auth_methods_supported": [
+            "client_secret_basic",
+            "none",
+            "private_key_jwt"
+          ],
+          "token_endpoint_auth_signing_alg_values_supported": [
+            "RS256",
+            "ES256"
+          ],
+          "userinfo_endpoint": "http://127.0.0.1:57234/oauth/userinfo"
+        }
+      }
+    },
+    {
+      "allowed": [
+        "customer client registered: CUSTOMER, PKCE",
+        "workforce: code + PKCE yields validated access and ID tokens for the signed-in subject",
+        "customer: code + PKCE yields validated access and ID tokens for the signed-in subject"
+      ],
+      "consumer_must": [
+        "create verifier, state and nonce per login; verify state before redeeming and nonce on the ID token",
+        "use the client of the right population; never accept a customer token where a workforce one is required"
+      ],
+      "denied": [
+        "workforce: the code cannot be replayed",
+        "workforce: replaying a code ends the first redemption's session",
+        "workforce: a wrong PKCE verifier is refused",
+        "workforce: a redirect URI differing from the request is refused",
+        "customer: the code cannot be replayed",
+        "customer: replaying a code ends the first redemption's session",
+        "customer: a wrong PKCE verifier is refused",
+        "customer: a redirect URI differing from the request is refused",
+        "workforce credentials are refused on the customer login page",
+        "customer credentials are refused on the workforce login page",
+        "a signed-in customer's browser gets no workforce code: it is sent to the workforce login",
+        "an unverified customer cannot sign in",
+        "a wrong customer password is refused",
+        "an authorization request without S256 PKCE is refused",
+        "an unregistered redirect URI is refused without a redirect",
+        "a disabled client cannot start a sign-in"
+      ],
+      "example": "IDP-02 browser sign-in (workforce and CIAM)",
+      "facts": {}
+    },
+    {
+      "allowed": [
+        "a key-authenticated client is registered with its public key id and no secret",
+        "secret client: the token's subject is the client itself; no person, no actor",
+        "the software token is introspectable without a human session",
+        "private_key_jwt client: token for the client itself",
+        "private_key_jwt authenticates introspection",
+        "private_key_jwt authenticates revocation of the client's own token"
+      ],
+      "consumer_must": [
+        "keep secrets and private keys in your own secret store; use a fresh jti per assertion",
+        "client authentication does not bind the access token to the key (bearer token)"
+      ],
+      "denied": [
+        "a replayed assertion (same jti) is refused",
+        "the revoked token is inactive",
+        "an assertion signed by another key is refused (invalid_client)",
+        "an assertion for another audience is refused (invalid_client)",
+        "an expired assertion is refused (invalid_client)",
+        "an assertion living longer than five minutes is refused (invalid_client)",
+        "an assertion without jti is refused (invalid_client)",
+        "a wrong secret is refused",
+        "a scope beyond the registration is refused",
+        "a disabled secret client gets no token",
+        "a disabled key client gets no token",
+        "the disabled client's outstanding token introspects inactive"
+      ],
+      "example": "IDP-03 client credentials (secret and private_key_jwt)",
+      "facts": {
+        "client_credentials_lifetime_s": 30
+      }
+    },
+    {
+      "allowed": [
+        "header: typ=at+jwt, alg=RS256, kid present",
+        "claims: iss, sub, aud, exp, iat, jti, client_id, scope",
+        "the client's declared 300-second lifetime is applied",
+        "token exchange accepts the standard resource parameter as the target"
+      ],
+      "consumer_must": [
+        "validate signature, iss, aud, exp, typ and scope on every request; reject ID tokens",
+        "scope is a ceiling; decide resource-level access yourself"
+      ],
+      "denied": [
+        "a requested scope the person is not entitled to is not issued",
+        "another audience is rejected",
+        "an edited payload fails the signature",
+        "alg=none is rejected",
+        "an ID token is not an access token (typ)",
+        "Axiom's API refuses an ID token as bearer",
+        "a client lifetime above the deployment ceiling is refused at registration",
+        "naming both resource and audience is refused (one target per request)"
+      ],
+      "example": "IDP-04 token contract (audience, scope, type, lifetime)",
+      "facts": {
+        "declared_lifetime_s": 300
+      }
+    },
+    {
+      "allowed": [
+        "workforce: the represented subject is preserved at every hop",
+        "workforce: the acting workload is recorded in act; the intermediary never becomes the actor",
+        "workforce: client_id is the authenticated exchanging client, distinct from sub and act",
+        "workforce: scope narrows to the edge; lifetimes only shrink",
+        "customer: the represented subject is preserved at every hop",
+        "customer: the acting workload is recorded in act; the intermediary never becomes the actor",
+        "customer: client_id is the authenticated exchanging client, distinct from sub and act",
+        "customer: scope narrows to the edge; lifetimes only shrink",
+        "software only: the workload is both subject and actor; no person is invented"
+      ],
+      "consumer_must": [
+        "exchange per hop; never forward a token to another audience",
+        "record sub, act and client_id separately; act is history, not extra authority"
+      ],
+      "denied": [
+        "workforce: a resource token is terminal",
+        "customer: a resource token is terminal",
+        "a workload of another application cannot redeem the person's token",
+        "a workload of another application cannot redeem the customer's token",
+        "scope cannot widen beyond the subject's entitlement",
+        "a destination without an edge is refused",
+        "a caller cannot choose the actor (actor_token is refused)",
+        "the intermediary cannot redeem a token that was not addressed to it"
+      ],
+      "example": "IDP-05 token exchange (workforce, CIAM, software)",
+      "facts": {
+        "hops": [
+          "subject (aud=portal)",
+          "portal-svc (aud=portal)",
+          "portal-svc (aud=edge)",
+          "edge (aud=orders-api)"
+        ]
+      }
+    },
+    {
+      "allowed": [
+        "the web client is registered for refresh",
+        "offline_access yields a refresh token",
+        "renewal rotates the refresh token",
+        "the renewed access and ID tokens are for the same person",
+        "of five concurrent redemptions exactly one succeeds",
+        "RP-initiated logout is accepted",
+        "a customer's web session renews too"
+      ],
+      "consumer_must": [
+        "store the newest refresh token atomically and serialize renewals; never retry an old one",
+        "keep refresh tokens server-side (confidential web client); handle invalid_grant by signing in again"
+      ],
+      "denied": [
+        "without offline_access no refresh token is issued",
+        "a public browser client never receives a refresh token",
+        "another client cannot use the refresh token",
+        "an access token is not renewal input",
+        "a spent refresh token is refused",
+        "reusing a spent token withdraws the family: the current refresh token stops too",
+        "\u2026and the family's access token introspects inactive",
+        "after logout renewal is refused",
+        "after the customer withdraws the application's consent renewal is refused",
+        "\u2026and its access token is inactive",
+        "a disabled person cannot renew",
+        "an expired refresh token is refused"
+      ],
+      "example": "IDP-06 refresh tokens (workforce and CIAM)",
+      "facts": {
+        "concurrent_statuses": [
+          200,
+          400,
+          400,
+          400,
+          400
+        ]
+      }
+    },
+    {
+      "allowed": [
+        "workforce token: active with sub, client_id and exp",
+        "customer token: active with sub, client_id and exp",
+        "software token: active with sub, client_id and exp",
+        "software tokens have no session; none is fabricated"
+      ],
+      "consumer_must": [
+        "authenticate introspection; treat any error or timeout as inactive",
+        "your cache interval is your residual window after revocation"
+      ],
+      "denied": [
+        "an unknown token is inactive",
+        "an unauthenticated introspection call is refused (401, not 'inactive')",
+        "a wrongly authenticated caller is refused",
+        "a revoked token is inactive",
+        "a logged-out session's token is exactly {active: false}",
+        "an expired token is inactive"
+      ],
+      "example": "IDP-07 introspection",
+      "facts": {
+        "software_token_expires_in": 29
+      }
+    },
+    {
+      "allowed": [
+        "RFC 7009 revocation of an access token is accepted",
+        "an independent login is unaffected",
+        "revocation of a refresh token is accepted",
+        "RP-initiated logout (form POST) is accepted",
+        "another login of the same person continues",
+        "residual window: offline validation still accepts the logged-out token until exp"
+      ],
+      "consumer_must": [
+        "use online status where withdrawal must take effect before exp",
+        "HTTP 200 from revocation is not proof; verify the affected authority"
+      ],
+      "denied": [
+        "the revoked access token is inactive",
+        "its exchanged descendant is inactive",
+        "its refresh family is ended",
+        "the revoked refresh token is refused",
+        "the family's access token is inactive",
+        "another client's revocation request has no effect on the token",
+        "after logout the access token is inactive",
+        "after logout renewal is refused",
+        "after logout the token cannot be exchanged"
+      ],
+      "example": "IDP-08 revocation and logout",
+      "facts": {
+        "foreign_revocation_status": 400,
+        "offline_residual_window_s": 3598
+      }
+    },
+    {
+      "allowed": [
+        "the registered key authenticates the client",
+        "overlap: old and new keys both authenticate",
+        "the new key's token is active",
+        "audit read-back shows the key replacement and the client disable"
+      ],
+      "consumer_must": [
+        "rotate keys with an overlap: add the new key, switch, then remove the old one",
+        "audit and lifecycle APIs are Axiom deployment contracts, not portable OAuth interfaces"
+      ],
+      "denied": [
+        "the proposer cannot approve their own key replacement",
+        "after the overlap the old key is refused",
+        "a retired workload's client gets no new token",
+        "\u2026and its outstanding token is inactive",
+        "a disabled client gets no token",
+        "a disabled client's outstanding token is inactive",
+        "the audit trail carries no token, secret or private key material"
+      ],
+      "example": "IDP-09 client credential lifecycle and audit",
+      "facts": {
+        "audited_actions": [
+          "APPLY_IDENTITY_CONTROL_REQUEST",
+          "APPROVE_IDENTITY_CONTROL_REQUEST",
+          "CREATE_APPLICATION_CLIENT",
+          "DISABLE_APPLICATION_CLIENT",
+          "PROPOSE_IDENTITY_CONTROL_REQUEST",
+          "REPLACE_APPLICATION_CLIENT_KEYS"
+        ]
+      }
+    },
+    {
+      "allowed": [
+        "40 concurrent exchanges by one workload client for four subjects: each token names its own (iss, sub)",
+        "B's derived token is unaffected (selective)"
+      ],
+      "consumer_must": [
+        "key every cache and result by (iss, sub) plus the authority used",
+        "never treat a customer token as a workforce or administrator token"
+      ],
+      "denied": [
+        "logging A out stops A's derived token",
+        "a customer's application token is not accepted by the administration API",
+        "a customer's application token is not accepted by Axiom's own customer API (audience confusion)",
+        "another tenant's client learns only active=false",
+        "another tenant's workload cannot redeem this tenant's customer token",
+        "another tenant's workload cannot redeem this tenant's workforce token",
+        "after the disable returns, no token of the disabled client is active, however the requests raced",
+        "and no new token is issued"
+      ],
+      "example": "IDP-10 isolation (subjects, populations, tenants, races)",
+      "facts": {
+        "concurrent": {
+          "mixups": 0,
+          "total": 40
+        },
+        "race": {
+          "issued_before_disable": 0,
+          "requests": 16
+        },
+        "tenant_b_residual": "tenant B stays until estate teardown (deprovisioning keeps audit)"
+      }
+    },
+    {
+      "allowed": [
+        "SCIM: a user is created and read back",
+        "SCIM: a group is created with the user as member",
+        "SCIM resources carry a version (ETag) for optimistic concurrency",
+        "SCIM: membership is removed",
+        "management API: a user is created and read",
+        "the user is updated",
+        "with the reader role the person's token can be exchanged for orders.read",
+        "an administrator-provisioned customer is PENDING and unverified",
+        "the customer's own verification activates it (LOCAL_DEMO (simulated delivery))"
+      ],
+      "consumer_must": [
+        "map your directory to SCIM or the management API explicitly; roles are provider-specific",
+        "never treat an existing customer as verified; read status and emailVerifiedAt"
+      ],
+      "denied": [
+        "SCIM: a PATCH with a stale If-Match is refused (412)",
+        "SCIM without its bearer is refused",
+        "SCIM: a duplicate userName is refused",
+        "a duplicate user id is refused",
+        "a non-administrator cannot create users",
+        "a tenant administrator cannot administer another tenant",
+        "after the role is removed the issuer refuses orders.read (checked live at exchange)",
+        "a disabled user cannot sign in",
+        "a pending customer cannot sign in",
+        "a duplicate customer e-mail is refused"
+      ],
+      "example": "IDP-11 directory administration (workforce, groups, roles, customers)",
+      "facts": {}
+    },
+    {
+      "allowed": [
+        "public browser client: no secret, auth method none, authorization_code only",
+        "confidential web client: one-time secret, client_secret_basic, code + refresh",
+        "service client: client_credentials and token exchange",
+        "key client: private_key_jwt (ES256 key)",
+        "listing clients never returns a secret",
+        "assigning access enables sign-in",
+        "only the approved scope is issued",
+        "the customer sees the consent they gave",
+        "after withdrawal the consent page is shown again"
+      ],
+      "consumer_must": [
+        "store the one-time secret at once; register exact redirect URIs only",
+        "let the authorization server collect consent; do not imitate it in your UI"
+      ],
+      "denied": [
+        "a plain-http, non-loopback redirect URI is refused",
+        "a redirect URI with a fragment is refused",
+        "a public client cannot have a secret",
+        "a private key in jwks is refused",
+        "offline_access is not available to public clients",
+        "a person without access to the application cannot sign in",
+        "removing access stops new sign-ins",
+        "declining consent yields access_denied (no code)",
+        "an operator cannot withdraw the customer's consent",
+        "withdrawal ends the customer's session with that client"
+      ],
+      "example": "IDP-12 client administration and consent",
+      "facts": {}
+    },
+    {
+      "allowed": [
+        "IDP-15: an interactive sign-in carries acr (password level), amr=[pwd] and auth_time",
+        "IDP-15: exchange preserves acr, amr and auth_time unchanged"
+      ],
+      "consumer_must": [
+        "enforce proof-of-possession yourself if a route needs it (IDP-13 not selected)",
+        "check acr/auth_time per sensitive action; treat anything above password level as unavailable"
+      ],
+      "denied": [
+        "IDP-13: no sender-constraint profile is advertised",
+        "IDP-13: a DPoP header is not accepted as a binding",
+        "IDP-14: the RFC 7523 jwt-bearer grant is refused (not selected)",
+        "IDP-14: an external workload assertion is refused (no provider profile configured)",
+        "IDP-15: caller-supplied acr values never raise the asserted assurance",
+        "IDP-15: software tokens assert no human authentication"
+      ],
+      "example": "IDP-13/14/15 conditional profiles (not selected / partial)",
+      "facts": {
+        "IDP-13": "not selected: bearer tokens only; private_key_jwt authenticates the client, it does not bind tokens",
+        "IDP-14": "not selected: refusal only (negative evidence proves refusal, not support)",
+        "IDP-15": "partial: password-level claims and propagation; acr_values/max_age enforcement, step-up, MFA not available"
+      }
+    },
+    {
+      "allowed": [
+        "a customer-facing client sends the browser to the customer login page (CSRF form)",
+        "Axiom's consent page asks for the requested scopes",
+        "the callback receives the state and a code",
+        "the code redeems to tokens for the customer",
+        "only the approved scope is issued",
+        "the workforce consent page (Axiom-hosted) asks for the requested scope",
+        "the workforce person signs in",
+        "logout redirects to the registered post-logout URI",
+        "the customer's independent login (another session) is unaffected by the person's logout"
+      ],
+      "consumer_must": [],
+      "denied": [
+        "the signed-in customer's browser gets no workforce code: it lands on the workforce login",
+        "after logout the person's access token is inactive",
+        "the browser session ended: the next authorization request asks for a login again",
+        "no password appears in any request URL",
+        "no ID token appears in any request URL",
+        "login, consent and logout pages load nothing from third-party origins"
+      ],
+      "example": "IDP-02/08/12 browser: CIAM and workforce sign-in, consent, population boundary, logout",
+      "facts": {
+        "third_party_hosts": []
+      }
+    },
+    {
+      "allowed": [
+        "the authorization request lands on Axiom's login page with a CSRF-protected form ('/login', 1, 2, True)",
+        "the browser is redirected once to the registered loopback callback",
+        "the callback receives the exact state that was sent",
+        "the callback receives an authorization code and no error",
+        "the code redeems (PKCE) to tokens that validate for the person"
+      ],
+      "consumer_must": [
+        "register an exact loopback or https redirect URI; check state before redeeming",
+        "keep the code and PKCE verifier out of logs, history and analytics"
+      ],
+      "denied": [
+        "the login session cookie is HttpOnly: page script on Axiom's origin cannot read it",
+        "the password never appears in any request URL (the form posts its body)",
+        "Axiom's login page cannot be framed by another origin (the page arrived, the browser refused to render it: clickjacking)",
+        "a login form posted from another origin without the CSRF token signs nobody in (the next authorization request still asks for a login; no code is issued)"
+      ],
+      "example": "O02 browser: authorization code + PKCE through the real login page",
+      "facts": {
+        "cross_origin_login_post_status": [
+          403
+        ],
+        "framing_headers": {
+          "x-frame-options": "DENY"
+        },
+        "login_page": {
+          "csrf_fields": 2,
+          "login_forms": 1,
+          "path": "/login"
+        },
+        "requests_seen": 6,
+        "session_cookie": [
+          {
+            "httpOnly": true,
+            "name": "JSESSIONID",
+            "sameSite": "Lax"
+          }
+        ]
+      }
+    },
+    {
+      "allowed": [
+        "OIDC discovery issuer equals the configured target",
+        "OAuth metadata and OIDC discovery agree on the issuer",
+        "JWKS publishes keyed signing keys",
+        "operator token validates (JWKS, iss, aud, exp, at+jwt) and carries only tenant_admin"
+      ],
+      "consumer_must": [
+        "pin the issuer and validate tokens against jwks_uri; reject any other iss"
+      ],
+      "denied": [
+        "the OAuth password grant is not available",
+        "the legacy password-to-token endpoint is switched off in this profile",
+        "a tenant_admin cannot assign tenant roles (platform_admin only)",
+        "admin API without a bearer token is 401",
+        "a token with a broken signature is 401"
+      ],
+      "example": "B01 connect and authenticate the operator",
+      "facts": {
+        "operator_token_expires_in": 3599,
+        "signing_keys": 1
+      }
+    },
+    {
+      "allowed": [
+        "created user is readable and active",
+        "user email updated",
+        "the user sees their own active session"
+      ],
+      "consumer_must": [
+        "re-check status (introspection or a fresh exchange) instead of trusting cached tokens"
+      ],
+      "denied": [
+        "a duplicate user id is refused (409)",
+        "a tenant_admin cannot administer another tenant",
+        "after disable the user's existing token is refused (session revoked)",
+        "a disabled user cannot log in again"
+      ],
+      "example": "B02 workforce user lifecycle",
+      "facts": {}
+    },
+    {
+      "allowed": [
+        "record ids, application keys and OAuth client ids are distinct identifiers",
+        "public browser client requires PKCE and uses authorization_code",
+        "confidential client may use client_credentials"
+      ],
+      "consumer_must": [
+        "keep the one-time client secret in the consumer's own secret store"
+      ],
+      "denied": [
+        "the generated secret is never returned again",
+        "a public client cannot obtain client-credentials tokens",
+        "a redirect URI that is plain http off loopback or has a fragment is refused"
+      ],
+      "example": "B03 applications and clients",
+      "facts": {
+        "application_id": "17bdddf6-d1fe-400d-a667-136e3e77c77a",
+        "application_key": "ckbk-fc12ad99-portal",
+        "audience": "https://ckbk-fc12ad99-portal.cookbook.invalid",
+        "public_client_id": "ckbk-fc12ad99-portal-web",
+        "public_client_record": "e179948f-0915-4fe4-b1f6-7859f0b8482f"
+      }
+    },
+    {
+      "allowed": [
+        "the application token carries the role's permission and the application's audience",
+        "freshness boundary: the earlier token still carries the old claim until it expires"
+      ],
+      "consumer_must": [
+        "treat permission claims as of issuance; re-check through exchange or a fresh token"
+      ],
+      "denied": [
+        "a user without a membership cannot log in to the application",
+        "a role belonging to another application cannot be assigned",
+        "after removal a new login does not carry the permission"
+      ],
+      "example": "B04 roles and entitlements",
+      "facts": {
+        "entitlement_revision_before": 2
+      }
+    },
+    {
+      "allowed": [
+        "the user is listed as a team member",
+        "the user's teams include the new team",
+        "membership removed"
+      ],
+      "consumer_must": [
+        "source group membership from the directory; Axiom tokens carry no groups"
+      ],
+      "denied": [
+        "joining a team whose defaultRoles names tenant_admin grants no role",
+        "a non-administrator cannot create teams"
+      ],
+      "example": "B05 groups",
+      "facts": {}
+    },
+    {
+      "allowed": [
+        "discovery names a JWKS on the issuer and RS256",
+        "access token validates: signature, iss, aud, exp, iat, typ=at+jwt",
+        "ID token validates for the client as audience"
+      ],
+      "consumer_must": [
+        "validate signature, iss, aud, exp and typ on every token; decoding is not validation"
+      ],
+      "denied": [
+        "wrong audience is refused",
+        "a token whose claims were edited fails signature validation",
+        "Axiom refuses the edited token too",
+        "alg=none is refused",
+        "an ID token is not accepted as an access token (typ check)",
+        "Axiom's API refuses an ID token as bearer"
+      ],
+      "example": "O01 discovery and validation",
+      "facts": {}
+    },
+    {
+      "allowed": [
+        "access token: sub is the person, audience is the application",
+        "ID token: audience is the client and the nonce round-trips"
+      ],
+      "consumer_must": [
+        "bind state and nonce to the browser session and verify both on return"
+      ],
+      "denied": [
+        "a wrong PKCE verifier is refused",
+        "a redirect URI differing from the authorization request is refused",
+        "an authorization request with an unregistered redirect URI is refused (no code)",
+        "an authorization request without S256 PKCE is refused (no code)",
+        "an authorization code cannot be redeemed twice",
+        "a disabled client cannot start a login"
+      ],
+      "example": "O02 workforce authorization code + PKCE",
+      "facts": {
+        "acr": "urn:openwolf:axiom:acr:pwd",
+        "expires_in": 3599,
+        "has_auth_time": true,
+        "missing_pkce_status": 400,
+        "wrong_redirect_status": 400
+      }
+    },
+    {
+      "allowed": [
+        "token subject is the client itself; no person, no actor",
+        "token carries exactly the requested scope",
+        "reactivation restores issuance"
+      ],
+      "consumer_must": [
+        "cache client-credentials tokens no longer than expires_in; request minimal scopes"
+      ],
+      "denied": [
+        "a wrong secret is 401",
+        "a scope outside the client's registration is refused",
+        "a suspended workload's client gets no token",
+        "a disabled client is 401"
+      ],
+      "example": "O04 client credentials",
+      "facts": {
+        "expires_in": 29,
+        "lifetime_seconds": 30
+      }
+    },
+    {
+      "allowed": [
+        "the represented person stays the subject at every hop",
+        "the acting workload is recorded in act and the intermediary never becomes the actor",
+        "client_id is the authenticated client of each exchange, distinct from subject and actor",
+        "scope stays within the edge; lifetimes only shrink and are <= 5 minutes",
+        "a workload-only flow carries the workload as subject and no person",
+        "continuation through an explicit workload edge keeps the person and names the new actor"
+      ],
+      "consumer_must": [
+        "exchange per hop; never forward a token to another audience",
+        "receivers must check aud, scope and exp and decide how fresh status must be (O06)"
+      ],
+      "denied": [
+        "another workload cannot redeem a person's token from an application it does not belong to",
+        "the person's entitlement and the edge cap scope (no widening)",
+        "an audience without an explicit edge is refused",
+        "a caller cannot choose the actor (actor_token is refused)",
+        "a resource token is terminal: it cannot be exchanged onward",
+        "the intermediary cannot redeem a token that was not addressed to it",
+        "a person without access to the application gets no subject token to delegate"
+      ],
+      "example": "O05 token exchange",
+      "facts": {
+        "person_hops": [
+          {
+            "act": null,
+            "aud": "https://ckbk-0f56d13f-portal.cookbook.invalid",
+            "client_id": "ckbk-0f56d13f-portal-web",
+            "lifetime_s": 3600,
+            "token_use": null
+          },
+          {
+            "act": "ckbk-0f56d13f-portal-svc",
+            "aud": "https://ckbk-0f56d13f-portal.cookbook.invalid",
+            "client_id": "ckbk-0f56d13f-portal-svc",
+            "lifetime_s": 300,
+            "token_use": "exchange_subject"
+          },
+          {
+            "act": "ckbk-0f56d13f-portal-svc",
+            "aud": "https://ckbk-0f56d13f-edge.cookbook.invalid",
+            "client_id": "ckbk-0f56d13f-portal-svc",
+            "lifetime_s": 300,
+            "token_use": "gateway_authorization"
+          },
+          {
+            "act": "ckbk-0f56d13f-portal-svc",
+            "aud": "https://ckbk-0f56d13f-orders-api.cookbook.invalid",
+            "client_id": "ckbk-0f56d13f-edge",
+            "lifetime_s": 300,
+            "token_use": "delegated_access"
+          }
+        ],
+        "receiver_view_of_p4": {
+          "authority_profile": "gateway_backend",
+          "token_use": "delegated_access"
+        }
+      }
+    },
+    {
+      "allowed": [
+        "a valid person token is active with its claims for a same-tenant receiver",
+        "a token derived by exchange is active while its subject session is",
+        "OIDC RP-initiated logout is accepted",
+        "an independent login of the same person is unaffected",
+        "residual window: offline JWKS validation still accepts the logged-out token until exp",
+        "a workload token is active while client and workload are active"
+      ],
+      "consumer_must": [
+        "introspect (or use a session-aware validator) where revocation must take effect before exp",
+        "treat introspection failure as inactive (fail closed)"
+      ],
+      "denied": [
+        "an unauthenticated introspection call is refused",
+        "an introspection caller with a wrong secret is refused",
+        "a client of another tenant gets only active=false",
+        "after logout the token introspects inactive",
+        "after logout tokens derived from it are inactive too",
+        "after administrative revocation the token is inactive",
+        "after RFC 7009 revocation the workload token is inactive",
+        "an expired token is inactive",
+        "offline validation also refuses the expired token"
+      ],
+      "example": "O06 introspection, revocation, logout, expiry",
+      "facts": {
+        "residual_window_seconds": 3581,
+        "workload_token_expires_in": 29
+      }
+    },
+    {
+      "allowed": [
+        "the workload acts for the absent owner with a short-lived token",
+        "each renewal rotates the handle",
+        "five concurrent renewals with one handle: exactly one succeeds"
+      ],
+      "consumer_must": [
+        "store the newest renewal handle atomically and serialize renewals per grant",
+        "never retry a renewal with an older handle (Axiom treats it as theft)"
+      ],
+      "denied": [
+        "the workload's service client is not registered for the standard refresh grant (see IDP-06)",
+        "an access token is never accepted as renewal input",
+        "a spent handle is refused",
+        "reuse of a spent handle withdraws the whole grant (the current handle stops too)",
+        "tokens of a withdrawn grant are inactive",
+        "after the owner withdraws, renewal is refused",
+        "an expired grant cannot renew"
+      ],
+      "example": "O07 renewal (standing-grant extension)",
+      "facts": {
+        "concurrent_statuses": [
+          200,
+          400,
+          400,
+          400,
+          400
+        ],
+        "refresh_token_probe": {
+          "error": "invalid_grant",
+          "status": 400
+        }
+      }
+    },
+    {
+      "allowed": [
+        "JWKS publishes the new key and keeps the previous one for verification",
+        "a token signed before the rotation still validates",
+        "new tokens use the new key",
+        "the previous secret still works inside the declared overlap",
+        "the new secret works"
+      ],
+      "consumer_must": [
+        "refresh JWKS when a kid is unknown; never pin one key",
+        "switch to a rotated client secret within the published overlap"
+      ],
+      "denied": [
+        "a tenant administrator cannot change signing keys",
+        "the previous key cannot be retired inside its verification overlap",
+        "the proposer cannot approve their own rotation",
+        "the previous secret is refused after the overlap"
+      ],
+      "example": "O08 key and credential lifecycle",
+      "facts": {
+        "previous_key_state": "VERIFICATION_ONLY"
+      }
+    },
+    {
+      "allowed": [
+        "/.well-known/oauth-authorization-server: grants advertised are exactly the supported set (no duplicates)",
+        "/.well-known/oauth-authorization-server: client authentication advertised is client_secret_basic, private_key_jwt and none",
+        "/.well-known/oauth-authorization-server: no sender-constraint feature is advertised (none is enforced)",
+        "/.well-known/oauth-authorization-server: PKCE S256 only",
+        "/.well-known/openid-configuration: grants advertised are exactly the supported set (no duplicates)",
+        "/.well-known/openid-configuration: client authentication advertised is client_secret_basic, private_key_jwt and none",
+        "/.well-known/openid-configuration: no sender-constraint feature is advertised (none is enforced)",
+        "/.well-known/openid-configuration: PKCE S256 only"
+      ],
+      "consumer_must": [
+        "negotiate capabilities from discovery; Axiom-specific grants are optional extensions"
+      ],
+      "denied": [
+        "grant refresh_token is refused for a service client",
+        "grant urn:ietf:params:oauth:grant-type:device_code is refused",
+        "grant password is refused",
+        "client_secret_post is refused (not advertised)",
+        "a private_key_jwt assertion from a client registered without keys is refused (IDP-03 covers key clients)"
+      ],
+      "example": "O09 capability enumeration",
+      "facts": {}
+    },
+    {
+      "allowed": [
+        "workload identities registered",
+        "with an explicit edge the same exchange succeeds"
+      ],
+      "consumer_must": [
+        "keep business relationships (assignments, ownership of data) in the consumer"
+      ],
+      "denied": [
+        "the intermediary's client cannot also be registered as a workload",
+        "a workload's client cannot become an exchange intermediary",
+        "an edge to a workload must name that workload",
+        "registration alone grants nothing: without an edge the workload cannot exchange"
+      ],
+      "example": "B09 workloads and exchange edges",
+      "facts": {}
+    },
+    {
+      "allowed": [
+        "the person sees each login as its own session",
+        "the other session continues",
+        "an administrator lists the person's sessions",
+        "reactivation restores issuance"
+      ],
+      "consumer_must": [
+        "treat 401 on a known token as 'session ended' and re-authenticate",
+        "stop scheduling work for a suspended or retired workload"
+      ],
+      "denied": [
+        "a stale expectedRevision is refused",
+        "the revoked session's token is refused",
+        "a person cannot revoke someone else's session",
+        "a suspended workload gets no token",
+        "retirement is terminal",
+        "a non-administrator cannot propose a credential rotation"
+      ],
+      "example": "B10 sessions and lifecycle",
+      "facts": {}
+    },
+    {
+      "allowed": [
+        "the existing record is the intended one",
+        "cleanup disabled/retired exactly this run's four records (application, client, workload, user)",
+        "a second cleanup is a no-op"
+      ],
+      "consumer_must": [
+        "namespace fixtures and record what you created; never clean up by pattern alone"
+      ],
+      "denied": [
+        "re-running a creation reports a conflict instead of duplicating",
+        "a cleaned-up client can no longer authenticate"
+      ],
+      "example": "B11 re-run and cleanup",
+      "facts": {
+        "cleanup_report": {
+          "disabled_or_revoked": [
+            "workforce user ckbk-a03e6566-rerun-user -> 204",
+            "workload f2ac472e-109a-4dbd-a906-2f6b8cae8939 -> 200",
+            "client ckbk-a03e6566-rerun-svc -> 204",
+            "application ckbk-a03e6566-rerun -> 204"
+          ],
+          "failed": [],
+          "residual": []
+        }
+      }
+    },
+    {
+      "allowed": [
+        "administrator provisioning creates an unverified, pending identity marked ADMINISTRATOR",
+        "no verification code is returned to the administrator",
+        "the customer requests a code (LOCAL_DEMO (simulated delivery))",
+        "verification activates the customer and records emailVerifiedAt; the source stays ADMINISTRATOR",
+        "self-registration is marked SELF_REGISTRATION and starts unverified",
+        "the customer token names the customer, is marked customer and carries no roles",
+        "a customer can read their own identity",
+        "reactivation restores sign-in"
+      ],
+      "consumer_must": [
+        "distinguish provisioningSource from emailVerifiedAt",
+        "never treat a customer token as a workforce or administrator credential"
+      ],
+      "denied": [
+        "an unverified customer cannot sign in",
+        "a verification code works once",
+        "a second identity with the same e-mail is refused",
+        "administrator provisioning of an existing e-mail is refused",
+        "a customer cannot read another customer",
+        "a customer token is not accepted by workforce APIs",
+        "a customer token is not accepted by administration APIs",
+        "a workforce operator's credentials do not sign in as a customer",
+        "a tenant_admin cannot provision customers in another tenant",
+        "suspension invalidates the customer's existing token immediately (token_version)",
+        "a suspended customer cannot sign in",
+        "reactivation does not revive the token issued before suspension"
+      ],
+      "example": "B06 customer identities",
+      "facts": {
+        "code_delivery": {
+          "codeDelivery": "LOCAL_DEMO",
+          "codeReturnedToCustomer": true
+        },
+        "token_version_claim": 1
+      }
+    },
+    {
+      "allowed": [
+        "the customer token is bound to the customer-facing client and its scope"
+      ],
+      "consumer_must": [
+        "decide per-customer business entitlement at the resource",
+        "do not map workforce roles or memberships onto customers"
+      ],
+      "denied": [
+        "a scope the client does not carry is refused",
+        "a scope that is not an approved business scope is refused",
+        "customer sign-in through a confidential (service) client is refused",
+        "an unknown client is refused",
+        "a disabled client cannot issue customer tokens",
+        "a customer token issued through a now-disabled client is refused"
+      ],
+      "example": "B07 customer application access",
+      "facts": {
+        "customer_access_model": "client scope ceiling; no customer roles/groups/memberships in Axiom"
+      }
+    },
+    {
+      "allowed": [
+        "consent recorded by the customer is marked CUSTOMER and bound to the registered purpose",
+        "consent without a registered purpose keeps its free-text purpose and no purpose code",
+        "the operator can inspect (not create) customer grants",
+        "the customer can inspect their grants",
+        "the delegated token names the customer, the acting workload and the exact grant",
+        "introspection reports it active",
+        "an independent grant to another workload is unaffected",
+        "a short grant works while valid"
+      ],
+      "consumer_must": [
+        "present purpose, audience, scope and expiry to the customer before recording consent",
+        "check delegation status online for sensitive work; the delegated token is terminal"
+      ],
+      "denied": [
+        "an operator cannot record purpose-bound consent for the customer (the consent API accepts customer tokens only)",
+        "an operator cannot record plain consent for the customer either",
+        "another customer cannot inspect them",
+        "consent cannot exceed the workload client's registered scopes",
+        "consent names the workload's own audience, nothing else",
+        "an exchange that matches two grants is refused rather than silently choosing one",
+        "a workload without a grant cannot act for the customer",
+        "the exchange cannot widen scope beyond the grant",
+        "one customer's grant does not authorize another customer's token",
+        "the delegated token is terminal: no onward exchange (customer continuation is an open decision)",
+        "another customer cannot withdraw this consent",
+        "an operator cannot withdraw it either (operators revoke the workload or suspend the customer)",
+        "after withdrawal the already-issued delegated token introspects inactive",
+        "a withdrawn grant issues nothing",
+        "an expired grant issues nothing"
+      ],
+      "example": "B08 consent grants",
+      "facts": {
+        "delegated_claims": {
+          "act": {
+            "client_id": "ckbk-b6ac8846-helper-svc",
+            "sub": "workload:ckbk-b6ac8846-helper",
+            "workload_id": "9082d559-03ed-4842-9736-50aab4888f98"
+          },
+          "authority_profile": "ciam_customer",
+          "client_id": "ckbk-b6ac8846-helper-svc",
+          "delegation_id": "73385577-b4dd-4ab9-a124-86707297e131",
+          "identity_kind": "customer",
+          "scope": [
+            "orders.read"
+          ],
+          "sub": "d98e81e2-3793-4660-a990-aaf2598297c9",
+          "token_use": "delegated_access"
+        },
+        "grants": {
+          "independent": "2bf55274",
+          "plain": "CUSTOMER",
+          "purpose_bound": "CUSTOMER",
+          "short": "6cfbe073",
+          "short_lived_s": 4
+        }
+      }
+    },
+    {
+      "allowed": [
+        "the supported customer endpoint issues one customer token, no ID token",
+        "lifetime is stated"
+      ],
+      "consumer_must": [
+        "do not present the JSON customer token endpoint as an OIDC login",
+        "keep customer and workforce sign-in surfaces separate"
+      ],
+      "denied": [
+        "a customer cannot use the workforce browser login (population separation)",
+        "a wrong password is refused",
+        "an unverified customer is refused"
+      ],
+      "example": "O03 customer sign-in",
+      "facts": {
+        "open_decision": "D-O03 standard customer browser login (authorization code + PKCE) not designed"
+      }
+    },
+    {
+      "allowed": [
+        "the resource performs a read for a valid resource token",
+        "a gateway fixture admits the workload's current token after an online status check (no new exchange)",
+        "Axiom tokens carry no downstream provider credential",
+        "residual window: the offline receiver still accepts it until exp (measured below)",
+        "denied requests recorded no protected action in the fixtures"
+      ],
+      "consumer_must": [
+        "validate signature, iss, aud, exp, typ and scope on every request",
+        "introspect where revocation must take effect before exp; fail closed on errors",
+        "never derive permission from request content"
+      ],
+      "denied": [
+        "read authority does not become write authority, whatever the request text says",
+        "a token addressed to the intermediary is refused by the resource (audience)",
+        "an edited token fails signature validation",
+        "the issuer will not mint write authority for a person entitled only to read",
+        "after the workload is suspended the online gateway refuses its unexpired token",
+        "after the person's session is revoked the online receiver refuses the derived resource token"
+      ],
+      "example": "C01 receiver enforcement",
+      "facts": {
+        "protected_actions": {
+          "gateway": 1,
+          "offline": 2,
+          "online": 1
+        },
+        "residual_window_seconds": 297
+      }
+    },
+    {
+      "allowed": [
+        "60 concurrent exchanges across two tenants: every token names its own subject, authority and tenant",
+        "tenant B's own receiver sees tenant B's token active",
+        "person B is unaffected",
+        "customer B is unaffected",
+        "the other tenant is unaffected by tenant A's revocations"
+      ],
+      "consumer_must": [
+        "key every cache and result by sub plus authority (sid / delegation_id)",
+        "never reuse one subject's token for another subject"
+      ],
+      "denied": [
+        "10 concurrent cross-tenant exchanges (each tenant's workload with the other's customer token) all fail",
+        "each tenant's receiver learns only active=false about the other tenant's tokens",
+        "person A's derived token is inactive after A's session is revoked",
+        "person A can no longer be exchanged for",
+        "customer A's withdrawn grant issues nothing"
+      ],
+      "example": "C02 one workload, many subjects",
+      "facts": {
+        "concurrent_exchanges": {
+          "cross_tenant_attempts": 10,
+          "cross_tenant_statuses": [
+            400
+          ],
+          "mixups": 0,
+          "tenants": 2,
+          "total": 70
+        },
+        "tenant_b_residual": "the second tenant itself is left for estate teardown (deprovisioning keeps audit)"
+      }
+    },
+    {
+      "allowed": [
+        "the registered chain reaches reports-svc and its intermediary authorization, person unchanged"
+      ],
+      "consumer_must": [
+        "register only needed edges; review them like firewall rules",
+        "decide per action whether a nested actor chain is acceptable"
+      ],
+      "denied": [
+        "no further hop to a resource reports-svc has no edge to: depth is bounded by registered edges",
+        "no further hop back to the first workload: depth is bounded by registered edges",
+        "no further hop around to reports-svc again: depth is bounded by registered edges",
+        "the first workload cannot redeem a token addressed to the second (actor substitution)",
+        "the intermediary cannot redeem a token addressed to a workload",
+        "a caller cannot name a different actor"
+      ],
+      "example": "C03 workload chains",
+      "facts": {
+        "chain": [
+          "person",
+          "portal-svc",
+          "edge",
+          "reports-svc",
+          "edge",
+          "(stop: no further edges)"
+        ]
+      }
+    },
+    {
+      "allowed": [
+        "discovery advertises only the supported client authentication and no sender-constrained tokens"
+      ],
+      "consumer_must": [
+        "enforce proof-of-possession yourself if a route needs it (Axiom issues bearer tokens)",
+        "do not accept partner or external-platform assertions on Axiom's behalf"
+      ],
+      "denied": [
+        "a token claiming Axiom's issuer but signed by another key is refused",
+        "a partner-issued subject token is refused (no partner trust profile)",
+        "the RFC 7523 jwt-bearer grant is not available",
+        "a private_key_jwt assertion signed by an unregistered (foreign) key is refused",
+        "an external workload assertion is refused while no federation provider profile is configured",
+        "subject_token_type id_token is refused",
+        "subject_token_type jwt is refused",
+        "subject_token_type saml2 is refused"
+      ],
+      "example": "C04 untrusted issuers (negative-only)",
+      "facts": {
+        "evidence_level": "negative-only; IDP-13/IDP-14 profiles not selected"
+      }
+    },
+    {
+      "allowed": [
+        "an interactive login asserts the password level with a fresh auth_time",
+        "an exchanged token never carries a higher acr than its subject"
+      ],
+      "consumer_must": [
+        "require acr/auth_time per sensitive action and refuse when absent or stale",
+        "treat any requirement above the password level as unavailable today"
+      ],
+      "denied": [
+        "caller-supplied acr/amr parameters are ignored (assurance is never caller-written)",
+        "a workload token asserts no human authentication",
+        "a customer token asserts no acr/auth_time (customer assurance is not modelled)"
+      ],
+      "example": "C05 authentication assurance",
+      "facts": {
+        "caller_assurance_request_status": 200,
+        "deferred": "native MFA/passkeys; assurance vocabulary beyond password (IDP-15 profile not selected)",
+        "exchange_preserves": {
+          "acr": true,
+          "amr": true,
+          "auth_time": true
+        }
+      }
+    }
+  ],
+  "python": "3.12.7",
+  "server_log_scan": {
+    "logs_scanned": [
+      "bootstrap.log",
+      "server.log"
+    ],
+    "token_shaped_matches": 0
+  },
+  "skipped_tests": [],
+  "source_fingerprint": {
+    "files": 603,
+    "roots": [
+      "examples/identity_scenarios",
+      "server/src/main",
+      "server/pom.xml",
+      "platform-policy",
+      "platform-contract"
+    ],
+    "sha256": "ba15ab11374df863164b55e561d1a35009e58365b177b585e9b4f991a53cfe51"
+  }
+}

@@ -182,3 +182,22 @@ Routes the scripts need (from source): applications, clients, access roles/membe
 `ciam/customers` (+ suspend/reactivate), `ciam/events`, `agent-exchange/brokers|routes` (+ revoke), `identity-control-
 requests`, `/users`, `/teams`, `/admin/tenants`, `/admin/audit/export`. `configure_axiom.py` also manipulates Kubernetes
 Secrets, which is outside any Axiom authentication contract.
+
+## 11. Business-scope vocabulary (deployment baseline and tenant catalog)
+
+* **Baseline:** `iam.oauth2.approved-business-scopes` (Helm `config.approvedBusinessScopes`), approved in every tenant
+  and published in `scopes_supported`.
+* **Tenant catalog:** `POST`/`GET /admin/tenants/{t}/business-scopes` (Axiom management API; table
+  `tenant_business_scopes`, migration V41). Approved only in that tenant, read live (usable at once), never published
+  in discovery. Every place Axiom validates a business scope checks *baseline ∪ that tenant's catalog*: client
+  registration, exchange brokers and routes, consent purposes, customer delegation and customer sign-in scopes,
+  standing and approved-action grants, and issuance-time entitlement narrowing (a person receives a business scope,
+  baseline or catalog, only with the matching application permission).
+* **Vocabulary only:** registering a name grants no authority. Standard protocol scopes (`openid`, `profile`, `email`,
+  `offline_access`, `roles`, …) and `axiom`-prefixed names cannot be registered.
+* **Deactivation semantics (decided, not implemented):** there is no delete or disable endpoint. When added, deactivation
+  should only stop *new* approvals (client registrations, routes, purposes, grants) and remain visible as an audited
+  state change; it must not silently rewrite existing client registrations or revoke issued tokens. Withdrawing
+  authority stays with the existing mechanisms (disable the client, revoke the route or grant, end sessions), and
+  access tokens already issued remain valid offline until `exp`. Re-registering a deactivated name would need an
+  explicit reactivation, not a duplicate row.

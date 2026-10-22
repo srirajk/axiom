@@ -1,0 +1,9 @@
+# Fresh Docker Desktop cluster only. The gateway data plane is in envoy-gateway-system.
+nodeSelector:
+  kubernetes.io/hostname: desktop-worker
+networkPolicy:
+  enabled: true
+  probeName: axiom-test-probe
+  clientNamespaces: [envoy-gateway-system]
+policyRuntime:
+  accessModes: [ReadWriteOnce]

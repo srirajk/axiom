@@ -10,5 +10,13 @@ public record CreateUserRequest(
         @NotBlank(message = "username is required") String username,
         @Email(message = "email must be valid") String email,
         @NotBlank(message = "password is required") String password,
-        Map<String, Object> attributes
-) {}
+        Map<String, Object> attributes,
+        String givenName,
+        String familyName,
+        String name
+) {
+    public CreateUserRequest(String id, String username, String email, String password,
+                             Map<String, Object> attributes) {
+        this(id, username, email, password, attributes, null, null, null);
+    }
+}

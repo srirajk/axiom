@@ -98,24 +98,32 @@ public final class TokenExchangeAuthenticationProvider implements Authentication
                 .filter(authority -> authority.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_SERVICE)
                 .orElseThrow(() -> new OAuth2AuthenticationException(UNAUTHORIZED_CLIENT));
         try {
-        if (!actorClient.getScopes().containsAll(exchange.requestedScopes())
-                || !actorAuthority.scopes().containsAll(exchange.requestedScopes())) fail(INVALID_SCOPE);
-        Jwt subject = decodeSubject(exchange.subjectToken());
-        AgentExchangeAuthorityService.ResolvedAuthority authority;
-        try {
-            authority = exchangeAuthority.resolve(subject, actorClient.getClientId(),
-                    exchange.audience(), exchange.requestedScopes(), exchange.delegationPurpose());
-        } catch (RuntimeException denied) {
-            if (denied instanceof OAuth2AuthenticationException oauth) throw oauth;
-            throw new OAuth2AuthenticationException(INVALID_GRANT, denied);
-        }
-        String tenantId = authority.tenantId();
-        if (!actorAuthority.tenantId().equals(tenantId)
-                || !authority.audience().equals(exchange.audience())
-                || !authority.scopes().containsAll(exchange.requestedScopes())) fail(INVALID_GRANT);
+            Jwt subject = decodeSubject(exchange.subjectToken());
+            AgentExchangeAuthorityService.ResolvedAuthority authority;
+            try {
+                authority = exchangeAuthority.resolve(subject, actorClient.getClientId(),
+                        exchange.audience(), exchange.requestedScopes(), exchange.delegationPurpose());
+            } catch (RuntimeException denied) {
+                if (denied instanceof OAuth2AuthenticationException oauth) throw oauth;
+                throw new OAuth2AuthenticationException(INVALID_GRANT, denied);
+            }
+            // A trusted broker's business scopes are bounded by the verified subject token and the registered
+            // destination authority. The broker's own client scopes govern its own credentials, not its exchanges.
+            // Other exchange profiles retain the normal client-scope ceiling.
+            if (authority.profile() != AgentExchangeAuthorityService.Profile.GATEWAY_BACKEND
+                    && (!actorClient.getScopes().containsAll(exchange.requestedScopes())
+                    || !actorAuthority.scopes().containsAll(exchange.requestedScopes()))) fail(INVALID_SCOPE);
+            String tenantId = authority.tenantId();
+            if (!actorAuthority.tenantId().equals(tenantId)
+                    || !authority.audience().equals(exchange.audience())
+                    || !authority.scopes().containsAll(exchange.requestedScopes())) fail(INVALID_GRANT);
 
-        com.openwolf.iam.invocation.InvocationContextService.Binding binding =
-                bindInvocation(exchange, subject, authority, actorClient.getClientId());
+            // The resulting act chain must be well formed and at most DelegationChain.MAX_DEPTH levels: refused (and audited
+            // as a denied exchange) before anything is issued, never truncated.
+            DelegationChain.forSubject(subject.getClaims(), authority.actingWorkload().getWorkloadRef(),
+                    authority.actingWorkload().getOauthClientId(), authority.actingWorkload().getId().toString());
+            com.openwolf.iam.invocation.InvocationContextService.Binding binding =
+                    bindInvocation(exchange, subject, authority, actorClient.getClientId());
 
         Instant now = Instant.now();
         Instant subjectExpiry = subject.getExpiresAt();

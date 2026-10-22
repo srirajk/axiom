@@ -44,6 +44,7 @@ public class UserController {
     }
 
     @GetMapping("/{userId}")
+    @PreAuthorize("hasAnyRole('platform_admin', 'tenant_admin', 'domain_admin') or #userId == authentication.token.subject")
     public ResponseEntity<UserResponse> getUser(@PathVariable String userId) {
         return ResponseEntity.ok(userService.getUser(userId));
     }

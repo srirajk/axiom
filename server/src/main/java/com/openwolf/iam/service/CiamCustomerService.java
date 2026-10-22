@@ -93,6 +93,12 @@ public class CiamCustomerService {
 
     public RegistrationResponse register(String tenantId, String email, String displayName,
                                          String password, String correlationId) {
+        return register(tenantId, email, displayName, null, null, password, correlationId);
+    }
+
+    public RegistrationResponse register(String tenantId, String email, String displayName,
+                                         String givenName, String familyName,
+                                         String password, String correlationId) {
         requireTenant(tenantId);
         requireCodeChannel();
         String normalizedEmail = normalizeEmail(email);
@@ -101,7 +107,8 @@ public class CiamCustomerService {
         }
         Instant now = clock.instant();
         CustomerIdentity customer = customers.save(new CustomerIdentity(tenantId, normalizedEmail,
-                displayName.trim(), passwordEncoder.encode(password), now));
+                personName(displayName, givenName, familyName), clean(givenName), clean(familyName),
+                passwordEncoder.encode(password), now));
         ChallengeAction action = issue(customer, CustomerIdentityChallenge.Type.EMAIL_VERIFICATION, now);
         audit.record(tenantId, customer.getId().toString(), "CUSTOMER_REGISTERED", "customer_identity",
                 customer.getId().toString(), Map.of("status", customer.getStatus().name()), correlationId);
@@ -115,13 +122,20 @@ public class CiamCustomerService {
      */
     public CustomerResponse provision(String tenantId, String email, String displayName, String initialPassword,
                                       String actorId, String correlationId) {
+        return provision(tenantId, email, displayName, null, null, initialPassword, actorId, correlationId);
+    }
+
+    public CustomerResponse provision(String tenantId, String email, String displayName,
+                                      String givenName, String familyName, String initialPassword,
+                                      String actorId, String correlationId) {
         requireTenant(tenantId);
         String normalizedEmail = normalizeEmail(email);
         if (customers.findByTenantIdAndEmailIgnoreCase(tenantId, normalizedEmail).isPresent()) {
             throw new ResourceConflictException("customer identity already exists");
         }
         CustomerIdentity customer = customers.save(CustomerIdentity.provisionedByAdministrator(tenantId,
-                normalizedEmail, displayName.trim(), passwordEncoder.encode(initialPassword), clock.instant()));
+                normalizedEmail, personName(displayName, givenName, familyName), clean(givenName), clean(familyName),
+                passwordEncoder.encode(initialPassword), clock.instant()));
         audit.record(tenantId, actorId, "CUSTOMER_PROVISIONED", "customer_identity", customer.getId().toString(),
                 Map.of("status", customer.getStatus().name(), "provisioningSource",
                         customer.getProvisioningSource().name()), correlationId);
@@ -342,7 +356,25 @@ public class CiamCustomerService {
     }
 
     static CustomerResponse toResponse(CustomerIdentity value) {
-        return new CustomerResponse(value.getId(), value.getEmail(), value.getDisplayName(), value.getStatus(),
+        return new CustomerResponse(value.getId(), value.getEmail(), value.getDisplayName(),
+                value.getGivenName(), value.getFamilyName(), value.getStatus(),
                 value.getEmailVerifiedAt(), value.getCreatedAt(), value.getRevision(), value.getProvisioningSource());
+    }
+
+    private static String clean(String value) {
+        if (value == null || value.isBlank()) return null;
+        return value.trim();
+    }
+
+    private static String personName(String displayName, String givenName, String familyName) {
+        String explicit = clean(displayName);
+        if (explicit != null) return explicit;
+        String given = clean(givenName);
+        String family = clean(familyName);
+        if (given == null && family == null) {
+            throw new IllegalArgumentException("customer name or given/family name is required");
+        }
+        if (given == null) return family;
+        return family == null ? given : given + " " + family;
     }
 }

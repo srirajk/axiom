@@ -14,7 +14,8 @@ import java.util.UUID;
 @Transactional(readOnly = true)
 public class CiamCustomerAuthenticationService {
     public record AuthenticatedCustomer(UUID customerId, String tenantId, String email,
-                                        String displayName, String identityKind, long tokenVersion) {}
+                                        String displayName, String givenName, String familyName,
+                                        String identityKind, long tokenVersion) {}
 
     private final CustomerIdentityRepository customers;
     private final PasswordEncoder passwordEncoder;
@@ -34,7 +35,8 @@ public class CiamCustomerAuthenticationService {
             throw new BadCredentialsException("customer authentication failed");
         }
         return new AuthenticatedCustomer(customer.getId(), tenantId, customer.getEmail(),
-                customer.getDisplayName(), "customer", customer.getTokenVersion());
+                customer.getDisplayName(), customer.getGivenName(), customer.getFamilyName(),
+                "customer", customer.getTokenVersion());
     }
 
     /**
@@ -46,7 +48,8 @@ public class CiamCustomerAuthenticationService {
                 .filter(value -> value.getStatus() == CustomerIdentity.Status.ACTIVE)
                 .filter(value -> value.getTokenVersion() == tokenVersion)
                 .map(value -> new AuthenticatedCustomer(value.getId(), tenantId, value.getEmail(),
-                        value.getDisplayName(), "customer", value.getTokenVersion()));
+                        value.getDisplayName(), value.getGivenName(), value.getFamilyName(),
+                        "customer", value.getTokenVersion()));
     }
 
     /** Token-time fail-closed check for subject-token and customer API validators. */

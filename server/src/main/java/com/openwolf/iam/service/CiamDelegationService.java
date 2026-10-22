@@ -188,7 +188,7 @@ public class CiamDelegationService {
                 .orElseThrow(() -> new ResourceConflictException("agent workload client is not active"));
         if (!clientAuthority.audience().equals(audience.trim())
                 || !clientAuthority.scopes().containsAll(normalizedScopes)
-                || normalizedScopes.stream().anyMatch(scope -> !businessScopes.isApproved(scope))) {
+                || normalizedScopes.stream().anyMatch(scope -> !businessScopes.isApproved(tenantId, scope))) {
             throw new IllegalArgumentException("delegation audience or scopes exceed the registered agent client authority");
         }
         if (purposeCode != null) {

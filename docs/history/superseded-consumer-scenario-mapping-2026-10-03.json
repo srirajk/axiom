@@ -1,0 +1,330 @@
+{
+  "schema": "axiom-identity-scenarios/1",
+  "note": "Axiom is consumer-neutral: these scenarios are consumer use cases mapped to generic identity contracts. Run results are in docs/operations/axiom-integration-scenario-ledger.md and evidence/last-run.json; 'evidence_level' here is the kind of evidence, not a pass claim.",
+  "scenarios": [
+    {
+      "id": "S01",
+      "title": "The agent acts for a person",
+      "population": "workforce",
+      "axiom_issuer_scope": "Workforce login, authorized delegation, subject/actor preservation, source-application binding, downstream audience and scope limits.",
+      "outside_axiom": "Gateway policy and dispatch.",
+      "axiom_profile": "RFC 8693 on-behalf-of (Axiom profile: subject_token only, act = authenticated workload)",
+      "implementation_status": "Done",
+      "evidence_level": "issuer contract executed",
+      "examples": [
+        "oauth.o02_workforce_authorization_code",
+        "oauth.o05_token_exchange",
+        "consumer_contracts.c01_receiver_enforcement"
+      ],
+      "open_decisions": []
+    },
+    {
+      "id": "S02",
+      "title": "The agent acts for a customer",
+      "population": "ciam",
+      "axiom_issuer_scope": "CIAM identity, bounded consent, permitted downstream continuation, wrong customer/purpose/resource denial and withdrawal.",
+      "outside_axiom": "Customer application UI and business execution.",
+      "axiom_profile": "Customer consent grant + RFC 8693 delegated token (terminal)",
+      "implementation_status": "Partial",
+      "evidence_level": "issuer contract executed",
+      "examples": [
+        "ciam.b06_customer_identity",
+        "ciam.b07_customer_application_access",
+        "ciam.b08_consent_grants",
+        "consumer_contracts.c02_one_workload_many_subjects"
+      ],
+      "open_decisions": [
+        "D-C2 customer downstream continuation",
+        "D-O03 standard customer browser login"
+      ]
+    },
+    {
+      "id": "S03",
+      "title": "A scheduled agent runs without a person",
+      "population": "workload",
+      "axiom_issuer_scope": "Workload authentication and issuance without human authority; expiry, permitted destinations and inactive-client denial.",
+      "outside_axiom": "Scheduler and job execution.",
+      "axiom_profile": "client_credentials (client_secret_basic) + explicit exchange edges",
+      "implementation_status": "Done",
+      "evidence_level": "issuer contract executed",
+      "examples": [
+        "oauth.o04_client_credentials",
+        "oauth.o05_token_exchange",
+        "basics.b09_workloads_and_edges"
+      ],
+      "open_decisions": []
+    },
+    {
+      "id": "S04",
+      "title": "Agents calling agents",
+      "population": "workforce+workload",
+      "axiom_issuer_scope": "Client A to broker to client B to resource under the agreed exchange profile; wrong recipient, actor substitution, widening and excessive depth denied.",
+      "outside_axiom": "Agent coordination and transport.",
+      "axiom_profile": "RFC 8693 chain through a registered intermediary; depth bounded by explicit edges",
+      "implementation_status": "Done",
+      "evidence_level": "issuer contract executed",
+      "examples": [
+        "oauth.o05_token_exchange",
+        "consumer_contracts.c03_workload_chains"
+      ],
+      "open_decisions": []
+    },
+    {
+      "id": "S05",
+      "title": "The agent calling tools and systems",
+      "population": "workforce+workload",
+      "axiom_issuer_scope": "Distinct resource audiences, permitted scope sets and token-type checks through generic receiver fixtures.",
+      "outside_axiom": "MCP/tool authorization and real tool effects.",
+      "axiom_profile": "RESOURCE edges; terminal resource tokens; receiver fixture",
+      "implementation_status": "Done",
+      "evidence_level": "issuer contract executed (receiver simulated)",
+      "examples": [
+        "oauth.o05_token_exchange",
+        "consumer_contracts.c01_receiver_enforcement"
+      ],
+      "open_decisions": []
+    },
+    {
+      "id": "S06",
+      "title": "The agent talking to the AI model",
+      "population": "workload",
+      "axiom_issuer_scope": "The applicable identity token and status contract, including a status check when no new exchange is needed. Never put a provider key in Axiom token evidence.",
+      "outside_axiom": "Model keys, model dispatch, metering and budgets.",
+      "axiom_profile": "RFC 7662 introspection as status check without a new exchange",
+      "implementation_status": "Done",
+      "evidence_level": "issuer contract executed (model-route fixture simulated)",
+      "examples": [
+        "oauth.o06_introspection_revocation_logout",
+        "consumer_contracts.c01_receiver_enforcement"
+      ],
+      "open_decisions": []
+    },
+    {
+      "id": "S07",
+      "title": "Proving the agent is who it claims to be",
+      "population": "workload",
+      "axiom_issuer_scope": "Authenticate the workload using the selected supported profile; reject impersonation and replay where the profile promises it. Separate client authentication from sender-constrained access tokens.",
+      "outside_axiom": "Receiver enforcement of a selected sender constraint.",
+      "axiom_profile": "client_secret_basic only; no private_key_jwt/mTLS/DPoP",
+      "implementation_status": "Open decision",
+      "evidence_level": "negative-only",
+      "examples": [
+        "oauth.o09_capability_enumeration",
+        "consumer_contracts.c04_untrusted_issuers"
+      ],
+      "open_decisions": [
+        "D-S07 workload proof and sender-constraint profile"
+      ]
+    },
+    {
+      "id": "S08",
+      "title": "Crossing boundaries",
+      "population": "external",
+      "axiom_issuer_scope": "Selected issuer/trust profile, signed subject/actor evidence, issuer/audience/replay checks and explicit refusal of untrusted issuers.",
+      "outside_axiom": "Partner integration and partner policy.",
+      "axiom_profile": "none selected",
+      "implementation_status": "Open decision",
+      "evidence_level": "negative-only",
+      "examples": [
+        "consumer_contracts.c04_untrusted_issuers"
+      ],
+      "open_decisions": [
+        "D-S08/S16 cross-boundary issuer/partner trust profile"
+      ]
+    },
+    {
+      "id": "S09",
+      "title": "A user logs out while agents are still working",
+      "population": "workforce",
+      "axiom_issuer_scope": "Successful logout revokes the intended durable authority; affected exchange/introspection denies and independent sessions follow the documented policy.",
+      "outside_axiom": "Consumer frequency of status checking and stopping active work.",
+      "axiom_profile": "OIDC RP-Initiated Logout (POST) ends the durable session; derived tokens inactive online",
+      "implementation_status": "Done",
+      "evidence_level": "issuer contract executed",
+      "examples": [
+        "oauth.o06_introspection_revocation_logout",
+        "consumer_contracts.c01_receiver_enforcement",
+        "basics.b10_sessions_and_lifecycle"
+      ],
+      "open_decisions": []
+    },
+    {
+      "id": "S10",
+      "title": "A human in the loop and a record afterwards",
+      "population": "workforce+workload",
+      "axiom_issuer_scope": "If the existing optional approved-action issuance profile is retained, test that it accepts only authenticated, bounded approval evidence and cannot be widened through token issuance. Do not make business-field interpretation a generic IdP requirement.",
+      "outside_axiom": "Approval UI, exact business-action canonicalization, approval decision, workflow and receiver idempotency.",
+      "axiom_profile": "Axiom approved-action issuance profile (Phase 3.8; ActionApprovalIT, ApprovedActionUseTimeIT, IssuanceCommitBoundaryIT)",
+      "implementation_status": "Retained optional extension",
+      "evidence_level": "Java IT evidence only (no Python contract)",
+      "examples": [],
+      "open_decisions": []
+    },
+    {
+      "id": "S11",
+      "title": "An agent misbehaves halfway through a request",
+      "population": "workforce+ciam+workload",
+      "axiom_issuer_scope": "Revoke the applicable client, grant, token or supported opaque context and prevent reissuance from revoked authority. Test independent grants remain usable.",
+      "outside_axiom": "Misbehavior detection, business branch relationships and cancelling running compute.",
+      "axiom_profile": "session/grant/client/workload revocation re-checked at exchange and introspection",
+      "implementation_status": "Done",
+      "evidence_level": "issuer contract executed",
+      "examples": [
+        "oauth.o06_introspection_revocation_logout",
+        "ciam.b08_consent_grants",
+        "basics.b09_workloads_and_edges",
+        "consumer_contracts.c02_one_workload_many_subjects"
+      ],
+      "open_decisions": []
+    },
+    {
+      "id": "S12",
+      "title": "Long-running work",
+      "population": "workforce+workload",
+      "axiom_issuer_scope": "Valid renewal/resume authority survives the agreed restart; expired credentials alone cannot renew; cancelled grants cannot revive.",
+      "outside_axiom": "Durable workflow execution and callback processing.",
+      "axiom_profile": "standing grant renewal handle with rotation and reuse revocation",
+      "implementation_status": "Done",
+      "evidence_level": "issuer contract executed; restart survival and non-revival exercised in the opt-in disruptive test",
+      "examples": [
+        "oauth.o07_renewal",
+        "tests/test_disruptive.py"
+      ],
+      "open_decisions": []
+    },
+    {
+      "id": "S13",
+      "title": "Acting for a person who is not there",
+      "population": "workforce",
+      "axiom_issuer_scope": "Explicit, bounded standing consent/renewal authority; wrong client and expired/withdrawn authority denied without requiring an interactive user at every call.",
+      "outside_axiom": "Scheduling and business approval collection.",
+      "axiom_profile": "standing grant (explicit, bounded, withdrawable)",
+      "implementation_status": "Done",
+      "evidence_level": "issuer contract executed",
+      "examples": [
+        "oauth.o07_renewal"
+      ],
+      "open_decisions": []
+    },
+    {
+      "id": "S14",
+      "title": "One agent serving many people",
+      "population": "workforce+ciam+workload",
+      "axiom_issuer_scope": "Concurrent calls from one workload client for two subjects and tenants with distinct grants; prevent subject, grant, context and token mix-ups. Test selective revocation.",
+      "outside_axiom": "Agent memory, result and cache isolation.",
+      "axiom_profile": "per-subject exchange keyed by sub + sid/delegation_id + tenant_id; tenant-scoped clients",
+      "implementation_status": "Done (tenant-scoped clients; see evidence_level)",
+      "evidence_level": "issuer contract executed: 60 concurrent exchanges by workloads in two tenants (two people, three customers) with zero subject/grant/tenant mix-ups, 10 concurrent cross-tenant exchange attempts refused, cross-tenant introspection active=false, selective revocation. A single client spanning two tenants does not exist in Axiom (clients are tenant-scoped), so that literal form is not applicable rather than proven.",
+      "examples": [
+        "consumer_contracts.c02_one_workload_many_subjects"
+      ],
+      "open_decisions": []
+    },
+    {
+      "id": "S15",
+      "title": "An agent for a team, not a person",
+      "population": "workforce",
+      "axiom_issuer_scope": "Actual group/membership/role and accountable service-identity contracts; membership removal affects only the authority it governs. Do not invent a team subject from client credentials.",
+      "outside_axiom": "Agent ownership reviews and team governance.",
+      "axiom_profile": "application roles/memberships; teams grant nothing by themselves",
+      "implementation_status": "Done",
+      "evidence_level": "issuer contract executed",
+      "examples": [
+        "basics.b04_roles_and_entitlements",
+        "basics.b05_groups"
+      ],
+      "open_decisions": []
+    },
+    {
+      "id": "S16",
+      "title": "An outside company's agent asks to check an order",
+      "population": "external",
+      "axiom_issuer_scope": "Selected partner assertion/client trust, mapping and narrow issuance; wrong issuer, partner, audience and revoked trust denied.",
+      "outside_axiom": "Partner onboarding agreement and order authorization.",
+      "axiom_profile": "none selected",
+      "implementation_status": "Open decision",
+      "evidence_level": "negative-only",
+      "examples": [
+        "consumer_contracts.c04_untrusted_issuers"
+      ],
+      "open_decisions": [
+        "D-S08/S16 partner assertion/client trust profile"
+      ]
+    },
+    {
+      "id": "S17",
+      "title": "Agents on platforms you do not control",
+      "population": "external workload",
+      "axiom_issuer_scope": "Selected external workload identity verification and mapping, separate from represented human/customer authority; reject fake or replayed assertions.",
+      "outside_axiom": "Hosting platform and its identity issuance.",
+      "axiom_profile": "workload-federation client assertion framework present; no provider profile configured",
+      "implementation_status": "Open decision",
+      "evidence_level": "negative-only",
+      "examples": [
+        "consumer_contracts.c04_untrusted_issuers"
+      ],
+      "open_decisions": [
+        "D-S17 external workload identity provider profile"
+      ]
+    },
+    {
+      "id": "S18",
+      "title": "Stronger proof for sensitive steps",
+      "population": "workforce",
+      "axiom_issuer_scope": "Verify trusted authentication strength/freshness and preserve permitted assurance through exchange. Reject caller-written assurance and stale authentication. Label stub upstream evidence; native MFA/passkeys remain deferred.",
+      "outside_axiom": "Real external MFA ceremony and sensitive-operation enforcement.",
+      "axiom_profile": "acr=urn:openwolf:axiom:acr:pwd, amr=[pwd], auth_time on interactive login; preserved through exchange; caller-supplied acr ignored",
+      "implementation_status": "Partial (native MFA deferred)",
+      "evidence_level": "issuer contract executed for password assurance",
+      "examples": [
+        "consumer_contracts.c05_authentication_assurance"
+      ],
+      "open_decisions": [
+        "D-S18 assurance vocabulary and authenticators (D-5)"
+      ]
+    },
+    {
+      "id": "S19",
+      "title": "The agent is tricked, not hacked",
+      "population": "workforce+workload",
+      "axiom_issuer_scope": "Tokens stay within the authorized audience/scope/grant ceiling; malicious requests cannot turn read authority into write authority. Agent-authored text is not proof of permission.",
+      "outside_axiom": "Prompt-injection defenses and business-intent policy.",
+      "axiom_profile": "scope/audience/grant ceilings at issuance",
+      "implementation_status": "Done",
+      "evidence_level": "issuer contract executed (receiver simulated)",
+      "examples": [
+        "oauth.o05_token_exchange",
+        "consumer_contracts.c01_receiver_enforcement"
+      ],
+      "open_decisions": []
+    },
+    {
+      "id": "S20",
+      "title": "The life of an agent identity",
+      "population": "workload",
+      "axiom_issuer_scope": "Provision, rotate, suspend, reactivate where allowed, retire and audit a generic workload client; test old credentials and outstanding-token status without reviving retired identities.",
+      "outside_axiom": "Agent inventory, deployment and review workflow.",
+      "axiom_profile": "workload register/suspend/reactivate/retire; two-person secret rotation with overlap",
+      "implementation_status": "Done",
+      "evidence_level": "issuer contract executed",
+      "examples": [
+        "basics.b09_workloads_and_edges",
+        "oauth.o08_key_and_credential_lifecycle",
+        "oauth.o04_client_credentials"
+      ],
+      "open_decisions": []
+    },
+    {
+      "id": "S21",
+      "title": "Break-glass",
+      "population": "workforce",
+      "axiom_issuer_scope": "If the existing optional emergency issuance profile is retained, test authenticated grant input, narrow audience/scope, short expiry, revocation and issuer audit. Do not require a generic IdP to understand incident policy or self-approval.",
+      "outside_axiom": "Incident approval, self-approval prohibition, emergency business policy and post-incident review.",
+      "axiom_profile": "no emergency token-issuance profile in Axiom (Policy Studio break-glass is a separate policy-administration feature)",
+      "implementation_status": "Outside generic IdP",
+      "evidence_level": "not applicable",
+      "examples": [],
+      "open_decisions": []
+    }
+  ]
+}

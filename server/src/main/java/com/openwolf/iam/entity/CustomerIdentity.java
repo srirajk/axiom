@@ -23,6 +23,8 @@ public class CustomerIdentity {
     @Column(name = "tenant_id", nullable = false) private String tenantId;
     @Column(nullable = false) private String email;
     @Column(name = "display_name", nullable = false) private String displayName;
+    @Column(name = "given_name") private String givenName;
+    @Column(name = "family_name") private String familyName;
     @Column(name = "password_hash", nullable = false) private String passwordHash;
     @Enumerated(EnumType.STRING) @Column(nullable = false) private Status status;
     @Column(name = "email_verified_at") private Instant emailVerifiedAt;
@@ -48,10 +50,26 @@ public class CustomerIdentity {
         this.tokenVersion = 1;
     }
 
+    public CustomerIdentity(String tenantId, String email, String displayName, String givenName,
+                            String familyName, String passwordHash, Instant now) {
+        this(tenantId, email, displayName, passwordHash, now);
+        this.givenName = givenName;
+        this.familyName = familyName;
+    }
+
     /** An administrator-provisioned identity: still pending verification until the customer proves the address. */
     public static CustomerIdentity provisionedByAdministrator(String tenantId, String email, String displayName,
                                                               String passwordHash, Instant now) {
         CustomerIdentity identity = new CustomerIdentity(tenantId, email, displayName, passwordHash, now);
+        identity.provisioningSource = ProvisioningSource.ADMINISTRATOR;
+        return identity;
+    }
+
+    public static CustomerIdentity provisionedByAdministrator(String tenantId, String email, String displayName,
+                                                              String givenName, String familyName,
+                                                              String passwordHash, Instant now) {
+        CustomerIdentity identity = new CustomerIdentity(tenantId, email, displayName,
+                givenName, familyName, passwordHash, now);
         identity.provisioningSource = ProvisioningSource.ADMINISTRATOR;
         return identity;
     }
@@ -92,6 +110,8 @@ public class CustomerIdentity {
     public String getTenantId() { return tenantId; }
     public String getEmail() { return email; }
     public String getDisplayName() { return displayName; }
+    public String getGivenName() { return givenName; }
+    public String getFamilyName() { return familyName; }
     public String getPasswordHash() { return passwordHash; }
     public Status getStatus() { return status; }
     public Instant getEmailVerifiedAt() { return emailVerifiedAt; }

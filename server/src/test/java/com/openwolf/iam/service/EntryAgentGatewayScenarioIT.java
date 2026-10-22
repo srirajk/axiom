@@ -66,6 +66,7 @@ class EntryAgentGatewayScenarioIT {
     private static final String TENANT_A = "scn-a";
     private static final String TENANT_B = "scn-b";
     private static final String SCOPE = "scn:invoke";
+    private static final String BROKER_SCOPE = "scn:broker.invoke";
     private static final String CALLBACK = "http://127.0.0.1:9/callback";
     private static final String TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange";
     private static final String ACCESS_TOKEN = "urn:ietf:params:oauth:token-type:access_token";
@@ -101,7 +102,7 @@ class EntryAgentGatewayScenarioIT {
         registry.add("iam.signing-key-allow-generation", () -> "true");
         registry.add("iam.secrets.master-key", EntryAgentGatewayScenarioIT::randomKey);
         registry.add("axiom.bootstrap.enabled", () -> "false");
-        registry.add("iam.oauth2.approved-business-scopes", () -> SCOPE);
+        registry.add("iam.oauth2.approved-business-scopes", () -> SCOPE + "," + BROKER_SCOPE);
         registry.add("iam.policy-studio.base-bundle-dir",
                 () -> Path.of("..", "platform-policy", "policies").toAbsolutePath().normalize().toString());
     }
@@ -179,9 +180,101 @@ class EntryAgentGatewayScenarioIT {
         assertThat(aud(ag)).containsExactly(w.gatewayAudience);
         assertThat(ag).containsEntry("tenant_id", TENANT_A).containsEntry("sub", w.agentSvc.clientId)
                 .containsEntry("token_use", "gateway_authorization")
-                .containsEntry("authority_id", w.agentToGatewayRoute);
-        assertActor(ag, w.agentWorkloadRef, w.agentSvc.clientId, w.agentWorkloadId);
+                .containsEntry("authority_id", w.agentToGatewayRoute)
+                .as("standards-first: a service acting only for itself has no actor").doesNotContainKey("act");
         // Broker identity is registered but never used here: its exchange is Argus Gateway's step.
+    }
+
+    @Test
+    void brokerOwnedTargetSupportsOnwardExchangeAndRevocationWithoutSourceTargetRoute() throws Exception {
+        World w = world(TENANT_A, "scn-admin-a");
+        String delegated = exchange(w.entrySvc, w.humanToken, w.entryAudience, SCOPE)
+                .get("access_token").asText();
+        String gatewayToken = exchange(w.entrySvc, delegated, w.gatewayAudience, SCOPE)
+                .get("access_token").asText();
+
+        assertDenied(exchangeRaw(w.brokerSvc, gatewayToken, w.agentAudience, SCOPE), "invalid_target");
+        String base = "/admin/tenants/" + TENANT_A + "/agent-exchange";
+        String targetId = body(send(post(base + "/brokers/" + w.brokerId + "/targets"), w.admin, Map.of(
+                "audience", w.agentAudience, "destinationType", "AGENT",
+                "destinationWorkloadId", w.agentWorkloadId, "scopes", List.of(SCOPE),
+                "purpose", "scenario broker target")), 201).get("id").asText();
+
+        String onward = exchange(w.brokerSvc, gatewayToken, w.agentAudience, SCOPE)
+                .get("access_token").asText();
+        Map<String, Object> claims = claims(onward);
+        assertThat(claims).containsEntry("sub", w.human).containsEntry("client_id", w.brokerSvc.clientId)
+                .containsEntry("authority_id", "broker-target:" + targetId)
+                .containsEntry("token_use", "exchange_subject");
+        assertThat(claims.get("scope")).isEqualTo(List.of(SCOPE));
+        assertThat(aud(claims)).containsExactly(w.agentAudience);
+        assertActor(claims, w.entryWorkloadRef, w.entrySvc.clientId, w.entryWorkloadId);
+
+        String continued = exchange(w.agentSvc, onward, w.gatewayAudience, SCOPE)
+                .get("access_token").asText();
+        assertThat(aud(claims(continued))).containsExactly(w.gatewayAudience);
+
+        // Even a still-active old per-source target route cannot undo an explicit broker-target revocation.
+        body(send(post(base + "/routes"), w.admin, Map.of(
+                "sourceWorkloadId", w.entryWorkloadId, "destinationType", "AGENT",
+                "destinationWorkloadId", w.agentWorkloadId, "audience", w.agentAudience,
+                "scopes", List.of(SCOPE), "purpose", "legacy migration route",
+                "expiresAt", Instant.now().plusSeconds(3600).toString())), 201);
+        body(send(post(base + "/brokers/" + w.brokerId + "/targets/" + targetId + "/revoke"),
+                w.admin, Map.of()), 200);
+        assertDenied(exchangeRaw(w.brokerSvc, gatewayToken, w.agentAudience, SCOPE), "invalid_target");
+        assertDenied(exchangeRaw(w.agentSvc, onward, w.gatewayAudience, SCOPE), "invalid_grant");
+    }
+
+    @Test
+    void revokedGatewayEntryRouteInvalidatesAlreadyIssuedBrokerTargetToken() throws Exception {
+        World w = world(TENANT_A, "scn-admin-a");
+        String ownToken = clientCredentials(w.agentSvc, SCOPE).get("access_token").asText();
+        String gatewayToken = exchange(w.agentSvc, ownToken, w.gatewayAudience, SCOPE)
+                .get("access_token").asText();
+        String base = "/admin/tenants/" + TENANT_A + "/agent-exchange";
+        String targetId = body(send(post(base + "/brokers/" + w.brokerId + "/targets"), w.admin, Map.of(
+                "audience", w.agentAudience, "destinationType", "AGENT",
+                "destinationWorkloadId", w.agentWorkloadId, "scopes", List.of(SCOPE),
+                "purpose", "entry route revocation scenario")), 201).get("id").asText();
+
+        String issued = exchange(w.brokerSvc, gatewayToken, w.agentAudience, SCOPE)
+                .get("access_token").asText();
+        assertThat(claims(issued)).containsEntry("sub", w.agentSvc.clientId)
+                .containsEntry("authority_id", "broker-target:" + targetId)
+                .containsEntry("source_workload_id", w.agentWorkloadId)
+                .containsEntry("source_gateway_route_id", w.agentToGatewayRoute)
+                .doesNotContainKey("act");
+        assertThat(introspect(w.agentSvc, issued).path("active").asBoolean()).isTrue();
+
+        body(send(post(base + "/routes/" + w.agentToGatewayRoute + "/revoke"), w.admin, Map.of()), 200);
+        assertThat(introspect(w.agentSvc, issued).path("active").asBoolean()).isFalse();
+        assertDenied(exchangeRaw(w.agentSvc, issued, w.gatewayAudience, SCOPE), "invalid_grant");
+    }
+
+    @Test
+    void brokerOwnedResourceTargetNeedsNoPerSourceRouteAndKeepsOneAudience() throws Exception {
+        World w = world(TENANT_A, "scn-admin-a");
+        String delegated = exchange(w.entrySvc, w.humanToken, w.entryAudience, SCOPE)
+                .get("access_token").asText();
+        String gatewayToken = exchange(w.entrySvc, delegated, w.gatewayAudience, SCOPE)
+                .get("access_token").asText();
+        String resourceAudience = "agent:" + TENANT_A + ":" + w.suffix + "-spare";
+        assertDenied(exchangeRaw(w.brokerSvc, gatewayToken, resourceAudience, SCOPE), "invalid_target");
+        String base = "/admin/tenants/" + TENANT_A + "/agent-exchange/brokers/" + w.brokerId + "/targets";
+        String targetId = body(send(post(base), w.admin, Map.of(
+                "audience", resourceAudience, "destinationType", "RESOURCE", "scopes", List.of(SCOPE),
+                "purpose", "resource exchange scenario")), 201).get("id").asText();
+
+        String issued = exchange(w.brokerSvc, gatewayToken, resourceAudience, SCOPE)
+                .get("access_token").asText();
+        Map<String, Object> resource = claims(issued);
+        assertThat(resource).containsEntry("sub", w.human).containsEntry("client_id", w.brokerSvc.clientId)
+                .containsEntry("token_use", "delegated_access")
+                .containsEntry("authority_id", "broker-target:" + targetId);
+        assertThat(aud(resource)).containsExactly(resourceAudience);
+        assertActor(resource, w.entryWorkloadRef, w.entrySvc.clientId, w.entryWorkloadId);
+        assertDenied(exchangeRaw(w.spareSvc, gatewayToken, resourceAudience, SCOPE), null);
     }
 
     // =================================================================================================================
@@ -317,7 +410,7 @@ class EntryAgentGatewayScenarioIT {
         String suffix, admin, human, humanToken;
         String entryApp, agentApp, entryAudience, entryWebClient, entryWorkloadRef, entryWorkloadId;
         String agentAudience, agentWorkloadRef, agentWorkloadId;
-        String gatewayAudience, entryToGatewayRoute, agentToGatewayRoute;
+        String gatewayAudience, entryToGatewayRoute, agentToGatewayRoute, brokerId;
         Svc entrySvc, agentSvc, brokerSvc, spareSvc;
     }
 
@@ -336,7 +429,7 @@ class EntryAgentGatewayScenarioIT {
         w.agentSvc = confidentialClient(w.admin, tenant, w.agentApp, w.suffix + "-agent-svc");
         w.gatewayAudience = "gw:" + tenant + ":" + w.suffix + "-gateway";
         String gatewayApp = app(w.admin, tenant, w.suffix + "-gateway", w.gatewayAudience);
-        w.brokerSvc = confidentialClient(w.admin, tenant, gatewayApp, w.suffix + "-broker");
+        w.brokerSvc = confidentialClient(w.admin, tenant, gatewayApp, w.suffix + "-broker", List.of(BROKER_SCOPE));
         String spareApp = app(w.admin, tenant, w.suffix + "-spare", "agent:" + tenant + ":" + w.suffix + "-spare");
         w.spareSvc = confidentialClient(w.admin, tenant, spareApp, w.suffix + "-spare-svc");
 
@@ -348,8 +441,9 @@ class EntryAgentGatewayScenarioIT {
         w.agentWorkloadId = body(send(post(base + "/ciam/agent-workloads"), w.admin, Map.of(
                 "workloadRef", w.agentWorkloadRef, "name", "Agent", "oauthClientId", w.agentSvc.clientId)),
                 201).get("id").asText();
-        body(send(post(base + "/agent-exchange/brokers"), w.admin, Map.of("oauthClientId", w.brokerSvc.clientId,
-                "gatewayAudience", w.gatewayAudience, "scopes", List.of(SCOPE))), 201);
+        w.brokerId = body(send(post(base + "/agent-exchange/brokers"), w.admin, Map.of(
+                "oauthClientId", w.brokerSvc.clientId, "gatewayAudience", w.gatewayAudience,
+                "scopes", List.of(BROKER_SCOPE))), 201).get("id").asText();
         w.entryToGatewayRoute = route(w.admin, tenant, w.entryWorkloadId, w.gatewayAudience);
         w.agentToGatewayRoute = route(w.admin, tenant, w.agentWorkloadId, w.gatewayAudience);
 
@@ -375,9 +469,14 @@ class EntryAgentGatewayScenarioIT {
     }
 
     private Svc confidentialClient(String admin, String tenant, String appId, String clientId) throws Exception {
+        return confidentialClient(admin, tenant, appId, clientId, List.of(SCOPE));
+    }
+
+    private Svc confidentialClient(String admin, String tenant, String appId, String clientId,
+                                   List<String> scopes) throws Exception {
         JsonNode created = body(send(post("/admin/tenants/" + tenant + "/applications/" + appId + "/clients"), admin,
                 Map.of("clientId", clientId, "clientType", "CONFIDENTIAL_SERVICE", "redirectUris", List.of(),
-                        "postLogoutRedirectUris", List.of(), "scopes", List.of(SCOPE))), 201);
+                        "postLogoutRedirectUris", List.of(), "scopes", scopes)), 201);
         return new Svc(tenant, clientId, created.get("client").get("id").asText(), created.get("serviceSecret").asText());
     }
 
@@ -465,6 +564,15 @@ class EntryAgentGatewayScenarioIT {
         assertThat(r.getResponse().getStatus()).as("exchange: %s", r.getResponse().getContentAsString())
                 .isEqualTo(200);
         return json.readTree(r.getResponse().getContentAsString());
+    }
+
+    private JsonNode introspect(Svc requester, String token) throws Exception {
+        MvcResult result = mvc.perform(post("/oauth/introspect")
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .header(HttpHeaders.AUTHORIZATION, basic(requester))
+                .param("token", token)).andReturn();
+        assertThat(result.getResponse().getStatus()).as("introspection").isEqualTo(200);
+        return json.readTree(result.getResponse().getContentAsString());
     }
 
     private MvcResult clientCredentialsRaw(Svc client, String scope) throws Exception {

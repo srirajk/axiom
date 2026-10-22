@@ -1,0 +1,9 @@
+# Person profile contract
+
+Axiom stores a stable subject separately from a person's display name. A display-name override takes precedence; otherwise `name` is derived from available `given_name` and `family_name`. Existing records without name data are not split from sign-in IDs or assigned invented names. SCIM-owned `displayName` and structured `name` remain under SCIM control.
+
+Human OIDC ID tokens and UserInfo return available `name`, `given_name`, `family_name`, and `preferred_username` when `profile` is granted. `email` is disclosed under `email`; `email_verified` is returned only if verification state is actually recorded. Human access tokens retain their existing name projection, now using the full name. Machine client-credentials tokens do not receive human profile claims; `sub` and `client_id` remain their identifiers.
+
+An active confidential service client registered with `users.read_profile` can call `POST /admin/users/lookup` with `{"subjects":["subject-1","subject-2"]}` (1–200 subjects). The result is an array of `{subject,name,given_name,family_name,email}` for subjects in that client's own tenant. Unknown or other-tenant subjects are omitted; duplicates are returned once in input order. `GET /admin/groups/{id}/members` returns the same projection for a tenant-local group. Neither endpoint grants general admin access. A user can still read their own `/users/{id}` record; reading another user's record requires an admin role.
+
+Workforce administration accepts `givenName`, `familyName`, and optional `name` on user creation and update. An empty `name` on update clears the override. CIAM registration and administrator provisioning accept optional `givenName` and `familyName`; if `displayName` is absent, the available structured parts produce it. Existing CIAM rows retain their display names and may have no structured parts until updated through an owned source. Migration V44 adds nullable customer name columns.

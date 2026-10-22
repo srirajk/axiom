@@ -76,6 +76,8 @@ class IdpBaselineIT extends AuthorityITSupport {
         String customerClient = interactiveClient(t, appId, t.s + "-shop-web", "PUBLIC_BROWSER", "CUSTOMER",
                 List.of("openid", "email", "profile", READ), Map.of());
         Customer c = activeCustomer(t, "carol");
+        jdbc.update("UPDATE customer_identities SET given_name = ?, family_name = ? WHERE id = ?::uuid",
+                "Carol", "Rivera", c.id());
 
         Login login = customerLogin(customerClient, c, "openid email profile " + READ);
         JsonNode tokens = tokenResponse(redeemPublic(customerClient, login));
@@ -87,6 +89,8 @@ class IdpBaselineIT extends AuthorityITSupport {
         Map<String, Object> id = claims(tokens.get("id_token").asText());
         assertThat(id.get("sub")).isEqualTo(c.id());
         assertThat(id.get("email")).isEqualTo(c.email());
+        assertThat(id.get("given_name")).isEqualTo("Carol");
+        assertThat(id.get("family_name")).isEqualTo("Rivera");
         assertThat(id.get("nonce")).isEqualTo("n-" + login.state());
         assertThat(introspect(introspector(t), tokens.get("access_token").asText()).path("active").asBoolean()).isTrue();
 

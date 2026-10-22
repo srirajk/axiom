@@ -125,7 +125,7 @@ public class StandingGrantService {
         String tenantId = requiredClaim(owner, "tenant_id");
         String ownerId = owner.getSubject();
         // Explicit owner approval: the owner's own interactive authentication, recently, never a delegated token.
-        if (owner.getClaims().containsKey("act")
+        if (owner.getClaims().containsKey("act") || owner.getClaims().containsKey("token_use")
                 || !AuthenticationAssurance.satisfies(owner, Set.of(AuthenticationAssurance.PASSWORD), approvalMaxAuthAge, now)) {
             throw new AccessDeniedException("standing-grant approval requires recent interactive authentication");
         }
@@ -137,7 +137,7 @@ public class StandingGrantService {
                 .orElseThrow(() -> new IllegalArgumentException("agent workload client is not active"));
         TreeSet<String> scopes = new TreeSet<>();
         for (String scope : requestedScopes) scopes.add(scope.trim());
-        if (scopes.isEmpty() || scopes.stream().anyMatch(s -> s.isBlank() || !businessScopes.isApproved(s))
+        if (scopes.isEmpty() || scopes.stream().anyMatch(s -> s.isBlank() || !businessScopes.isApproved(tenantId, s))
                 || !client.scopes().containsAll(scopes)) {
             throw new IllegalArgumentException("standing scopes must be approved scopes of the agent client");
         }

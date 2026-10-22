@@ -110,20 +110,39 @@ public class OidcClaimEnricher {
             throw new IllegalStateException("ID-token subject is not an active Axiom principal");
         }
 
+        Map<String, Object> attrs = parseAttributes(principal.getAttributes());
         if (principal.getEmail() != null && !principal.getEmail().isBlank()) {
             claims.put("email", principal.getEmail());
-            claims.put("email_verified", true);
+            // A provisioned address is not automatically proof of mailbox verification.
+            if (attrs.get("email_verified") instanceof Boolean verified) {
+                claims.put("email_verified", verified);
+            }
         }
         claims.put("preferred_username", principal.getUsername());
 
-        Map<String, Object> attrs = parseAttributes(principal.getAttributes());
-        Object displayName = attrs.get("display_name");
-        claims.put("name", (displayName != null && !displayName.toString().isBlank())
-                ? displayName.toString() : principal.getUsername());
+        claims.putAll(PersonProfile.claims(attrs));
 
         log.debug("ID-token enriched for sub={} email={} name={}",
                 subject, claims.get("email"), claims.get("name"));
         return claims;
+    }
+
+    /** OIDC identity claims are disclosed only under their respective authorized scopes. */
+    @Transactional(readOnly = true)
+    public Map<String, Object> enrichIdToken(String subject, Set<String> authorizedScopes) {
+        Map<String, Object> all = enrichIdToken(subject);
+        Map<String, Object> scoped = new HashMap<>();
+        if (authorizedScopes.contains("profile")) {
+            for (String key : List.of("name", "given_name", "family_name", "preferred_username")) {
+                if (all.containsKey(key)) scoped.put(key, all.get(key));
+            }
+        }
+        if (authorizedScopes.contains("email")) {
+            for (String key : List.of("email", "email_verified")) {
+                if (all.containsKey(key)) scoped.put(key, all.get(key));
+            }
+        }
+        return scoped;
     }
 
     private Map<String, Object> parseAttributes(String json) {

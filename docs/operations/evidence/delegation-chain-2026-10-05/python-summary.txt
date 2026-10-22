@@ -1,0 +1,2 @@
+# AXIOM_COOKBOOK_ALLOW_DISRUPTIVE=1 .venv/bin/python -m pytest -q -rs tests/ (disposable estate, jar sha256 1b2694a4...)
+76 passed in 593.67s (0:09:53), exit 0 (includes tests/test_package_d.py::test_example[consumer_contracts.c06_delegation_chain])

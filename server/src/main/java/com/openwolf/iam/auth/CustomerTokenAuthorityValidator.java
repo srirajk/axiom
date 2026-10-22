@@ -55,7 +55,8 @@ public final class CustomerTokenAuthorityValidator implements OAuth2TokenValidat
 
     @Override
     public OAuth2TokenValidatorResult validate(Jwt token) {
-        if (token.getClaims().containsKey("act") || token.getClaims().containsKey("delegation_id")) {
+        if (token.getClaims().containsKey("act") || token.getClaims().containsKey("delegation_id")
+                || token.getClaims().containsKey("token_use")) {
             return delegatedPassThrough ? OAuth2TokenValidatorResult.success() : failure();
         }
         try {
@@ -78,7 +79,7 @@ public final class CustomerTokenAuthorityValidator implements OAuth2TokenValidat
                     .filter(authority -> authority.tenantId().equals(tenantId)).orElse(null);
             Set<String> scopes = scopes(token);
             if (client == null || scopes.isEmpty() || !client.scopes().containsAll(scopes)
-                    || scopes.stream().anyMatch(scope -> !businessScopes.isApproved(scope))) return failure();
+                    || scopes.stream().anyMatch(scope -> !businessScopes.isApproved(tenantId, scope))) return failure();
             return OAuth2TokenValidatorResult.success();
         } catch (RuntimeException invalid) {
             return failure();

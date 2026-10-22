@@ -101,6 +101,11 @@ config:
   approvedBusinessScopes: cards:incident.read,cards:freeze.propose
   ciam:
     localDemoChallengeDisclosure: false
+    demoAdminActivation:
+      enabled: false
+      allowedTenant: ""
+      allowedEmailDomain: ""
+      allowedIssuer: ""
     tenantId: meridian
     customerClientId: ciam-card-customer-spa
     customerScopes: cards:incident.read

@@ -84,6 +84,10 @@ export interface User {
   id: string
   username: string
   email: string
+  name?: string | null
+  givenName?: string | null
+  familyName?: string | null
+  displayNameOverride?: string | null
   roles: string[]
   segments: string[]
   clearance?: number
@@ -101,12 +105,18 @@ export interface CreateUserInput {
   email: string
   password: string
   attributes: Record<string, unknown>
+  givenName?: string
+  familyName?: string
+  name?: string
 }
 
 export interface UpdateUserInput {
   email?: string
   isActive?: boolean
   attributes?: Record<string, unknown>
+  givenName?: string
+  familyName?: string
+  name?: string
 }
 
 export interface AuditEntry {

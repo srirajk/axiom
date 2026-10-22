@@ -56,6 +56,14 @@ spec:
               protocol: TCP
           env:
             {{- include "axiom.commonEnv" . | nindent 12 }}
+            - name: IAM_CIAM_DEMO_ADMIN_ACTIVATION_ENABLED
+              value: {{ .Values.config.ciam.demoAdminActivation.enabled | quote }}
+            - name: IAM_CIAM_DEMO_ADMIN_ACTIVATION_ALLOWED_TENANT
+              value: {{ .Values.config.ciam.demoAdminActivation.allowedTenant | quote }}
+            - name: IAM_CIAM_DEMO_ADMIN_ACTIVATION_ALLOWED_EMAIL_DOMAIN
+              value: {{ .Values.config.ciam.demoAdminActivation.allowedEmailDomain | quote }}
+            - name: IAM_CIAM_DEMO_ADMIN_ACTIVATION_ALLOWED_ISSUER
+              value: {{ .Values.config.ciam.demoAdminActivation.allowedIssuer | quote }}
             - name: JAVA_TOOL_OPTIONS
               value: {{ .Values.server.javaToolOptions | quote }}
           startupProbe:

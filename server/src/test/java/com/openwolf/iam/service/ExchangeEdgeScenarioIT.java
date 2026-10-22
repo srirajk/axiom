@@ -263,13 +263,13 @@ class ExchangeEdgeScenarioIT {
         Map<String, Object> g = claims(toGateway);
         assertThat(g).containsEntry("sub", w.agent.clientId).containsEntry("identity_kind", "workload")
                 .containsEntry("token_use", "gateway_authorization").containsEntry("authority_id", w.r3);
-        assertServiceActor(g, w.agent);
+        assertActsForItself(g, w.agent);
         Map<String, Object> resource = claims(token(exchange(w.broker, toGateway, w.toolAud, SCOPE)));
         assertThat(aud(resource)).containsExactly(w.toolAud);
         assertThat(resource).containsEntry("sub", w.agent.clientId).containsEntry("identity_kind", "workload")
                 .containsEntry("client_id", w.broker.clientId).containsEntry("token_use", "delegated_access")
                 .containsEntry("authority_id", w.r4);
-        assertServiceActor(resource, w.agent);
+        assertActsForItself(resource, w.agent);
         assertThat(resource.get("client_id")).as("the broker redeems but is never the actor").isNotEqualTo(w.agent.clientId);
         assertThat(number(resource, "exp")).isLessThanOrEqualTo(number(g, "exp"));
         // No Agent -> Agent route, and the service token is not a broker input.
@@ -705,11 +705,10 @@ class ExchangeEdgeScenarioIT {
 
     /** An autonomous workload is both the service subject and the actor; the act claim still names it exactly. */
     @SuppressWarnings("unchecked")
-    private void assertServiceActor(Map<String, Object> claims, Svc actor) {
-        Map<String, Object> act = (Map<String, Object>) claims.get("act");
-        assertThat(act).containsEntry("sub", actor.workloadRef()).containsEntry("client_id", actor.clientId())
-                .containsEntry("workload_id", actor.workloadId());
-        assertThat(claims.get("sub")).isEqualTo(actor.clientId());
+    /** Standards-first (RFC 8693 section 4.1): a service acting only for itself is the subject and has no actor. */
+    private void assertActsForItself(Map<String, Object> claims, Svc service) {
+        assertThat(claims).doesNotContainKey("act");
+        assertThat(claims.get("sub")).isEqualTo(service.clientId);
     }
 
     // =================================================================================================================

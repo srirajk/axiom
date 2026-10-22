@@ -27,6 +27,13 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 class CustomerAdministratorProvisioningIT extends AuthorityITSupport {
 
     @Test
+    void demoActivationEndpointIsAbsentWithTheDefaultConfiguration() throws Exception {
+        Tenant t = tenant("p3b-admprov-default");
+        assertThat(send(post(base(t) + "/ciam/demo-customers/activate"), t.admin,
+                Map.of("emails", List.of("demo@p3.invalid"))).getResponse().getStatus()).isEqualTo(404);
+    }
+
+    @Test
     void anAdministratorProvisionsAnUnverifiedPendingCustomerWithoutSeeingAnyCode() throws Exception {
         Tenant t = tenant("p3b-admprov");
         Tenant other = tenant("p3b-admprov-other");

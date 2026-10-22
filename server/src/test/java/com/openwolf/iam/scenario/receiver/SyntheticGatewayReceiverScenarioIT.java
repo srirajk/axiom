@@ -352,7 +352,7 @@ class SyntheticGatewayReceiverScenarioIT {
         Map<String, Object> principal = f.toolReceiver.acceptedPrincipals.getFirst();
         assertThat(principal).containsEntry("sub", w.agent.clientId).containsEntry("identity_kind", "workload")
                 .containsEntry("client_id", w.broker.clientId).containsEntry("token_use", "delegated_access");
-        assertThat(actor(principal)).containsEntry("client_id", w.agent.clientId);
+        assertThat(principal).as("a service acting for itself has no actor").doesNotContainKey("act");
         // The service token itself is never accepted in place of the broker-issued resource token.
         assertThat(f.toolReceiver.handle(Request.of("/tool", "Authorization", "Bearer " + own)).status()).isIn(401, 403);
         assertThat(f.toolDownstream.received).hasSize(1);

@@ -20,6 +20,8 @@ import org.testcontainers.utility.DockerImageName;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.file.Path;
+import java.security.SecureRandom;
+import java.util.Base64;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -36,6 +38,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @SpringBootTest(classes = IamApplication.class, webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @Import(ProvisioningSagaConcurrencyIT.ConcurrencyLedgerConfiguration.class)
 class ProvisioningSagaConcurrencyIT {
+
+    private static final String TEST_MASTER_KEY = testMasterKey();
+
+    private static String testMasterKey() {
+        byte[] bytes = new byte[32];
+        new SecureRandom().nextBytes(bytes);
+        return Base64.getEncoder().encodeToString(bytes);
+    }
 
     @Container
     static final GenericContainer<?> POSTGRES = new GenericContainer<>(DockerImageName.parse(
@@ -61,6 +71,7 @@ class ProvisioningSagaConcurrencyIT {
         registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
         registry.add("spring.data.redis.database", () -> "7");
         registry.add("iam.cerbos.authz-enabled", () -> "false");
+        registry.add("iam.secrets.master-key", () -> TEST_MASTER_KEY);
         registry.add("iam.signing-key-path", () -> signingKeyPath());
         registry.add("iam.signing-key-allow-generation", () -> "true");
         registry.add("iam.oauth2.probata-api.client-secret", () -> "test-client-secret");

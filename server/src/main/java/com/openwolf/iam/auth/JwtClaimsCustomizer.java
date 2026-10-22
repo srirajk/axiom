@@ -103,8 +103,24 @@ public class JwtClaimsCustomizer {
                     context.getClaims().claim("identity_kind", identityKind);
                     context.getClaims().claim("client_id", clientId);
                     context.getClaims().claim("azp", clientId);
-                    context.getClaims().claim("act", Map.of("sub", workloadRef, "client_id", actorClientId,
-                            "workload_id", workloadId));
+                    // RFC 8693 section 4.1 chain: the current actor (server-side identity) outermost; prior actors
+                    // from the verified subject token nested verbatim on an actor change, unchanged for the same actor;
+                    // none at all for a service acting only for itself.
+                    Map<String, Object> act = DelegationChain.forSubject(subjectJwt.getClaims(),
+                            workloadRef, actorClientId, workloadId);
+                    if (act != null) context.getClaims().claim("act", act);
+                    // A broker-target token for a service acting for itself has no act. Pin its registered source
+                    // workload ID so re-registering the same OAuth client cannot revive an older bearer token.
+                    if (act == null && authorityId.startsWith("broker-target:")) {
+                        context.getClaims().claim("source_workload_id", workloadId);
+                    }
+                    if (authorityId.startsWith("broker-target:")) {
+                        String gatewayRouteId = subjectJwt.getClaimAsString("authority_id");
+                        if (gatewayRouteId == null || gatewayRouteId.isBlank()) {
+                            throw new IllegalStateException("broker-target exchange is missing gateway route authority");
+                        }
+                        context.getClaims().claim("source_gateway_route_id", gatewayRouteId);
+                    }
                     context.getClaims().claim("purpose", purpose);
                     context.getClaims().claim("authority_profile", authorityProfile);
                     context.getClaims().claim("authority_id", authorityId);
@@ -176,7 +192,7 @@ public class JwtClaimsCustomizer {
                         enriched = humanClaims;
                         // IDP-04: a business scope is issued only where the person holds the matching application
                         // permission now (re-evaluated at every issuance, including refresh); OIDC scopes pass through.
-                        narrowToEntitlement(context, humanClaims.get("permissions"));
+                        narrowToEntitlement(context, String.valueOf(humanClaims.get("tenant_id")), humanClaims.get("permissions"));
                     }
                     TenantClaims.requireTenant(String.valueOf(enriched.get("tenant_id")));
                     enriched.forEach((key, value) -> context.getClaims().claim(key, value));
@@ -222,12 +238,17 @@ public class JwtClaimsCustomizer {
                         context.getClaims().claim("email", customer.email());
                         context.getClaims().claim("email_verified", true);
                     }
-                    if (context.getAuthorizedScopes().contains("profile")) context.getClaims().claim("name", customer.displayName());
+                    if (context.getAuthorizedScopes().contains("profile")) {
+                        context.getClaims().claim("name", customer.displayName());
+                        if (customer.givenName() != null) context.getClaims().claim("given_name", customer.givenName());
+                        if (customer.familyName() != null) context.getClaims().claim("family_name", customer.familyName());
+                    }
                     addAssurance(context);
                     addSession(context, customerClient.tenantId(), customerClient.applicationId(), clientId, subject, false, false);
                     return;
                 }
-                enricher.enrichIdToken(subject).forEach((key, value) -> context.getClaims().claim(key, value));
+                enricher.enrichIdToken(subject, context.getAuthorizedScopes())
+                        .forEach((key, value) -> context.getClaims().claim(key, value));
                 String tenantId = authority.map(TenantApplicationService.ClientAuthority::tenantId)
                         .orElseGet(() -> String.valueOf(enricher.enrich(subject).get("tenant_id")));
                 addSession(context, tenantId,
@@ -274,7 +295,7 @@ public class JwtClaimsCustomizer {
         this.businessScopes = businessScopes;
     }
 
-    private void narrowToEntitlement(JwtEncodingContext context, Object permissions) {
+    private void narrowToEntitlement(JwtEncodingContext context, String tenantId, Object permissions) {
         java.util.Set<String> held = new java.util.HashSet<>();
         if (permissions instanceof java.util.Collection<?> values) values.forEach(value -> held.add(String.valueOf(value)));
         context.getClaims().claims(all -> {
@@ -288,7 +309,7 @@ public class JwtClaimsCustomizer {
                 return;
             }
             java.util.List<String> issued = scopes.stream()
-                    .filter(scope -> businessScopes == null || !businessScopes.isApproved(scope) || held.contains(scope))
+                    .filter(scope -> businessScopes == null || !businessScopes.isApproved(tenantId, scope) || held.contains(scope))
                     .toList();
             if (issued.size() == scopes.size()) return;
             all.put("scope", raw instanceof String ? String.join(" ", issued) : new java.util.LinkedHashSet<>(issued));

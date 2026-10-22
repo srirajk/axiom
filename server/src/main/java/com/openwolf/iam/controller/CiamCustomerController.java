@@ -40,7 +40,8 @@ public class CiamCustomerController {
                                                           @Valid @RequestBody RegisterCustomerRequest request,
                                                           HttpServletRequest httpRequest) {
         return ResponseEntity.status(201).body(customers.register(tenantId, request.email(),
-                request.displayName(), request.password(), correlation(httpRequest)));
+                request.displayName(), request.givenName(), request.familyName(),
+                request.password(), correlation(httpRequest)));
     }
 
     @PostMapping("/verifications")

@@ -20,14 +20,26 @@ public final class CiamContracts {
 
     public record RegisterCustomerRequest(
             @Email @NotBlank String email,
-            @NotBlank @Size(max = 200) String displayName,
-            @NotBlank @Size(min = 12, max = 200) String password) {}
+            @Size(max = 200) String displayName,
+            @NotBlank @Size(min = 12, max = 200) String password,
+            @Size(max = 200) String givenName,
+            @Size(max = 200) String familyName) {
+        public RegisterCustomerRequest(String email, String displayName, String password) {
+            this(email, displayName, password, null, null);
+        }
+    }
 
     /** Administrator provisioning: the identity starts pending verification; no code is returned to the operator. */
     public record ProvisionCustomerRequest(
             @Email @NotBlank String email,
-            @NotBlank @Size(max = 200) String displayName,
-            @NotBlank @Size(min = 12, max = 200) String initialPassword) {}
+            @Size(max = 200) String displayName,
+            @NotBlank @Size(min = 12, max = 200) String initialPassword,
+            @Size(max = 200) String givenName,
+            @Size(max = 200) String familyName) {
+        public ProvisionCustomerRequest(String email, String displayName, String initialPassword) {
+            this(email, displayName, initialPassword, null, null);
+        }
+    }
 
     public record ChallengeAction(String kind, String token, Instant expiresAt, String delivery) {}
 
@@ -57,6 +69,7 @@ public final class CiamContracts {
             @NotBlank @Size(min = 12, max = 200) String newPassword) {}
 
     public record CustomerResponse(UUID customerId, String email, String displayName,
+                                   String givenName, String familyName,
                                    CustomerIdentity.Status status, Instant emailVerifiedAt,
                                    Instant createdAt, long revision,
                                    CustomerIdentity.ProvisioningSource provisioningSource) {}

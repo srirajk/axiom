@@ -16,6 +16,7 @@ import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.stream.Collectors;
 
@@ -97,6 +98,14 @@ public class GlobalExceptionHandler {
         log.warn("Entity not found on {}: {}", req.getRequestURI(), ex.getMessage());
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
                 ErrorResponse.of("Not Found", ex.getMessage(), 404, req.getRequestURI()));
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> handleMissingRoute(
+            NoResourceFoundException ex, HttpServletRequest req) {
+        log.warn("Route not found on {}", req.getRequestURI());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                ErrorResponse.of("Not Found", "Resource not found", 404, req.getRequestURI()));
     }
 
     // -------------------------------------------------------

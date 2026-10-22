@@ -1,0 +1,53 @@
+# Fresh Docker Desktop cluster only; Axiom is not exposed except through a loopback port-forward to Envoy.
+server:
+  image:
+    repository: axiom-server
+    tag: local-edge-20261013-r1
+    pullPolicy: IfNotPresent
+admin:
+  image:
+    repository: axiom-admin
+    tag: local-edge-20261013-r1
+    pullPolicy: IfNotPresent
+config:
+  issuerUrl: https://identity.meridian.com:8443
+  adminPublicUrl: https://identity-admin.meridian.com:8443
+  corsAllowedOrigins: https://identity-admin.meridian.com:8443,http://localhost:5180,https://argus.meridian.com
+  approvedBusinessScopes: example:read,example:write
+  ciam:
+    localDemoChallengeDisclosure: false
+    demoAdminActivation:
+      enabled: true
+      allowedTenant: meridian
+      allowedEmailDomain: meridian.local
+      allowedIssuer: https://identity.meridian.com:8443
+    tenantId: meridian
+    customerClientId: demo-customer-web
+    customerScopes: example:read
+  auth:
+    legacyPasswordLogin: false
+    impersonation: false
+bootstrap:
+  tenant:
+    id: meridian
+    name: Meridian Local Axiom
+    slug: meridian
+  administrator:
+    id: admin
+    username: admin
+    email: admin@axiom-local.invalid
+postgresql:
+  host: axiom-postgresql
+  database: axiom
+redis:
+  host: axiom-redis
+  database: 0
+  passwordEnabled: false
+cerbos:
+  host: axiom-cerbos
+policyRuntime:
+  backend: pvc
+  pvc:
+    existingClaim: axiom-policy-runtime
+nodeSelector:
+  kubernetes.io/hostname: desktop-worker

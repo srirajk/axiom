@@ -2,6 +2,7 @@ package com.openwolf.iam.dto;
 
 import com.openwolf.iam.entity.AgentExchangeRoute;
 import com.openwolf.iam.entity.TrustedExchangeBroker;
+import com.openwolf.iam.entity.TrustedExchangeBrokerTarget;
 import jakarta.validation.constraints.Future;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
@@ -24,6 +25,18 @@ public final class AgentExchangeContracts {
     public record TrustedBrokerResponse(
             UUID id, String oauthClientId, String gatewayAudience, List<String> scopes,
             TrustedExchangeBroker.Status status, Instant createdAt, Instant revokedAt, long revision) {}
+
+    public record CreateBrokerTargetRequest(
+            @NotBlank @Size(max = 255) String audience,
+            @NotNull AgentExchangeRoute.DestinationType destinationType,
+            UUID destinationWorkloadId,
+            @NotEmpty Set<@NotBlank @Size(max = 120) String> scopes,
+            @NotBlank @Size(max = 500) String purpose) {}
+
+    public record BrokerTargetResponse(
+            UUID id, UUID brokerId, String audience, AgentExchangeRoute.DestinationType destinationType,
+            UUID destinationWorkloadId, List<String> scopes, String purpose,
+            TrustedExchangeBrokerTarget.Status status, Instant createdAt, Instant revokedAt, long revision) {}
 
     public record CreateAgentExchangeRouteRequest(
             @NotNull UUID sourceWorkloadId,

@@ -146,10 +146,17 @@ public final class SyntheticGatewayFixture {
             if (clientId.isEmpty() || !clientId.equals(text(claims, "azp")) || !policy.redeemers().contains(clientId)) {
                 throw new Denied(403, "wrong_redeemer");
             }
+            // RFC 8693 section 4.1: the outermost act is the current actor; without act the subject acts for itself.
             Object act = claims.getClaim("act");
-            if (!(act instanceof Map<?, ?> actor) || blank(actor.get("sub")) || blank(actor.get("client_id"))
-                    || blank(actor.get("workload_id"))) throw new Denied(403, "missing_actor");
-            String actorClient = String.valueOf(actor.get("client_id"));
+            String actorClient;
+            if (act == null) {
+                actorClient = text(claims, "sub");
+                if (actorClient.isEmpty()) throw new Denied(403, "missing_actor");
+            } else {
+                if (!(act instanceof Map<?, ?> actor) || blank(actor.get("sub")) || blank(actor.get("client_id"))
+                        || blank(actor.get("workload_id"))) throw new Denied(403, "missing_actor");
+                actorClient = String.valueOf(actor.get("client_id"));
+            }
             boolean actorOk = policy.redeemerIsActor() ? actorClient.equals(clientId)
                     : policy.actors().contains(actorClient) && !actorClient.equals(clientId);
             if (!actorOk) throw new Denied(403, "wrong_actor");

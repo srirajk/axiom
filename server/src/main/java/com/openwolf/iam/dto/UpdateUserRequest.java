@@ -8,5 +8,12 @@ import java.util.Map;
 public record UpdateUserRequest(
         String email,
         Boolean isActive,
-        Map<String, Object> attributes
-) {}
+        Map<String, Object> attributes,
+        String givenName,
+        String familyName,
+        String name
+) {
+    public UpdateUserRequest(String email, Boolean isActive, Map<String, Object> attributes) {
+        this(email, isActive, attributes, null, null, null);
+    }
+}

@@ -6,6 +6,8 @@ public final class ApplicationScopes {
     public static final String SUBJECT_CONTEXT_READ = "axiom.subject-context.read";
     /** Service-only permission to request application-access decisions. */
     public static final String PLATFORM_AUTHZ_DECIDE = "axiom.platform-authz.decide";
+    /** Confidential service-client permission for tenant-local person profile reads. */
+    public static final String USERS_READ_PROFILE = "users.read_profile";
 
     private ApplicationScopes() {}
 }

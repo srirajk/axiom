@@ -29,6 +29,7 @@ contract test suite.
 | IDP-11 directory administration (SCIM, roles, customers) | `idp11_directory_admin.py` | workforce, CIAM |
 | IDP-12 client administration and consent | `idp12_client_admin.py`, browser: `tests/test_idp_browser.py` | workforce, CIAM |
 | IDP-13/14/15 conditional profiles (not selected / partial) | `idp13_15_conditional_profiles.py` | — |
+| Custom business scope for one tenant (catalog API) | `basics/b12_custom_business_scopes.py` (`tests/test_business_scopes.py`) | software |
 
 Runtime calls in these examples are standard OAuth/OIDC requests; provisioning goes through Axiom's management APIs
 (`axiom_cookbook/context.py`, `ciam.py`: the provider-specific *setup adapter*). Assertions use portable claims
@@ -41,7 +42,7 @@ Runtime calls in these examples are standard OAuth/OIDC requests; provisioning g
 | anything | `basics/b01_connect.py`, `oauth/o01_discovery_and_validation.py` |
 | a web app for employees (workforce) | `oauth/o02_workforce_authorization_code.py`, `basics/b04_roles_and_entitlements.py` |
 | a service or scheduled job | `oauth/o04_client_credentials.py`, `basics/b09_workloads_and_edges.py` |
-| a service acting for a signed-in person | `oauth/o05_token_exchange.py`, `consumer_contracts/c03_workload_chains.py` |
+| a service acting for a signed-in person | `oauth/o05_token_exchange.py`, `consumer_contracts/c03_workload_chains.py`, `consumer_contracts/c06_delegation_chain.py` |
 | an API, tool server or gateway that receives tokens | `consumer_contracts/c01_receiver_enforcement.py`, `oauth/o06_introspection_revocation_logout.py` |
 | a customer-facing app (CIAM) | `ciam/b06…`, `ciam/b07…`, `ciam/b08_consent_grants.py`, `ciam/o03_customer_login.py` |
 | long-running or unattended work | `oauth/o07_renewal.py` |

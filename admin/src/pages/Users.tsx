@@ -13,6 +13,9 @@ import { useToast } from '../components/ui/Toast'
 interface UserForm {
   username: string
   email: string
+  givenName: string
+  familyName: string
+  name: string
   password: string
   roleIds: string[]
   segments: string[]
@@ -23,6 +26,9 @@ interface UserForm {
 const EMPTY: UserForm = {
   username: '',
   email: '',
+  givenName: '',
+  familyName: '',
+  name: '',
   password: '',
   roleIds: [],
   segments: [],
@@ -99,6 +105,9 @@ export function Users() {
         id: uid.trim(),
         username: form.username.trim(),
         email: form.email.trim(),
+        givenName: form.givenName.trim(),
+        familyName: form.familyName.trim(),
+        name: form.name.trim(),
         password: form.password,
         attributes: {
           classification: form.classification,
@@ -128,6 +137,9 @@ export function Users() {
 
       const updated = await usersApi.update(editing.id, {
         email: form.email.trim(),
+        givenName: form.givenName.trim(),
+        familyName: form.familyName.trim(),
+        name: form.name.trim(),
         attributes: {
           classification: form.classification,
           segments: form.segments,
@@ -195,6 +207,9 @@ export function Users() {
     setForm({
       username: u.username,
       email: u.email,
+      givenName: u.givenName || '',
+      familyName: u.familyName || '',
+      name: u.displayNameOverride || '',
       password: '',
       roleIds: u.roles
         .map((name) => roleIdByName.get(name))
@@ -213,6 +228,7 @@ export function Users() {
   const filtered = users.filter(
     u =>
       u.username.toLowerCase().includes(search.toLowerCase()) ||
+      (u.name || '').toLowerCase().includes(search.toLowerCase()) ||
       u.id.toLowerCase().includes(search.toLowerCase()) ||
       u.email.toLowerCase().includes(search.toLowerCase())
   )
@@ -319,7 +335,7 @@ export function Users() {
                         </span>
                       </div>
                       <div>
-                        <p className="font-medium text-slate-900">{u.username}</p>
+                        <p className="font-medium text-slate-900">{u.name || u.username}</p>
                         <p className="text-xs text-slate-500">
                           {u.id} {u.email && `· ${u.email}`}
                         </p>
@@ -416,6 +432,25 @@ export function Users() {
             value={form.email}
             onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
           />
+          <Input
+            label="Given name"
+            autoComplete="given-name"
+            value={form.givenName}
+            onChange={e => setForm(f => ({ ...f, givenName: e.target.value }))}
+          />
+          <Input
+            label="Family name"
+            autoComplete="family-name"
+            value={form.familyName}
+            onChange={e => setForm(f => ({ ...f, familyName: e.target.value }))}
+          />
+          <Input
+            label="Full-name override (optional)"
+            autoComplete="name"
+            value={form.name}
+            onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+            hint="Leave blank to use given and family name."
+          />
           {!editing && (
             <Input
               label="Password"
@@ -507,7 +542,7 @@ export function Users() {
       <Dialog
         open={!!detail}
         onClose={() => setDetail(null)}
-        title={detailUser?.username ?? ''}
+        title={detailUser?.name || detailUser?.username || ''}
         description={`${detailUser?.id} · ${detailUser?.email}`}
         size="lg"
       >

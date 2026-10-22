@@ -66,7 +66,7 @@ public class ConsentPurposeService {
                 .filter(value -> value.tenantId().equals(tenantId))
                 .filter(value -> value.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_SERVICE)
                 .orElseThrow(() -> new ResourceConflictException("agent workload client is not active"));
-        if (normalized.isEmpty() || normalized.stream().anyMatch(s -> s.isBlank() || !businessScopes.isApproved(s))
+        if (normalized.isEmpty() || normalized.stream().anyMatch(s -> s.isBlank() || !businessScopes.isApproved(tenantId, s))
                 || !client.scopes().containsAll(normalized)) {
             throw new IllegalArgumentException("purpose scopes must be approved scopes of the workload client");
         }

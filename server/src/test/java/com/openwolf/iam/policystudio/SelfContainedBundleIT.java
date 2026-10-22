@@ -137,8 +137,11 @@ class SelfContainedBundleIT {
                 .contains("policies/policy_draft_resource.yaml")
                 .contains("policies/policy_approval_resource.yaml")
                 .contains("policies/policy_bundle_resource.yaml")
-                .contains("policies/business_derived_roles.yaml")
+                .contains("policies/iam_derived_roles.yaml")
                 .contains("policies/policy_studio_derived_roles.yaml");
+        assertThat(captured).extracting(BundleFile::path)
+                .as("the current platform-policy package does not import the separate example business module")
+                .doesNotContain("policies/business_derived_roles.yaml");
 
         assertThat(captured.stream()
                 .filter(f -> f.yaml().contains("resourcePolicy:"))

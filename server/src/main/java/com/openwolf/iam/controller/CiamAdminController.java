@@ -61,7 +61,8 @@ public class CiamAdminController {
             @PathVariable String tenantId, @Valid @RequestBody ProvisionCustomerRequest request,
             HttpServletRequest httpRequest) {
         return ResponseEntity.status(201).body(customers.provision(tenantId, request.email(), request.displayName(),
-                request.initialPassword(), audit.currentActor(), correlation(httpRequest)));
+                request.givenName(), request.familyName(), request.initialPassword(),
+                audit.currentActor(), correlation(httpRequest)));
     }
 
     @GetMapping("/customers")

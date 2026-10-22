@@ -1,0 +1,2 @@
+# Local-only private material. Never add credentials or private keys to Git.
+/private/

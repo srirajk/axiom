@@ -7,7 +7,9 @@ import com.openwolf.iam.dto.CreateUserRequest;
 import com.openwolf.iam.dto.PageResponse;
 import com.openwolf.iam.dto.UpdateUserRequest;
 import com.openwolf.iam.dto.UserResponse;
+import com.openwolf.iam.dto.UserProfileResponse;
 import com.openwolf.iam.auth.ExecutionTenant;
+import com.openwolf.iam.auth.PersonProfile;
 import com.openwolf.iam.entity.Group;
 import com.openwolf.iam.entity.Principal;
 import com.openwolf.iam.entity.Role;
@@ -91,6 +93,21 @@ public class UserService {
         return toUserResponse(p);
     }
 
+    @Transactional(readOnly = true)
+    public List<UserProfileResponse> lookupProfiles(List<String> subjects) {
+        String tenantId = executionTenant.require();
+        Map<String, UserProfileResponse> found = new HashMap<>();
+        principalRepository.findByTenantIdAndIdIn(tenantId, subjects.stream().distinct().toList())
+                .forEach(principal -> found.put(principal.getId(), toProfileResponse(principal)));
+        return subjects.stream().distinct().map(found::get).filter(Objects::nonNull).toList();
+    }
+
+    public UserProfileResponse toProfileResponse(Principal principal) {
+        Map<String, Object> names = PersonProfile.claims(parseAttributes(principal.getAttributes()));
+        return new UserProfileResponse(principal.getId(), (String) names.get("name"),
+                (String) names.get("given_name"), (String) names.get("family_name"), principal.getEmail());
+    }
+
     // -------------------------------------------------------
     // Create
     // -------------------------------------------------------
@@ -106,7 +123,12 @@ public class UserService {
             throw new ResourceConflictException("Username already taken: " + req.username());
         }
 
-        String attrsJson = serializeAttributes(req.attributes());
+        Map<String, Object> attributes = new LinkedHashMap<>();
+        if (req.attributes() != null) attributes.putAll(req.attributes());
+        applyName(attributes, "given_name", req.givenName());
+        applyName(attributes, "family_name", req.familyName());
+        applyName(attributes, "display_name", req.name());
+        String attrsJson = serializeAttributes(attributes);
         Principal p = new Principal(
                 req.id(),
                 tenantId,
@@ -144,7 +166,12 @@ public class UserService {
         boolean activeBefore = p.isActive();
         if (req.email() != null) p.setEmail(req.email());
         if (req.isActive() != null) p.setActive(req.isActive());
-        if (req.attributes() != null) p.setAttributes(mergeAttributes(p.getAttributes(), req.attributes()));
+        Map<String, Object> changes = new LinkedHashMap<>();
+        if (req.attributes() != null) changes.putAll(req.attributes());
+        applyName(changes, "given_name", req.givenName());
+        applyName(changes, "family_name", req.familyName());
+        applyName(changes, "display_name", req.name());
+        if (!changes.isEmpty()) p.setAttributes(mergeAttributes(p.getAttributes(), changes));
 
         principalRepository.save(p);
         // The principal row lock (findByIdAndTenantIdForUpdate) serializes this with workforce session issuance
@@ -283,6 +310,7 @@ public class UserService {
                 .toList();
 
         Map<String, Object> attrs = parseAttributes(p.getAttributes());
+        Map<String, Object> names = PersonProfile.claims(attrs);
         String classification = (String) attrs.getOrDefault("classification", "internal");
         Map<String, String> segments = getSegmentMap(attrs, classification);
         List<String> adminDomains = getStringList(attrs, "admin_domains");
@@ -291,6 +319,10 @@ public class UserService {
                 p.getId(),
                 p.getUsername(),
                 p.getEmail(),
+                (String) names.get("name"),
+                (String) names.get("given_name"),
+                (String) names.get("family_name"),
+                attrs.get("display_name") instanceof String override ? override : null,
                 p.isActive(),
                 roles,
                 segments,
@@ -357,8 +389,18 @@ public class UserService {
      */
     private String mergeAttributes(String existingJson, Map<String, Object> incoming) {
         Map<String, Object> merged = new LinkedHashMap<>(parseAttributes(existingJson));
-        merged.putAll(incoming);
+        incoming.forEach((key, value) -> {
+            if (value == null && ("given_name".equals(key) || "family_name".equals(key)
+                    || "display_name".equals(key))) merged.remove(key);
+            else merged.put(key, value);
+        });
         return serializeAttributes(merged);
+    }
+
+    private static void applyName(Map<String, Object> attributes, String key, String value) {
+        if (value == null) return;
+        String trimmed = value.trim();
+        attributes.put(key, trimmed.isEmpty() ? null : trimmed);
     }
 
     private String serializeAttributes(Map<String, Object> attributes) {

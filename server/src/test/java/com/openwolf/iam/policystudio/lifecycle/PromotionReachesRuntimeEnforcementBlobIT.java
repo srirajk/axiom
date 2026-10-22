@@ -60,8 +60,10 @@ class PromotionReachesRuntimeEnforcementBlobIT {
 
     private static final DockerImageName CERBOS_IMAGE = DockerImageName.parse(
             System.getenv().getOrDefault("CERBOS_IMAGE", "ghcr.io/cerbos/cerbos:0.53.0"));
-    private static final DockerImageName MINIO_IMAGE = DockerImageName.parse(
-            System.getenv().getOrDefault("MINIO_IMAGE", "minio/minio:latest"));
+    // The former minio/minio:latest image is no longer published. Use a versioned, disposable S3 API
+    // test server; this exercises Cerbos's real blob poller and Axiom's real S3 writer, not production S3.
+    private static final DockerImageName S3_TEST_IMAGE = DockerImageName.parse(
+            System.getenv().getOrDefault("AXIOM_TEST_S3_IMAGE", "adobe/s3mock:3.12.0"));
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -98,15 +100,11 @@ class PromotionReachesRuntimeEnforcementBlobIT {
     // ── the shared network + containers ──────────────────────────────────────────────────────────
 
     private static GenericContainer<?> minio(Network network) {
-        return new GenericContainer<>(MINIO_IMAGE)
+        return new GenericContainer<>(S3_TEST_IMAGE)
                 .withNetwork(network)
                 .withNetworkAliases("minio")
-                .withEnv("MINIO_ROOT_USER", MINIO_USER)
-                .withEnv("MINIO_ROOT_PASSWORD", MINIO_PASSWORD)
-                .withCommand("server", "/data")
-                .withExposedPorts(9000)
-                .waitingFor(Wait.forHttp("/minio/health/ready").forPort(9000)
-                        .withStartupTimeout(Duration.ofSeconds(90)));
+                .withExposedPorts(9090)
+                .waitingFor(Wait.forListeningPort().withStartupTimeout(Duration.ofSeconds(90)));
     }
 
     private static GenericContainer<?> cerbosOnBlob(Network network, Path confDir) {
@@ -132,7 +130,7 @@ class PromotionReachesRuntimeEnforcementBlobIT {
                 storage:
                   driver: "blob"
                   blob:
-                    bucket: "s3://%s?endpoint=http://minio:9000&hostname_immutable=true&region=%s"
+                    bucket: "s3://%s?endpoint=http://minio:9090&hostname_immutable=true&region=%s"
                     workDir: /tmp/cerbos/blob
                     updatePollInterval: %ds
                     downloadTimeout: 30s
@@ -145,7 +143,7 @@ class PromotionReachesRuntimeEnforcementBlobIT {
     private static S3Client s3(GenericContainer<?> minio) {
         return S3Client.builder()
                 .region(Region.of(REGION))
-                .endpointOverride(URI.create("http://" + minio.getHost() + ":" + minio.getMappedPort(9000)))
+                .endpointOverride(URI.create("http://" + minio.getHost() + ":" + minio.getMappedPort(9090)))
                 .credentialsProvider(StaticCredentialsProvider.create(
                         AwsBasicCredentials.create(MINIO_USER, MINIO_PASSWORD)))
                 .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
@@ -247,7 +245,7 @@ class PromotionReachesRuntimeEnforcementBlobIT {
                     // ── 2. Run the REAL production load step: write the promoted bundle to the bucket via S3. ──
                     S3RuntimePolicySink sink = new S3RuntimePolicySink(
                             BUCKET, RUNTIME_PREFIX,
-                            "http://" + minio.getHost() + ":" + minio.getMappedPort(9000),
+                            "http://" + minio.getHost() + ":" + minio.getMappedPort(9090),
                             REGION, true, MINIO_USER, MINIO_PASSWORD);
                     PromotedBundleLoader loader = new PromotedBundleLoader(sink);
                     List<Path> written = loader.load(candidate);

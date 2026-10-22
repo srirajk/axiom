@@ -1,7 +1,8 @@
 # Axiom on the local Meridian Kubernetes cluster
 
-> Historical shared-cluster profile. **Do not run `install.sh` for the new isolated release.** It targets the
-> existing `axiom` namespace and a shared Gateway. The disposable, namespace-only replacement is
+> Historical shared-cluster profile. **Do not run `install.sh` for the current fresh-cluster release.** It uses an
+> older server image and shared-cluster demo settings. The current Axiom + Envoy local procedure is
+> [`deploy/axiom-local-edge/README.md`](../axiom-local-edge/README.md). The separate internal-only profile is
 > [`deploy/axiom-test/README.md`](../axiom-test/README.md).
 
 This profile installs Axiom in the `axiom` namespace and owns the local identity edge. The

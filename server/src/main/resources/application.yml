@@ -62,6 +62,12 @@ iam:
     customer-token-ttl-seconds: ${IAM_CIAM_CUSTOMER_TOKEN_TTL_SECONDS:300}
     # Strictly local demo aid. Production default never returns verification or recovery secrets.
     local-demo-challenge-disclosure: ${IAM_CIAM_LOCAL_DEMO_CHALLENGE_DISCLOSURE:false}
+    # Local fixture for synthetic, administrator-provisioned customers only. Disabled by default.
+    demo-admin-activation:
+      enabled: ${IAM_CIAM_DEMO_ADMIN_ACTIVATION_ENABLED:false}
+      allowed-tenant: ${IAM_CIAM_DEMO_ADMIN_ACTIVATION_ALLOWED_TENANT:}
+      allowed-email-domain: ${IAM_CIAM_DEMO_ADMIN_ACTIVATION_ALLOWED_EMAIL_DOMAIN:}
+      allowed-issuer: ${IAM_CIAM_DEMO_ADMIN_ACTIVATION_ALLOWED_ISSUER:}
   secrets:
     master-key: ${AXIOM_SECRETS_MASTER_KEY:}
   federation:

@@ -85,6 +85,139 @@ class JwtClaimsCustomizerTokenExchangeTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void anActorChangeNestsThePriorActorAndTheSameActorDoesNot() {
+        OidcClaimEnricher enricher = mock(OidcClaimEnricher.class);
+        TenantApplicationService applications = mock(TenantApplicationService.class);
+        ApplicationAccessService applicationAccess = mock(ApplicationAccessService.class);
+        JwtClaimsCustomizer customizer = new JwtClaimsCustomizer(enricher, applications, applicationAccess);
+        for (String client : List.of("agent-b", "argus-gateway-broker")) {
+            when(applications.activeAuthority(client)).thenReturn(Optional.of(new TenantApplicationService.ClientAuthority(
+                    "meridian", "x", TenantApplicationClient.Type.CONFIDENTIAL_SERVICE, List.of("cards:incident.read"),
+                    UUID.randomUUID())));
+        }
+        String workloadA = UUID.randomUUID().toString();
+        Map<String, Object> priorActor = new java.util.LinkedHashMap<>(Map.of(
+                "sub", "agent:a", "client_id", "agent-a", "workload_id", workloadA));
+        Jwt subject = Jwt.withTokenValue("subject-token").header("alg", "RS256").subject("person-1")
+                .issuedAt(Instant.parse("2026-09-21T12:00:00Z")).expiresAt(Instant.parse("2026-09-21T12:05:00Z"))
+                .audience(List.of("agent-b-api")).claim("tenant_id", "meridian").claim("identity_kind", "workforce")
+                .claim("sid", "root-session").claim("act", priorActor).build();
+
+        // Actor change: workload B continues the chain that workload A started.
+        String workloadB = UUID.randomUUID().toString();
+        Map<String, Object> changed = issue(customizer, subject, workloadB, "agent:b", "agent-b", "agent-b");
+        Map<String, Object> act = (Map<String, Object>) changed.get("act");
+        assertThat(changed).containsEntry("sub", "person-1");
+        assertThat(act).containsEntry("sub", "agent:b").containsEntry("client_id", "agent-b").containsEntry("workload_id", workloadB);
+        assertThat(act.get("act")).as("prior actor nested verbatim").isEqualTo(priorActor);
+
+        // Broker hop: the broker authenticates, the actor stays workload A, and the broker never appears in act.
+        Map<String, Object> brokered = issue(customizer, subject, workloadA, "agent:a", "agent-a", "argus-gateway-broker");
+        Map<String, Object> same = (Map<String, Object>) brokered.get("act");
+        assertThat(brokered).containsEntry("client_id", "argus-gateway-broker");
+        assertThat(same).isEqualTo(priorActor).doesNotContainKey("act");
+        assertThat(same.toString()).doesNotContain("argus-gateway-broker");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aServiceActingForItselfGetsNoActorAndATakeoverNamesOnlyTheNewActor() {
+        OidcClaimEnricher enricher = mock(OidcClaimEnricher.class);
+        TenantApplicationService applications = mock(TenantApplicationService.class);
+        JwtClaimsCustomizer customizer = new JwtClaimsCustomizer(enricher, applications, mock(ApplicationAccessService.class));
+        for (String client : List.of("agent-a", "agent-b", "argus-gateway-broker")) {
+            when(applications.activeAuthority(client)).thenReturn(Optional.of(new TenantApplicationService.ClientAuthority(
+                    "meridian", "x", TenantApplicationClient.Type.CONFIDENTIAL_SERVICE, List.of("cards:incident.read"),
+                    UUID.randomUUID())));
+        }
+        Jwt own = Jwt.withTokenValue("subject-token").header("alg", "RS256").subject("agent-a")
+                .issuedAt(Instant.parse("2026-09-21T12:00:00Z")).expiresAt(Instant.parse("2026-09-21T12:05:00Z"))
+                .audience(List.of("agent-a-api")).claim("tenant_id", "meridian").claim("identity_kind", "workload")
+                .claim("client_id", "agent-a").build();
+        String workloadA = UUID.randomUUID().toString();
+        Map<String, Object> self = issue(customizer, own, workloadA, "agent:a", "agent-a", "agent-a");
+        assertThat(self).containsEntry("sub", "agent-a").doesNotContainKey("act");
+        Map<String, Object> brokered = issue(customizer, own, workloadA, "agent:a", "agent-a",
+                "argus-gateway-broker");
+        assertThat(brokered).containsEntry("client_id", "argus-gateway-broker").doesNotContainKey("act");
+        String workloadB = UUID.randomUUID().toString();
+        Map<String, Object> takeover = issue(customizer, own, workloadB, "agent:b", "agent-b", "agent-b");
+        assertThat(takeover).containsEntry("sub", "agent-a");
+        assertThat((Map<String, Object>) takeover.get("act")).isEqualTo(Map.of("sub", "agent:b", "client_id", "agent-b",
+                "workload_id", workloadB));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void brokerTargetEmissionKeepsPersonChainAndOmitsSelfActor() {
+        TenantApplicationService applications = mock(TenantApplicationService.class);
+        when(applications.activeAuthority("argus-gateway-broker")).thenReturn(Optional.of(
+                new TenantApplicationService.ClientAuthority("meridian", "argus-gateway",
+                        TenantApplicationClient.Type.CONFIDENTIAL_SERVICE,
+                        List.of("cards:incident.read"), UUID.randomUUID())));
+        JwtClaimsCustomizer customizer = new JwtClaimsCustomizer(mock(OidcClaimEnricher.class), applications,
+                mock(ApplicationAccessService.class));
+        String actorId = UUID.randomUUID().toString();
+        Map<String, Object> prior = Map.of("sub", "agent:prior", "client_id", "prior-client",
+                "workload_id", UUID.randomUUID().toString());
+        Map<String, Object> current = Map.of("sub", "agent:source", "client_id", "source-client",
+                "workload_id", actorId, "act", prior);
+        Jwt person = Jwt.withTokenValue("person-gateway").header("alg", "RS256").subject("person-1")
+                .issuedAt(Instant.parse("2026-09-21T12:00:00Z"))
+                .expiresAt(Instant.parse("2026-09-21T12:05:00Z"))
+                .audience(List.of("argus-gateway")).claim("tenant_id", "meridian")
+                .claim("identity_kind", "workforce").claim("act", current)
+                .claim("authority_id", UUID.randomUUID().toString()).build();
+        Map<String, Object> personResult = issueBrokerTarget(customizer, person, actorId,
+                "agent:source", "source-client");
+        assertThat(personResult).containsEntry("sub", "person-1")
+                .containsEntry("client_id", "argus-gateway-broker")
+                .containsEntry("authority_profile", "gateway_backend");
+        assertThat(personResult.get("authority_id").toString()).startsWith("broker-target:");
+        assertThat(personResult).containsEntry("source_gateway_route_id", person.getClaimAsString("authority_id"));
+        assertThat((Map<String, Object>) personResult.get("act")).isEqualTo(current);
+
+        Jwt self = Jwt.withTokenValue("self-gateway").header("alg", "RS256").subject("source-client")
+                .issuedAt(Instant.parse("2026-09-21T12:00:00Z"))
+                .expiresAt(Instant.parse("2026-09-21T12:05:00Z"))
+                .audience(List.of("argus-gateway")).claim("tenant_id", "meridian")
+                .claim("identity_kind", "workload").claim("client_id", "source-client")
+                .claim("authority_id", UUID.randomUUID().toString()).build();
+        Map<String, Object> selfResult = issueBrokerTarget(customizer, self, actorId,
+                "agent:source", "source-client");
+        assertThat(selfResult).containsEntry("sub", "source-client")
+                .containsEntry("source_workload_id", actorId)
+                .containsEntry("source_gateway_route_id", self.getClaimAsString("authority_id"))
+                .doesNotContainKey("act");
+    }
+
+    private Map<String, Object> issueBrokerTarget(JwtClaimsCustomizer customizer, Jwt subject,
+                                                   String workloadId, String workloadRef, String actorClientId) {
+        TokenExchangeAuthenticationToken exchange = new TokenExchangeAuthenticationToken(mock(Authentication.class),
+                subject.getTokenValue(), "next-api", Set.of("cards:incident.read"), Map.of());
+        exchange.bindAuthority(new TokenExchangeAuthenticationToken.AuthorityContext(subject, "next-api", "purpose",
+                "gateway_backend", "broker-target:" + UUID.randomUUID(), null, "exchange_subject",
+                subject.getClaimAsString("identity_kind"), workloadId, workloadRef, actorClientId));
+        JwtEncodingContext context = context(exchange, "argus-gateway-broker");
+        customizer.jwtTokenCustomizer().customize(context);
+        return context.getClaims().build().getClaims();
+    }
+
+    private Map<String, Object> issue(JwtClaimsCustomizer customizer, Jwt subject, String workloadId, String workloadRef,
+                                      String actorClientId, String requester) {
+        TokenExchangeAuthenticationToken exchange = new TokenExchangeAuthenticationToken(mock(Authentication.class),
+                "subject-token", "next-api", Set.of("cards:incident.read"), Map.of());
+        exchange.bindAuthority(new TokenExchangeAuthenticationToken.AuthorityContext(subject, "next-api", "purpose",
+                "workload_continuation", UUID.randomUUID().toString(), null, "gateway_authorization", "workforce",
+                workloadId, workloadRef, actorClientId));
+        JwtEncodingContext context = context(exchange, requester);
+        JwtClaimsSet.Builder builder = context.getClaims();
+        customizer.jwtTokenCustomizer().customize(context);
+        return builder.build().getClaims();
+    }
+
+    @Test
     void directCustomerProfileRetainsItsImmutableDelegationPin() {
         OidcClaimEnricher enricher = mock(OidcClaimEnricher.class);
         TenantApplicationService applications = mock(TenantApplicationService.class);

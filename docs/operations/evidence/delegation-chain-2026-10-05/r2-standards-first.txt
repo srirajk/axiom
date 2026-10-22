@@ -1,0 +1,15 @@
+# R2 standards-first act (owner decision 2026-10-05); source fingerprint f0077b01e600b422578b96715db86ce3f419ea57779970fbb5cad6c462e3c151 (606 files, unchanged across the run)
+# jar sha256 6a8eccd6d95464343ad9c3342f95feb1fc6136647f2332f4e3145dcc23954ae0
+Reproduced before repair: DelegationChainTest + JwtClaimsCustomizerTokenExchangeTest 14 run, 2 failures (self-acting token carried act = itself);
+  DelegationChainIT 6 run, 1 failure (aServiceActingForItselfHasNoActorAndItsSourceIsBoundByRouteState).
+Focused after repair: DelegationChainIT 6/6, ExchangeEdgeScenarioIT 20/20, EntryAgentGatewayScenarioIT 7/7, SyntheticGatewayReceiverScenarioIT 10/10.
+Mutations (DelegationChainIT; source restored after each):
+  self-actor-kept              Failures: 1
+  act-only-marker              Failures: 2
+  no-sub-binding               Failures: 1
+  introspection-session-only   Failures: 2
+mvn -o -B clean verify: surefire 424/424; failsafe 206 tests: 193 passed, 1 failure, 9 errors, 3 skipped
+  environmental as before: SelfContainedBundleIT (1F), PromotionReachesRuntimeEnforcementBlobIT (2E), ProvisioningSagaConcurrencyIT (3E)
+  JDBC connection loss in the shared container (not assertions): ActionApprovalIT (3E), IdpBaselineIT (1E)
+  isolated rerun (same jar sources): ActionApprovalIT 5/5, IdpBaselineIT 12/12
+Python cookbook (disposable estate): 76 passed, 0 failed, exit 0 (incl. C06 self-acting and takeover, idp05 software-only)

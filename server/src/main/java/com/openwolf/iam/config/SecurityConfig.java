@@ -346,6 +346,10 @@ public class SecurityConfig {
                             applications::getIfAvailable),
                     org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
             .addFilterAfter(s256PkceEnforcementFilter, SecurityContextHolderFilter.class)
+            // Axiom currently binds browser clients to one audience. Reject a different RFC 8707 resource
+            // instead of silently issuing a token for the default audience.
+            .addFilterBefore(new com.openwolf.iam.auth.AuthorizationCodeResourceGuardFilter(applications),
+                    SecurityContextHolderFilter.class)
             .addFilterBefore(codeRedemptionLockFilter, SecurityContextHolderFilter.class)
             .addFilterBefore(endSessionCleanupFilter, SecurityContextHolderFilter.class);
 
@@ -476,7 +480,7 @@ public class SecurityConfig {
         return registration;
     }
 
-    // Filter Chain 3 — service-only platform-authorization resource endpoints
+    // Filter Chain 3 — service-only resource endpoints, including narrow profile reads
     // =========================================================
 
     @Bean
@@ -485,10 +489,18 @@ public class SecurityConfig {
             HttpSecurity http,
             @Qualifier("subjectContextJwtDecoder") JwtDecoder subjectContextJwtDecoder) throws Exception {
         http
-                .securityMatcher(new AntPathRequestMatcher("/api/v1/platform-authz/**"))
+                .securityMatcher(new OrRequestMatcher(
+                        new AntPathRequestMatcher("/api/v1/platform-authz/**"),
+                        new AntPathRequestMatcher("/admin/users/lookup", "POST"),
+                        new AntPathRequestMatcher("/admin/groups/*/members", "GET")))
                 .csrf(csrf -> csrf.disable())
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-                .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(HttpMethod.POST, "/admin/users/lookup")
+                        .hasAuthority("SCOPE_" + ApplicationScopes.USERS_READ_PROFILE)
+                        .requestMatchers(HttpMethod.GET, "/admin/groups/*/members")
+                        .hasAuthority("SCOPE_" + ApplicationScopes.USERS_READ_PROFILE)
+                        .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt
                                 .decoder(subjectContextJwtDecoder)
@@ -567,7 +579,15 @@ public class SecurityConfig {
                         // non-studio admin routes remain limited to platform/tenant/domain admins.
                         .requestMatchers("/admin/studio/**")
                         .hasAnyRole("platform_admin", "tenant_admin", "domain_admin", "policy_author", "policy_approver")
+                        .requestMatchers(HttpMethod.POST, "/admin/users/lookup")
+                        .hasAuthority("SCOPE_" + ApplicationScopes.USERS_READ_PROFILE)
+                        .requestMatchers(HttpMethod.GET, "/admin/groups/*/members")
+                        .hasAuthority("SCOPE_" + ApplicationScopes.USERS_READ_PROFILE)
                         .requestMatchers("/admin/**")
+                        .hasAnyRole("platform_admin", "tenant_admin", "domain_admin")
+
+                        // Legacy membership responses contain more than the narrow profile projection.
+                        .requestMatchers(HttpMethod.GET, "/teams/*/members", "/domains/*/members")
                         .hasAnyRole("platform_admin", "tenant_admin", "domain_admin")
 
                         // Identity mutation is administrative. Only UserController#listUsers and

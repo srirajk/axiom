@@ -1,11 +1,14 @@
 package com.openwolf.iam.controller;
 
 import com.openwolf.iam.dto.AgentExchangeContracts.AgentExchangeRouteResponse;
+import com.openwolf.iam.dto.AgentExchangeContracts.BrokerTargetResponse;
+import com.openwolf.iam.dto.AgentExchangeContracts.CreateBrokerTargetRequest;
 import com.openwolf.iam.dto.AgentExchangeContracts.CreateAgentExchangeRouteRequest;
 import com.openwolf.iam.dto.AgentExchangeContracts.RegisterTrustedBrokerRequest;
 import com.openwolf.iam.dto.AgentExchangeContracts.TrustedBrokerResponse;
 import com.openwolf.iam.service.AgentExchangeAuthorityService;
 import com.openwolf.iam.service.AuditService;
+import com.openwolf.iam.service.TrustedBrokerTargetService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -26,10 +29,13 @@ import java.util.UUID;
         + "#tenantId == authentication.token.claims['tenant_id'])")
 public class AgentExchangeAuthorityController {
     private final AgentExchangeAuthorityService authority;
+    private final TrustedBrokerTargetService targets;
     private final AuditService audit;
 
-    public AgentExchangeAuthorityController(AgentExchangeAuthorityService authority, AuditService audit) {
+    public AgentExchangeAuthorityController(AgentExchangeAuthorityService authority,
+                                            TrustedBrokerTargetService targets, AuditService audit) {
         this.authority = authority;
+        this.targets = targets;
         this.audit = audit;
     }
 
@@ -50,6 +56,28 @@ public class AgentExchangeAuthorityController {
     public ResponseEntity<TrustedBrokerResponse> revokeBroker(
             @PathVariable String tenantId, @PathVariable UUID brokerId, HttpServletRequest httpRequest) {
         return ResponseEntity.ok(authority.revokeBroker(tenantId, brokerId,
+                audit.currentActor(), correlation(httpRequest)));
+    }
+
+    @PostMapping("/brokers/{brokerId}/targets")
+    public ResponseEntity<BrokerTargetResponse> createBrokerTarget(
+            @PathVariable String tenantId, @PathVariable UUID brokerId,
+            @Valid @RequestBody CreateBrokerTargetRequest request, HttpServletRequest httpRequest) {
+        return ResponseEntity.status(201).body(targets.create(tenantId, brokerId, request,
+                audit.currentActor(), correlation(httpRequest)));
+    }
+
+    @GetMapping("/brokers/{brokerId}/targets")
+    public ResponseEntity<List<BrokerTargetResponse>> listBrokerTargets(
+            @PathVariable String tenantId, @PathVariable UUID brokerId) {
+        return ResponseEntity.ok(targets.list(tenantId, brokerId));
+    }
+
+    @PostMapping("/brokers/{brokerId}/targets/{targetId}/revoke")
+    public ResponseEntity<BrokerTargetResponse> revokeBrokerTarget(
+            @PathVariable String tenantId, @PathVariable UUID brokerId,
+            @PathVariable UUID targetId, HttpServletRequest httpRequest) {
+        return ResponseEntity.ok(targets.revoke(tenantId, brokerId, targetId,
                 audit.currentActor(), correlation(httpRequest)));
     }
 

@@ -1,6 +1,9 @@
 package com.openwolf.iam.repository;
 
 import com.openwolf.iam.entity.Group;
+import com.openwolf.iam.entity.Principal;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -35,4 +38,9 @@ public interface GroupRepository extends JpaRepository<Group, UUID> {
      */
     @Query("SELECT COUNT(m) FROM Group g JOIN g.members m WHERE g.id = :groupId")
     int countMembersById(@Param("groupId") UUID groupId);
+
+    @Query(value = "SELECT p FROM Group g JOIN g.members p WHERE g.id = :groupId AND g.tenantId = :tenantId ORDER BY p.id",
+           countQuery = "SELECT COUNT(p) FROM Group g JOIN g.members p WHERE g.id = :groupId AND g.tenantId = :tenantId")
+    Page<Principal> findMemberPage(@Param("groupId") UUID groupId,
+                                   @Param("tenantId") String tenantId, Pageable pageable);
 }
