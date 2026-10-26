@@ -97,9 +97,9 @@ public final class TokenExchangeAuthenticationProvider implements Authentication
         TenantApplicationService.ClientAuthority actorAuthority = applications.activeAuthority(actorClient.getClientId())
                 .filter(authority -> authority.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_SERVICE)
                 .orElseThrow(() -> new OAuth2AuthenticationException(UNAUTHORIZED_CLIENT));
+        AgentExchangeAuthorityService.ResolvedAuthority authority = null;
         try {
             Jwt subject = decodeSubject(exchange.subjectToken());
-            AgentExchangeAuthorityService.ResolvedAuthority authority;
             try {
                 authority = exchangeAuthority.resolve(subject, actorClient.getClientId(),
                         exchange.audience(), exchange.requestedScopes(), exchange.delegationPurpose());
@@ -189,6 +189,8 @@ public final class TokenExchangeAuthenticationProvider implements Authentication
                 "requester", actorClient.getClientId(), "actor", authority.actingWorkload().getWorkloadRef(),
                 "profile", authority.profile().name().toLowerCase(), "audience", exchange.audience(),
                 "scopes", exchange.requestedScopes(), "purpose", authority.purpose(), "expires_at", jwt.getExpiresAt()));
+        issued.put("routeId", authority.routeId());
+        issued.put("destinationType", authority.destinationType());
         if (jwt.getId() != null) issued.put("token_id", jwt.getId());
         if (binding != null) {
             issued.put("context_id", binding.contextId().toString());
@@ -214,7 +216,7 @@ public final class TokenExchangeAuthenticationProvider implements Authentication
             String auditId = UUID.randomUUID().toString();
             audit.logRequired(actorAuthority.tenantId(), actorClient.getClientId(), "TOKEN_EXCHANGE_DENIED",
                     "delegated_token", auditId, null,
-                    denialDetails(actorClient.getClientId(), exchange, denied), auditId);
+                    denialDetails(actorClient.getClientId(), exchange, denied, authority), auditId);
             throw denied;
         }
     }
@@ -255,11 +257,18 @@ public final class TokenExchangeAuthenticationProvider implements Authentication
     }
 
     private static Map<String, Object> denialDetails(String actor, TokenExchangeAuthenticationToken exchange,
-                                                     OAuth2AuthenticationException denied) {
+                                                     OAuth2AuthenticationException denied,
+                                                     AgentExchangeAuthorityService.ResolvedAuthority authority) {
         Map<String, Object> details = new java.util.LinkedHashMap<>();
         details.put("actor", actor);
         details.put("audience", exchange.audience());
         details.put("reason", denied.getError().getErrorCode());
+        details.put("routeId", authority == null ? null : authority.routeId());
+        details.put("destinationType", authority == null ? null : authority.destinationType());
+        if (denied instanceof AgentExchangeAuthorityService.RouteDenied route) {
+            details.put("routeId", route.routeId());
+            details.put("destinationType", route.destinationType());
+        }
         if (denied instanceof com.openwolf.iam.invocation.InvocationContextService.Denied context) {
             details.put("decision", "invocation_context_denied");
             details.put("context_reason", context.reason());

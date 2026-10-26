@@ -57,10 +57,26 @@ public class AgentExchangeAuthorityService {
     public record ResolvedAuthority(
             Profile profile, TokenUse tokenUse, Jwt subject, String tenantId, String audience,
             Set<String> scopes, String identityKind, String purpose, String authorityId,
-            String delegationId, AgentWorkloadIdentity actingWorkload, Instant authorityExpiresAt) {
+            String delegationId, AgentWorkloadIdentity actingWorkload, Instant authorityExpiresAt,
+            String routeId, AgentExchangeRoute.DestinationType destinationType) {
         public ResolvedAuthority {
             scopes = Set.copyOf(scopes);
         }
+    }
+
+    /** Verified route context for denial audit; a missing/ambiguous route has no selected ID. */
+    public static final class RouteDenied extends OAuth2AuthenticationException {
+        private final String routeId;
+        private final AgentExchangeRoute.DestinationType destinationType;
+
+        RouteDenied(OAuth2Error error, String routeId, AgentExchangeRoute.DestinationType destinationType) {
+            super(error);
+            this.routeId = routeId;
+            this.destinationType = destinationType;
+        }
+
+        public String routeId() { return routeId; }
+        public AgentExchangeRoute.DestinationType destinationType() { return destinationType; }
     }
 
     private final TrustedExchangeBrokerRepository brokers;
@@ -417,6 +433,31 @@ public class AgentExchangeAuthorityService {
                     || !applications.isActiveAudience(tenantId, route.getAudience())) fail(INVALID_GRANT);
             return;
         }
+        if (TokenUse.DELEGATED_ACCESS.name().toLowerCase().equals(token.getClaimAsString("token_use"))
+                && ("workforce".equals(token.getClaimAsString("authority_profile"))
+                || "customer_session".equals(token.getClaimAsString("authority_profile")))) {
+            String tenantId = required(token, "tenant_id");
+            AgentWorkloadIdentity actor = requireActiveActor(actor(token), tenantId);
+            AgentExchangeRoute route = routeByAuthority(token, tenantId);
+            if (route.getDestinationType() != AgentExchangeRoute.DestinationType.RESOURCE
+                    || !route.getSourceWorkloadId().equals(actor.getId())
+                    || !required(token, "client_id").equals(actor.getOauthClientId())
+                    || !singleAudience(token, route.getAudience())
+                    || !applications.isActiveAudience(tenantId, route.getAudience())) fail(INVALID_GRANT);
+            requireScopeSubset(subjectScopes(token), route.getAllowedScopes(),
+                    confidentialAuthority(actor.getOauthClientId(), tenantId).scopes());
+            if ("workforce".equals(token.getClaimAsString("authority_profile"))) {
+                if (!"workforce".equals(required(token, "identity_kind"))) fail(INVALID_GRANT);
+                var actorClient = confidentialAuthority(actor.getOauthClientId(), tenantId);
+                var workforce = applicationAccess.decisionAuthority(tenantId, actorClient.applicationId(), token.getSubject())
+                        .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
+                requireScopeSubset(subjectScopes(token), workforce.permissionEffects().keySet());
+            } else {
+                if (!"customer".equals(required(token, "identity_kind"))) fail(INVALID_GRANT);
+                requireActiveCustomer(tenantId, token.getSubject());
+            }
+            return;
+        }
         requireValidNonCustomerSubject(token);
     }
 
@@ -464,13 +505,12 @@ public class AgentExchangeAuthorityService {
         if (!approved.workloadId().equals(requester.getId())) fail(INVALID_GRANT);
         return new ResolvedAuthority(Profile.CIAM_CUSTOMER, TokenUse.DELEGATED_ACCESS, subject,
                 requester.getTenantId(), audience, scopes, "customer", approved.purpose(),
-                approved.grantId().toString(), approved.grantId().toString(), requester, approved.expiresAt());
+                approved.grantId().toString(), approved.grantId().toString(), requester, approved.expiresAt(), null, null);
     }
 
     private ResolvedAuthority resolveWorkforce(Jwt subject, AgentWorkloadIdentity requester, String audience,
                                                Set<String> scopes) {
         var actorClient = confidentialAuthority(requester.getOauthClientId(), requester.getTenantId());
-        if (!actorClient.audience().equals(audience)) fail(INVALID_TARGET);
         String sourceClientId = required(subject, "client_id");
         var sourceClient = applications.activeAuthority(sourceClientId)
                 .filter(TenantApplicationService.ClientAuthority::workforceSignIn)
@@ -478,19 +518,22 @@ public class AgentExchangeAuthorityService {
                 .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
         if (!singleAudience(subject, sourceClient.audience())) fail(INVALID_GRANT);
         // A human token from another application cannot borrow this workload's entitlements.
-        // Cross-application delegation needs a separate explicit authority contract.
         if (!sourceClient.applicationId().equals(actorClient.applicationId())) fail(INVALID_GRANT);
         var workforce = applicationAccess.decisionAuthority(requester.getTenantId(),
                         actorClient.applicationId(), subject.getSubject())
                 .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
         Set<String> permitted = workforce.permissionEffects().keySet();
+        if (!actorClient.audience().equals(audience)) {
+            return resolvePersonResource(Profile.WORKFORCE, subject, requester, audience, scopes,
+                    () -> requireScopeSubset(scopes, subjectScopes(subject), actorClient.scopes(), permitted));
+        }
         requireScopeSubset(scopes, subjectScopes(subject), actorClient.scopes(), permitted);
         String authorityId = "workforce:" + actorClient.applicationId() + ":"
                 + subject.getSubject() + ":" + workforce.entitlementRevision();
         return new ResolvedAuthority(Profile.WORKFORCE, TokenUse.EXCHANGE_SUBJECT, subject,
                 requester.getTenantId(), audience, scopes, "workforce",
                 "Workforce authority delegated to " + requester.getWorkloadRef(), authorityId,
-                null, requester, subject.getExpiresAt());
+                null, requester, subject.getExpiresAt(), null, null);
     }
 
     private ResolvedAuthority resolveAutonomousWorkload(Jwt subject, AgentWorkloadIdentity requester,
@@ -514,29 +557,28 @@ public class AgentExchangeAuthorityService {
         }
         if (!singleAudience(subject, receivingAudience(requester))) fail(INVALID_GRANT);
         String profile = required(subject, "authority_profile");
-        if (Profile.WORKFORCE.name().toLowerCase().equals(profile)) {
-            Actor initialActor = actor(subject);
-            AgentWorkloadIdentity initial = requireActiveActor(initialActor, requester.getTenantId());
+        if (Profile.WORKFORCE.name().toLowerCase().equals(profile)
+                || Profile.CUSTOMER_SESSION.name().toLowerCase().equals(profile)) {
+            Profile personProfile = Profile.WORKFORCE.name().toLowerCase().equals(profile)
+                    ? Profile.WORKFORCE : Profile.CUSTOMER_SESSION;
+            AgentWorkloadIdentity initial = requireActiveActor(actor(subject), requester.getTenantId());
             if (!initial.getId().equals(requester.getId())) fail(INVALID_GRANT);
-            requireWorkforceAuthority(subject, requester, scopes);
-            AgentExchangeRoute outbound = activeRoute(requester.getTenantId(), requester.getId(), audience,
-                    AgentExchangeRoute.DestinationType.GATEWAY, scopes);
-            TrustedExchangeBroker broker = activeBrokerByAudience(requester.getTenantId(), audience);
-            requireScopeSubset(scopes, subjectScopes(subject), outbound.getAllowedScopes());
-            return routeAuthority(Profile.WORKLOAD_CONTINUATION, TokenUse.GATEWAY_AUTHORIZATION,
-                    subject, requester, outbound, required(subject, "identity_kind"), scopes);
-        }
-        if (Profile.CUSTOMER_SESSION.name().toLowerCase().equals(profile)) {
-            Actor initialActor = actor(subject);
-            AgentWorkloadIdentity initial = requireActiveActor(initialActor, requester.getTenantId());
-            if (!initial.getId().equals(requester.getId())) fail(INVALID_GRANT);
-            requireCustomerAuthority(subject, requester, scopes);
-            AgentExchangeRoute outbound = activeRoute(requester.getTenantId(), requester.getId(), audience,
-                    AgentExchangeRoute.DestinationType.GATEWAY, scopes);
-            TrustedExchangeBroker broker = activeBrokerByAudience(requester.getTenantId(), audience);
-            requireScopeSubset(scopes, subjectScopes(subject), outbound.getAllowedScopes());
-            return routeAuthority(Profile.WORKLOAD_CONTINUATION, TokenUse.GATEWAY_AUTHORIZATION,
-                    subject, requester, outbound, "customer", scopes);
+            if (personProfile == Profile.WORKFORCE) requireWorkforceAuthority(subject, requester, scopes);
+            else requireCustomerAuthority(subject, requester, scopes);
+            AgentExchangeRoute outbound = activeRoute(requester.getTenantId(), requester.getId(), audience, null, scopes, true);
+            try {
+                requireScopeSubset(scopes, subjectScopes(subject), outbound.getAllowedScopes());
+                if (outbound.getDestinationType() == AgentExchangeRoute.DestinationType.RESOURCE) {
+                    return personResourceAuthority(personProfile, subject, requester, outbound, scopes);
+                }
+                if (outbound.getDestinationType() != AgentExchangeRoute.DestinationType.GATEWAY) fail(INVALID_TARGET);
+                activeBrokerByAudience(requester.getTenantId(), audience);
+                return routeAuthority(Profile.WORKLOAD_CONTINUATION, TokenUse.GATEWAY_AUTHORIZATION,
+                        subject, requester, outbound, personProfile == Profile.CUSTOMER_SESSION
+                                ? "customer" : required(subject, "identity_kind"), scopes);
+            } catch (OAuth2AuthenticationException denied) {
+                throw routeDenied(denied, outbound);
+            }
         }
         if (!Profile.GATEWAY_BACKEND.name().toLowerCase().equals(profile)) fail(INVALID_GRANT);
         Actor previous = currentActor(subject, requester.getTenantId());
@@ -579,7 +621,6 @@ public class AgentExchangeAuthorityService {
     private ResolvedAuthority resolveCustomerSession(Jwt subject, AgentWorkloadIdentity requester, String audience,
                                                      Set<String> scopes) {
         var actorClient = confidentialAuthority(requester.getOauthClientId(), requester.getTenantId());
-        if (!actorClient.audience().equals(audience)) fail(INVALID_TARGET);
         String sourceClientId = required(subject, "client_id");
         var sourceClient = applications.activeAuthority(sourceClientId)
                 .filter(TenantApplicationService.ClientAuthority::customerSignIn)
@@ -589,12 +630,16 @@ public class AgentExchangeAuthorityService {
         // A customer token from another application cannot borrow this workload's registration.
         if (!sourceClient.applicationId().equals(actorClient.applicationId())) fail(INVALID_GRANT);
         long version = requireCurrentCustomerVersion(requester.getTenantId(), subject);
+        if (!actorClient.audience().equals(audience)) {
+            return resolvePersonResource(Profile.CUSTOMER_SESSION, subject, requester, audience, scopes,
+                    () -> requireScopeSubset(scopes, subjectScopes(subject), actorClient.scopes(), sourceClient.scopes()));
+        }
         requireScopeSubset(scopes, subjectScopes(subject), actorClient.scopes(), sourceClient.scopes());
         String authorityId = customerAuthorityId(actorClient.applicationId(), subject.getSubject(), version);
         return new ResolvedAuthority(Profile.CUSTOMER_SESSION, TokenUse.EXCHANGE_SUBJECT, subject,
                 requester.getTenantId(), audience, scopes, "customer",
                 "Customer authority delegated to " + requester.getWorkloadRef(), authorityId,
-                null, requester, subject.getExpiresAt());
+                null, requester, subject.getExpiresAt(), null, null);
     }
 
     /** The exchanged customer token's authority is still current for its acting workload. */
@@ -693,7 +738,8 @@ public class AgentExchangeAuthorityService {
                     ? TokenUse.EXCHANGE_SUBJECT : TokenUse.DELEGATED_ACCESS;
             return new ResolvedAuthority(Profile.GATEWAY_BACKEND, use, subject, broker.getTenantId(),
                     audience, scopes, required(subject, "identity_kind"), target.getPurpose(),
-                    "broker-target:" + target.getId(), null, source, subject.getExpiresAt());
+                    "broker-target:" + target.getId(), null, source, subject.getExpiresAt(),
+                    null, target.getDestinationType());
         }
         AgentExchangeRoute target = activeRoute(broker.getTenantId(), source.getId(), audience, null, scopes);
         if (target.getDestinationType() == AgentExchangeRoute.DestinationType.GATEWAY) fail(INVALID_TARGET);
@@ -711,26 +757,64 @@ public class AgentExchangeAuthorityService {
                 required(subject, "identity_kind"), scopes);
     }
 
+    private ResolvedAuthority resolvePersonResource(Profile profile, Jwt subject, AgentWorkloadIdentity requester,
+                                                     String audience, Set<String> scopes, Runnable checkScopes) {
+        AgentExchangeRoute route = activeRoute(requester.getTenantId(), requester.getId(), audience,
+                AgentExchangeRoute.DestinationType.RESOURCE, scopes, true);
+        try {
+            checkScopes.run();
+            return personResourceAuthority(profile, subject, requester, route, scopes);
+        } catch (OAuth2AuthenticationException denied) {
+            throw routeDenied(denied, route);
+        }
+    }
+
+    private ResolvedAuthority personResourceAuthority(Profile profile, Jwt subject, AgentWorkloadIdentity requester,
+                                                       AgentExchangeRoute route, Set<String> scopes) {
+        if (!applications.isActiveAudience(requester.getTenantId(), route.getAudience())) fail(INVALID_TARGET);
+        requireScopeSubset(scopes, route.getAllowedScopes());
+        return routeAuthority(profile, TokenUse.DELEGATED_ACCESS, subject, requester, route,
+                required(subject, "identity_kind"), scopes);
+    }
+
+    private static RouteDenied routeDenied(OAuth2AuthenticationException denied, AgentExchangeRoute route) {
+        return new RouteDenied(denied.getError(), route.getId().toString(), route.getDestinationType());
+    }
+
     private ResolvedAuthority routeAuthority(Profile profile, TokenUse tokenUse, Jwt subject,
                                              AgentWorkloadIdentity actor, AgentExchangeRoute route,
                                              String identityKind, Set<String> scopes) {
         Instant expiry = route.getExpiresAt().isBefore(subject.getExpiresAt()) ? route.getExpiresAt() : subject.getExpiresAt();
         return new ResolvedAuthority(profile, tokenUse, subject, actor.getTenantId(), route.getAudience(),
                 scopes, identityKind, route.getPurpose(), route.getId().toString(), null,
-                actor, expiry);
+                actor, expiry, route.getId().toString(), route.getDestinationType());
     }
 
     private AgentExchangeRoute activeRoute(String tenantId, UUID sourceId, String audience,
                                            AgentExchangeRoute.DestinationType type, Set<String> requested) {
+        return activeRoute(tenantId, sourceId, audience, type, requested, false);
+    }
+
+    private AgentExchangeRoute activeRoute(String tenantId, UUID sourceId, String audience,
+                                           AgentExchangeRoute.DestinationType type, Set<String> requested,
+                                           boolean resourceScopeError) {
         AgentExchangeRoute match = null;
+        AgentExchangeRoute scopeDenied = null;
         for (AgentExchangeRoute route : routes.findByTenantIdAndSourceWorkloadIdAndAudienceAndStatus(
                 tenantId, sourceId, audience, AgentExchangeRoute.Status.ACTIVE)) {
-            if (!route.usableAt(clock.instant()) || (type != null && route.getDestinationType() != type)
-                    || !route.getAllowedScopes().containsAll(requested)) continue;
-            if (match != null) throw new OAuth2AuthenticationException(INVALID_GRANT);
+            if (!route.usableAt(clock.instant()) || (type != null && route.getDestinationType() != type)) continue;
+            if (!route.getAllowedScopes().containsAll(requested)) {
+                if (resourceScopeError && route.getDestinationType() == AgentExchangeRoute.DestinationType.RESOURCE) scopeDenied = route;
+                continue;
+            }
+            if (match != null) throw new RouteDenied(INVALID_GRANT, null,
+                    match.getDestinationType() == route.getDestinationType() ? route.getDestinationType() : null);
             match = route;
         }
-        if (match == null) throw new OAuth2AuthenticationException(INVALID_TARGET);
+        if (match == null) {
+            if (scopeDenied != null) throw routeDenied(new OAuth2AuthenticationException(INVALID_SCOPE), scopeDenied);
+            throw new RouteDenied(INVALID_TARGET, null, type);
+        }
         return match;
     }
 

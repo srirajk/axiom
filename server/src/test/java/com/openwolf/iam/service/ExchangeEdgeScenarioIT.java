@@ -294,8 +294,8 @@ class ExchangeEdgeScenarioIT {
     void eachEdgeReachesOnlyItsRoutedDestination() throws Exception {
         World w = world(TENANT_A, "edge-admin-a");
         Chain c = chain(w);
-        denied(exchange(w.entry, c.p1, w.gatewayAud, SCOPE), "invalid_target");       // E1 must target its own aud
-        denied(exchange(w.entry, c.p2, w.agentAud, SCOPE), "invalid_target");         // skip the Gateway
+        denied(exchange(w.entry, c.p1, w.gatewayAud, SCOPE), "invalid_target");       // no RESOURCE route for this first hop
+        denied(exchange(w.entry, c.p2, w.agentAud, SCOPE), "invalid_target");         // an AGENT route alone cannot skip the Gateway
         denied(exchange(w.broker, c.p3, w.gatewayAud, SCOPE), "invalid_target");      // broker never targets a Gateway
         denied(exchange(w.broker, c.p3, w.toolAud, SCOPE), "invalid_target");         // R4 belongs to the Agent
         denied(exchange(w.broker, c.p3, w.agentSiblingAud, SCOPE), "invalid_target"); // registered, but unrouted
@@ -330,8 +330,9 @@ class ExchangeEdgeScenarioIT {
         // E4: R4 does not allow EXTRA.
         denied(exchange(w.broker, p5, w.toolAud, BOTH), "invalid_target");
         assertThat(scopes(claims(token(exchange(w.broker, p5, w.toolAud, SCOPE))))).containsExactly(SCOPE);
-        // A scope no client in the chain is registered for is refused before any authority is consulted.
-        denied(exchange(w.broker, p3, w.agentAud, SCOPE + " edge:unregistered"), "invalid_scope");
+        // Broker exchange scopes are bounded by the subject and destination route, not the broker's own client scopes.
+        // An unregistered scope matches no route, so the existing broker path refuses the target.
+        denied(exchange(w.broker, p3, w.agentAud, SCOPE + " edge:unregistered"), "invalid_target");
     }
 
     // =================================================================================================================

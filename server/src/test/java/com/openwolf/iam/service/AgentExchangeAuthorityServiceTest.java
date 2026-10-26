@@ -14,6 +14,8 @@ import com.openwolf.iam.repository.AgentWorkloadIdentityRepository;
 import com.openwolf.iam.repository.TrustedExchangeBrokerRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.jwt.Jwt;
 
@@ -567,6 +569,120 @@ class AgentExchangeAuthorityServiceTest {
                         && destination.getId().equals(details.get("destinationWorkloadId"))
                         && AgentExchangeRoute.DestinationType.AGENT.equals(details.get("destinationType"))),
                 eq("test-revoke"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void duplicateMatchingResourceRoutesFailClosedOnFirstHop(boolean customer) {
+        Jwt person = personResourceSubject(customer);
+        var first = resourceRoute(NOW.plusSeconds(60));
+        var second = resourceRoute(NOW.plusSeconds(120));
+        resourceRoutes(first, second);
+        assertThatThrownBy(() -> service.resolve(person, SOURCE_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE)))
+                .isInstanceOf(AgentExchangeAuthorityService.RouteDenied.class)
+                .satisfies(error -> {
+                    var denied = (AgentExchangeAuthorityService.RouteDenied) error;
+                    assertThat(denied.getError().getErrorCode()).isEqualTo("invalid_grant");
+                    assertThat(denied.routeId()).isNull();
+                    assertThat(denied.destinationType()).isEqualTo(AgentExchangeRoute.DestinationType.RESOURCE);
+                });
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void resourceExpiryIsTheMinimumOfRouteAndSubject(boolean customer) {
+        Jwt person = personResourceSubject(customer);
+        for (long seconds : List.of(60L, 3600L)) {
+            var route = resourceRoute(NOW.plusSeconds(seconds));
+            resourceRoutes(route);
+            var result = service.resolve(person, SOURCE_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE));
+            assertThat(result.authorityExpiresAt()).isEqualTo(seconds < 600 ? route.getExpiresAt() : person.getExpiresAt());
+            assertThat(result.routeId()).isEqualTo(route.getId().toString());
+            assertThat(result.destinationType()).isEqualTo(AgentExchangeRoute.DestinationType.RESOURCE);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void resourceRouteCannotBypassSubjectClientApplicationTenantAudienceOrActivityChecks(boolean customer) {
+        Jwt person = personResourceSubject(customer);
+        resourceRoutes(resourceRoute(NOW.plusSeconds(600)));
+        var client = applications.activeAuthority("card-customer-web").orElseThrow();
+        var population = client.population();
+        for (var invalid : List.of(
+                new TenantApplicationService.ClientAuthority(TENANT, SOURCE_AUDIENCE, client.clientType(),
+                        client.scopes(), UUID.randomUUID(), population),
+                new TenantApplicationService.ClientAuthority("foreign", SOURCE_AUDIENCE, client.clientType(),
+                        client.scopes(), sourceApplicationId, population))) {
+            when(applications.activeAuthority("card-customer-web")).thenReturn(Optional.of(invalid));
+            assertThatThrownBy(() -> service.resolve(person, SOURCE_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE)))
+                    .isInstanceOf(OAuth2AuthenticationException.class);
+        }
+        when(applications.activeAuthority("card-customer-web")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.resolve(person, SOURCE_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE)))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+        when(applications.activeAuthority("card-customer-web")).thenReturn(Optional.of(client));
+        Jwt multiAudience = Jwt.withTokenValue("multi").headers(h -> h.putAll(person.getHeaders()))
+                .claims(c -> c.putAll(person.getClaims())).audience(List.of(SOURCE_AUDIENCE, DESTINATION_AUDIENCE)).build();
+        assertThatThrownBy(() -> service.resolve(multiAudience, SOURCE_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE)))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void agentDestinationDoesNotBecomeADirectPersonExchangePath(boolean customer) {
+        Jwt person = personResourceSubject(customer);
+        // setUp supplies only an AGENT route to this audience.
+        assertThatThrownBy(() -> service.resolve(person, SOURCE_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE)))
+                .isInstanceOf(OAuth2AuthenticationException.class)
+                .satisfies(error -> assertThat(((OAuth2AuthenticationException) error).getError().getErrorCode())
+                        .isEqualTo("invalid_target"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void resourceScopeIntersectionIncludesTheActorClient(boolean customer) {
+        Jwt person = personResourceSubject(customer);
+        resourceRoutes(resourceRoute(NOW.plusSeconds(600)));
+        when(applications.activeAuthority(SOURCE_CLIENT)).thenReturn(Optional.of(new TenantApplicationService.ClientAuthority(
+                TENANT, SOURCE_AUDIENCE, TenantApplicationClient.Type.CONFIDENTIAL_SERVICE, List.of(), sourceApplicationId)));
+        assertThatThrownBy(() -> service.resolve(person, SOURCE_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE)))
+                .isInstanceOf(OAuth2AuthenticationException.class)
+                .satisfies(error -> assertThat(((OAuth2AuthenticationException) error).getError().getErrorCode())
+                        .isEqualTo("invalid_scope"));
+    }
+
+    private Jwt personResourceSubject(boolean customer) {
+        when(applications.isActiveAudience(TENANT, DESTINATION_AUDIENCE)).thenReturn(true);
+        if (!customer) {
+            when(applicationAccess.decisionAuthority(TENANT, sourceApplicationId, "meridian-1008"))
+                    .thenReturn(Optional.of(new ApplicationAccessService.DecisionAuthority(
+                            "cards", 7, Set.of("operator"), Map.of(SCOPE, "allow"), Map.of(), "v1")));
+            return token("meridian-1008", SOURCE_AUDIENCE, Map.of("tenant_id", TENANT,
+                    "identity_kind", "workforce", "client_id", "card-customer-web", "scope", SCOPE));
+        }
+        var customers = mock(com.openwolf.iam.repository.CustomerIdentityRepository.class);
+        service.setCustomers(customers);
+        var person = new com.openwolf.iam.entity.CustomerIdentity(TENANT, "person@example.invalid", "Person", "hash", NOW);
+        person.verify(NOW);
+        when(customers.findByTenantIdAndId(TENANT, person.getId())).thenReturn(Optional.of(person));
+        when(applications.activeAuthority("card-customer-web")).thenReturn(Optional.of(new TenantApplicationService.ClientAuthority(
+                TENANT, SOURCE_AUDIENCE, TenantApplicationClient.Type.PUBLIC_BROWSER, List.of(SCOPE), sourceApplicationId,
+                TenantApplicationClient.Population.CUSTOMER)));
+        return token(person.getId().toString(), SOURCE_AUDIENCE, Map.of("tenant_id", TENANT,
+                "identity_kind", "customer", "client_id", "card-customer-web", "scope", SCOPE,
+                "token_version", person.getTokenVersion()));
+    }
+
+    private AgentExchangeRoute resourceRoute(Instant expiry) {
+        return new AgentExchangeRoute(TENANT, source.getId(), AgentExchangeRoute.DestinationType.RESOURCE,
+                null, DESTINATION_AUDIENCE, List.of(SCOPE), "Read resource", expiry, NOW);
+    }
+
+    private void resourceRoutes(AgentExchangeRoute... values) {
+        when(routes.findByTenantIdAndSourceWorkloadIdAndAudienceAndStatus(
+                TENANT, source.getId(), DESTINATION_AUDIENCE, AgentExchangeRoute.Status.ACTIVE))
+                .thenReturn(List.of(values));
     }
 
     private TenantApplicationService.ClientAuthority authority(
