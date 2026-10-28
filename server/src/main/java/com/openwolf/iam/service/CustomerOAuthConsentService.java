@@ -24,7 +24,9 @@ import java.util.UUID;
 @Service
 @Transactional
 public class CustomerOAuthConsentService {
-    public record ConsentResponse(String clientId, List<String> scopes, boolean consentRecorded) {}
+    public record ConsentResponse(String clientId, List<String> scopes, boolean consentRecorded, String consentId, String applicationId) {
+        public ConsentResponse(String clientId, List<String> scopes, boolean consentRecorded) { this(clientId, scopes, consentRecorded, null, null); }
+    }
 
     private final JdbcTemplate jdbc;
     private final RegisteredClientRepository registeredClients;
@@ -49,34 +51,46 @@ public class CustomerOAuthConsentService {
         return jdbc.query("SELECT registered_client_id, authorities FROM oauth2_authorization_consent WHERE principal_name = ?",
                         (row, n) -> Map.entry(row.getString(1), row.getString(2)), customerId.toString()).stream()
                 .map(entry -> registeredClients.findById(entry.getKey()))
-                .filter(client -> client != null && customerClientOf(tenantId, client.getClientId()))
-                .map(client -> response(client, consents.findById(client.getId(), customerId.toString())))
+                .filter(client -> client != null && customerAuthority(tenantId, client).isPresent())
+                .map(client -> response(client, consents.findById(client.getId(), customerId.toString()), customerAuthority(tenantId, client).orElseThrow().applicationId()))
                 .toList();
     }
 
     public ConsentResponse withdraw(String tenantId, UUID customerId, String clientId, String correlationId) {
-        if (!customerClientOf(tenantId, clientId)) throw EntityNotFoundException.forId("Customer application client", clientId);
+        // The legacy path remains for ordinary client ids. Shared CIMD URLs use the opaque registration id below.
+        if (clientId.startsWith("https://")) throw EntityNotFoundException.forId("Customer application client", clientId);
         RegisteredClient client = registeredClients.findByClientId(clientId);
         if (client == null) throw EntityNotFoundException.forId("Customer application client", clientId);
+        return withdrawRegistration(tenantId, customerId, client.getId(), correlationId);
+    }
+
+    public ConsentResponse withdrawRegistration(String tenantId, UUID customerId, String registeredClientId, String correlationId) {
+        RegisteredClient client = registeredClients.findById(registeredClientId);
+        var authority = client == null ? null : customerAuthority(tenantId, client).orElse(null);
+        if (authority == null) throw EntityNotFoundException.forId("Customer application consent", registeredClientId);
         OAuth2AuthorizationConsent consent = consents.findById(client.getId(), customerId.toString());
+        boolean cimd = client.getClientSettings().getSetting(com.openwolf.iam.auth.CimdRegisteredClientRepository.CLIENT_ID) != null;
+        if (cimd && consent == null) throw EntityNotFoundException.forId("Customer application consent", registeredClientId);
         if (consent != null) consents.remove(consent);
-        int ended = sessions.revokeAllForPrincipalAndClient(tenantId, customerId.toString(), clientId,
+        int ended = cimd ? sessions.revokeAllForPrincipalAndApplicationClient(tenantId, customerId.toString(), authority.applicationId(), client.getClientId(),
+                "customer withdrew application consent") : sessions.revokeAllForPrincipalAndClient(tenantId, customerId.toString(), client.getClientId(),
                 "customer withdrew application consent");
-        audit.record(tenantId, customerId.toString(), "CUSTOMER_OAUTH_CONSENT_WITHDRAWN", "application_client", clientId,
-                Map.of("consentRecordRemoved", consent != null, "endedSessions", ended), correlationId);
-        return new ConsentResponse(clientId, List.of(), false);
+        audit.record(tenantId, customerId.toString(), "CUSTOMER_OAUTH_CONSENT_WITHDRAWN", "application_client", client.getClientId(),
+                Map.of("consentRecordRemoved", consent != null, "endedSessions", ended, "applicationId", authority.applicationId().toString(),
+                        "consentId", registeredClientId), correlationId);
+        return new ConsentResponse(client.getClientId(), List.of(), false, client.getId(), authority.applicationId().toString());
     }
 
-    private boolean customerClientOf(String tenantId, String clientId) {
-        return applications.activeAuthority(clientId)
-                .filter(TenantApplicationService.ClientAuthority::customerSignIn)
-                .filter(authority -> authority.tenantId().equals(tenantId)).isPresent();
+    private java.util.Optional<TenantApplicationService.ClientAuthority> customerAuthority(String tenantId, RegisteredClient client) {
+        var resolved = client.getClientSettings().getSetting(com.openwolf.iam.auth.CimdRegisteredClientRepository.CLIENT_ID) != null
+                ? applications.activeAuthorityByRegisteredClientId(client.getId()) : applications.activeAuthority(client.getClientId());
+        return resolved.filter(TenantApplicationService.ClientAuthority::customerSignIn).filter(authority -> authority.tenantId().equals(tenantId));
     }
 
-    private static ConsentResponse response(RegisteredClient client, OAuth2AuthorizationConsent consent) {
+    private static ConsentResponse response(RegisteredClient client, OAuth2AuthorizationConsent consent, UUID applicationId) {
         List<String> scopes = consent == null ? List.of() : consent.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority).filter(value -> value.startsWith("SCOPE_"))
                 .map(value -> value.substring("SCOPE_".length())).sorted().toList();
-        return new ConsentResponse(client.getClientId(), scopes, consent != null);
+        return new ConsentResponse(client.getClientId(), scopes, consent != null, client.getId(), applicationId.toString());
     }
 }

@@ -45,9 +45,14 @@ public final class RegisteredKeyClientAssertionDecoderFactory implements JwtDeco
     private final StringRedisTemplate redis;
     private final String keyPrefix;
     private final Clock clock;
+    private CimdRegisteredClientRepository cimdClients;
 
     public RegisteredKeyClientAssertionDecoderFactory(StringRedisTemplate redis, String keyPrefix) {
         this(redis, keyPrefix, Clock.systemUTC());
+    }
+
+    public RegisteredKeyClientAssertionDecoderFactory(StringRedisTemplate redis, String prefix, CimdRegisteredClientRepository clients) {
+        this(redis, prefix); this.cimdClients = clients;
     }
 
     RegisteredKeyClientAssertionDecoderFactory(StringRedisTemplate redis, String keyPrefix, Clock clock) {
@@ -58,6 +63,25 @@ public final class RegisteredKeyClientAssertionDecoderFactory implements JwtDeco
 
     @Override
     public JwtDecoder createDecoder(RegisteredClient client) {
+        if (client.getClientSettings().getSetting(CimdRegisteredClientRepository.CLIENT_ID) != null) {
+            return token -> {
+                try {
+                    var header = com.nimbusds.jwt.SignedJWT.parse(token).getHeader();
+                    if (!java.util.Set.of(JWSAlgorithm.RS256, JWSAlgorithm.ES256).contains(header.getAlgorithm())) {
+                        throw new IllegalArgumentException("Unsupported client assertion algorithm");
+                    }
+                    if (cimdClients == null) throw new IllegalArgumentException("CIMD assertion resolver unavailable");
+                    var loaded = cimdClients.assertionClient(client, header.getKeyID());
+                    return inlineDecoder(loaded).decode(token);
+                } catch (Exception refused) {
+                    throw new org.springframework.security.oauth2.jwt.BadJwtException("Client assertion could not be verified", refused);
+                }
+            };
+        }
+        return inlineDecoder(client);
+    }
+
+    private JwtDecoder inlineDecoder(RegisteredClient client) {
         JWKSet keys = ClientAssertionKeys.keys(client);
         JwsAlgorithm algorithm = client.getClientSettings().getTokenEndpointAuthenticationSigningAlgorithm();
         if (keys == null || algorithm == null) throw new OAuth2AuthenticationException(INVALID_CLIENT);

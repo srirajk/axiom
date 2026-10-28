@@ -137,6 +137,13 @@ public class RedisOAuth2AuthorizationService implements OAuth2AuthorizationServi
     @Override
     public void save(OAuth2Authorization authorization) {
         Assert.notNull(authorization, "authorization cannot be null");
+        var binding = CimdClientContext.current();
+        if (binding != null) {
+            var enriched = OAuth2Authorization.from(authorization).attribute(CimdRegisteredClientRepository.CLIENT_ID, binding.clientId());
+            if (binding.validatedClient() != null) enriched.attribute(CimdRegisteredClientRepository.DOCUMENT_NAME,
+                    binding.validatedClient().getClientSettings().getSetting(CimdRegisteredClientRepository.DOCUMENT_NAME));
+            authorization = enriched.build();
+        }
         String tenant = tenantOf(authorization);
         boolean invalidated = authorization.getAccessToken() != null && authorization.getAccessToken().isInvalidated();
 
@@ -151,6 +158,12 @@ public class RedisOAuth2AuthorizationService implements OAuth2AuthorizationServi
         stringRedis.opsForValue().set(authorizationIdLocatorKey(authorization.getId()),
                 writeLocator(new Locator(tenant, authorization.getId())), ttl);
         saveLocators(authorization, tenant, ttl);
+        if (authorization.getAttribute(CimdRegisteredClientRepository.CLIENT_ID) != null) {
+            String index = clientAuthorizationIndex(authorization.getRegisteredClientId());
+            stringRedis.opsForZSet().add(index, authorization.getId(), clock.instant().plus(ttl).getEpochSecond());
+            stringRedis.opsForZSet().removeRangeByScore(index, 0, clock.instant().getEpochSecond());
+            stringRedis.expire(index, Duration.ofDays(91));
+        }
         // Revocation or a replayed code invalidates the access token: the session it is bound to ends with it, so
         // resource servers that check sessions (not only introspection) also refuse the token.
         if (invalidated) endSession(tenant, authorization, "access token invalidated");
@@ -165,8 +178,26 @@ public class RedisOAuth2AuthorizationService implements OAuth2AuthorizationServi
         deleteLocators(persisted != null ? persisted : authorization, tenant);
         stringRedis.delete(authorizationIdLocatorKey(authorization.getId()));
         authorizationRedis.delete(authorizationKey(tenant, authorization.getId()));
+        if (authorization.getAttribute(CimdRegisteredClientRepository.CLIENT_ID) != null) {
+            stringRedis.opsForZSet().remove(clientAuthorizationIndex(authorization.getRegisteredClientId()), authorization.getId());
+        }
         endSession(tenant, authorization, "authorization removed");
     }
+
+    /** Only server-owned registration ids reach this index. Each located record is rechecked before withdrawal. */
+    public void removeForRegisteredClient(String registeredClientId) {
+        String key = clientAuthorizationIndex(registeredClientId);
+        while (true) {
+            Set<String> ids = stringRedis.opsForZSet().range(key, 0, 99);
+            if (ids == null || ids.isEmpty()) return;
+            for (String id : ids) {
+                OAuth2Authorization record = findById(id);
+                if (record != null && registeredClientId.equals(record.getRegisteredClientId())) remove(record);
+                stringRedis.opsForZSet().remove(key, id);
+            }
+        }
+    }
+    private String clientAuthorizationIndex(String id) { return contextSegment + ":" + serviceSegment + ":client-authorizations:" + sha256(id); }
 
     @Override
     public OAuth2Authorization findById(String id) {
@@ -175,6 +206,18 @@ public class RedisOAuth2AuthorizationService implements OAuth2AuthorizationServi
         if (locator == null || locator.tenant() == null || !id.equals(locator.authorizationId())) return null;
         OAuth2Authorization record = readRecord(locator.tenant(), id);
         return record != null && locator.tenant().equals(tenantOf(record)) ? record : null;
+    }
+
+    /** Read-only coordinates for CIMD selection. Replay withdrawal happens later, after client authentication. */
+    public OAuth2Authorization findForClientBinding(String token, OAuth2TokenType type) {
+        String raw = stringRedis.opsForValue().get(tokenLocatorKey(token));
+        boolean spent = raw == null && OAuth2TokenType.REFRESH_TOKEN.equals(type);
+        if (spent) raw = stringRedis.opsForValue().get(spentRefreshKey(token));
+        Locator locator = parseLocator(raw);
+        if (locator == null || locator.tenant() == null || locator.authorizationId() == null) return null;
+        OAuth2Authorization record = readRecord(locator.tenant(), locator.authorizationId());
+        if (record == null || !locator.tenant().equals(tenantOf(record))) return null;
+        return spent || holds(record, token, type) ? record : null;
     }
 
     @Override
@@ -259,6 +302,10 @@ public class RedisOAuth2AuthorizationService implements OAuth2AuthorizationServi
         if (locator == null || locator.tenant() == null || locator.authorizationId() == null) return;
         OAuth2Authorization family = readRecord(locator.tenant(), locator.authorizationId());
         if (family == null || !locator.tenant().equals(tenantOf(family))) return;
+        var authenticated = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (!(authenticated instanceof org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken client)
+                || !client.isAuthenticated() || client.getRegisteredClient() == null
+                || !family.getRegisteredClientId().equals(client.getRegisteredClient().getId())) return;
         log.warn("Refresh token reuse detected for authorization {} in tenant {}: withdrawing the refresh family",
                 locator.authorizationId(), locator.tenant());
         deleteLocators(family, locator.tenant());

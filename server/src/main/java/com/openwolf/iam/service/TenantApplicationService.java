@@ -70,6 +70,7 @@ public class TenantApplicationService {
     private final ExecutionTenant executionTenant;
     private final AuditService audit;
     private final BusinessScopeRegistry businessScopes;
+    private final TenantClientLookup clientLookup;
 
     @Autowired
     public TenantApplicationService(TenantApplicationRepository applications, TenantApplicationClientRepository clients,
@@ -80,6 +81,7 @@ public class TenantApplicationService {
         this.applications = applications; this.clients = clients; this.tenants = tenants; this.activeTenants = activeTenants;
         this.registeredClients = registeredClients; this.passwordEncoder = passwordEncoder;
         this.executionTenant = executionTenant; this.audit = audit; this.businessScopes = businessScopes;
+        this.clientLookup = new TenantClientLookup(clients);
     }
 
     /** Focused-test constructor with no deployment-approved business scopes. */
@@ -123,7 +125,7 @@ public class TenantApplicationService {
     @Transactional(readOnly = true)
     public List<TenantApplicationClientResponse> listClients(String tenantId, UUID applicationId) {
         TenantApplication app = applicationForTenant(tenantId, applicationId);
-        return clients.findByApplicationIdOrderByClientId(app.getId()).stream().map(this::clientResponse).toList();
+        return clients.findByApplicationIdOrderByClientId(app.getId()).stream().filter(c -> c.getExternalClientId() == null).map(this::clientResponse).toList();
     }
 
     public CreatedTenantApplicationClientResponse createClient(String tenantId, UUID applicationId,
@@ -143,7 +145,7 @@ public class TenantApplicationService {
         if (registeredClients.findByClientId(request.clientId()) != null || clients.findByClientId(request.clientId()).isPresent()) {
             throw new ResourceConflictException("Client id already exists");
         }
-        List<String> scopes = approvedScopes(tenantId, request.clientType(), population, request.scopes());
+        List<String> scopes = approvedScopes(tenantId, request.clientType(), population, request.scopes(), Boolean.TRUE.equals(request.refreshTokens()));
         boolean hasSecret = request.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_WEB
                 || (request.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_SERVICE && !keyAuthenticated);
         String secret = hasSecret ? (supplied != null ? supplied : generatedSecret()) : null;
@@ -158,6 +160,119 @@ public class TenantApplicationService {
         return new CreatedTenantApplicationClientResponse(response, supplied != null ? null : secret);
     }
 
+    /** Adds a distinct application approval for a shared, external OAuth client identifier. No remote fetch occurs here. */
+    public com.openwolf.iam.dto.TrustedClientResponse createTrustedClient(String tenantId, UUID applicationId,
+            com.openwolf.iam.dto.TrustedClientRequest request, HttpServletRequest httpRequest) {
+        TenantApplication app = applicationForTenant(tenantId, applicationId);
+        com.openwolf.iam.auth.CimdHttpFetcher.requireUrl(request.clientId());
+        if (!Set.of("none", "private_key_jwt").contains(request.tokenEndpointAuthMethod())) {
+            throw new IllegalArgumentException("unsupported trusted client authentication method");
+        }
+        if (request.redirectUris() == null || request.redirectUris().isEmpty() || request.redirectUris().size() > 32) {
+            throw new IllegalArgumentException("trusted redirects are required");
+        }
+        request.redirectUris().forEach(com.openwolf.iam.auth.CimdDocuments::requireRedirect);
+        if (clients.existsByApplicationIdAndExternalClientIdAndStatus(applicationId, request.clientId(), TenantApplicationClient.Status.ACTIVE)) {
+            throw new ResourceConflictException("This application already has an approval for that client URL");
+        }
+        List<String> requestedScopes = request.scopes();
+        if (requestedScopes == null || requestedScopes.isEmpty()) {
+            Set<String> inherited = new LinkedHashSet<>(List.of("openid", "profile", "email"));
+            clients.findByApplicationIdOrderByClientId(app.getId()).stream()
+                    .filter(c -> c.getStatus() == TenantApplicationClient.Status.ACTIVE && c.getClientType().interactive())
+                    .forEach(c -> inherited.addAll(c.getAllowedScopes()));
+            inherited.remove(OFFLINE_ACCESS);
+            requestedScopes = List.copyOf(inherited);
+        }
+        boolean refresh = request.refreshTokens() == null || request.refreshTokens();
+        Set<String> scopes = new LinkedHashSet<>(requestedScopes);
+        if (refresh) scopes.add(OFFLINE_ACCESS);
+        else if (scopes.contains(OFFLINE_ACCESS)) throw new IllegalArgumentException("offline_access requires refresh opt-in");
+        String internal = "cimd-" + UUID.randomUUID();
+        var input = new CreateTenantApplicationClientRequest(internal, TenantApplicationClient.Type.PUBLIC_BROWSER,
+                request.redirectUris(), List.of(), List.copyOf(scopes), null, request.population(), request.accessTokenTtlSeconds(),
+                request.refreshTokenTtlSeconds(), true, "none", null, refresh);
+        createClient(tenantId, applicationId, input, httpRequest);
+        TenantApplicationClient client = clients.findByClientId(internal).orElseThrow();
+        client.trustExternalClient(request.clientId()); clients.save(client); clients.flush();
+        RegisteredClient stored = storedRegistration(internal);
+        var settings = ClientSettings.withSettings(stored.getClientSettings().getSettings())
+                .setting(com.openwolf.iam.auth.CimdRegisteredClientRepository.CLIENT_ID, request.clientId());
+        registeredClients.save(RegisteredClient.from(stored)
+                .clientName(com.openwolf.iam.auth.CimdDocuments.safeDisplayName(request.displayName() == null ? app.getDisplayName() : request.displayName()))
+                .clientAuthenticationMethods(methods -> { methods.clear(); methods.add(new ClientAuthenticationMethod(request.tokenEndpointAuthMethod())); })
+                .clientSettings(settings.build()).build());
+        var response = trustedResponse(client);
+        audit.logRequired(tenantId, audit.currentActor(), "ADD_TRUSTED_CLIENT", "application_client", request.clientId(),
+                null, Map.of("applicationId", applicationId.toString(), "approval", response), correlation(httpRequest));
+        return response;
+    }
+
+    @Transactional(readOnly = true)
+    public List<com.openwolf.iam.dto.TrustedClientResponse> listTrustedClients(String tenantId, UUID applicationId) {
+        TenantApplication app = applicationForTenant(tenantId, applicationId);
+        return clients.findByApplicationIdOrderByClientId(app.getId()).stream().filter(c -> c.getExternalClientId() != null)
+                .map(this::trustedResponse).toList();
+    }
+
+    public void deleteTrustedClient(String tenantId, UUID applicationId, UUID id, long expectedRevision,
+                                   HttpServletRequest httpRequest) {
+        TenantApplicationClient client = clientForTenant(tenantId, applicationId, id);
+        if (client.getExternalClientId() == null) throw EntityNotFoundException.forId("Trusted client", id);
+        requireRevision(client, expectedRevision);
+        var before = trustedResponse(client);
+        client.disable(); clients.save(client);
+        endClientSessions(tenantId, client.getClientId(), "trusted client approval removed");
+        withdrawTrustedGrants(client);
+        audit.logRequired(tenantId, audit.currentActor(), "DELETE_TRUSTED_CLIENT", "application_client", client.getExternalClientId(),
+                before, Map.of("applicationId", applicationId.toString()), correlation(httpRequest));
+    }
+
+    private void withdrawTrustedGrants(TenantApplicationClient client) {
+        if (client.getExternalClientId() == null) return;
+        if (registeredClients instanceof com.openwolf.iam.auth.CimdRegisteredClientRepository cimd) cimd.evictMetadata(client.getExternalClientId());
+        if (authorizationStore != null && authorizationStore.getIfAvailable() instanceof com.openwolf.iam.auth.RedisOAuth2AuthorizationService redis) {
+            redis.removeForRegisteredClient(storedRegistration(client.getClientId()).getId());
+        }
+    }
+
+    private org.springframework.beans.factory.ObjectProvider<org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService> authorizationStore;
+    @Autowired
+    void setAuthorizationStore(org.springframework.beans.factory.ObjectProvider<org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService> store) {
+        this.authorizationStore = store;
+    }
+
+    /** Updating trust replaces the approval generation and withdraws every old grant before the new one can be used. */
+    public com.openwolf.iam.dto.TrustedClientResponse updateTrustedClient(String tenantId, UUID applicationId, UUID id,
+            com.openwolf.iam.dto.TrustedClientRequest request, HttpServletRequest httpRequest) {
+        var client = clientForTenant(tenantId, applicationId, id);
+        if (request.expectedRevision() == null || !request.clientId().equals(client.getExternalClientId())) {
+            throw new IllegalArgumentException("An update requires expectedRevision and the unchanged client URL");
+        }
+        deleteTrustedClient(tenantId, applicationId, id, request.expectedRevision(), httpRequest);
+        clients.flush();
+        var updated = createTrustedClient(tenantId, applicationId, request, httpRequest);
+        audit.logRequired(tenantId, audit.currentActor(), "UPDATE_TRUSTED_CLIENT", "application_client", request.clientId(),
+                Map.of("previousApprovalId", id.toString()), updated, correlation(httpRequest));
+        return updated;
+    }
+
+    private RegisteredClient storedRegistration(String clientId) {
+        return registeredClients instanceof com.openwolf.iam.auth.CimdRegisteredClientRepository cimd
+                ? cimd.storedByClientId(clientId) : registeredClients.findByClientId(clientId);
+    }
+
+    private com.openwolf.iam.dto.TrustedClientResponse trustedResponse(TenantApplicationClient client) {
+        RegisteredClient registered = storedRegistration(client.getClientId());
+        boolean refresh = registered.getAuthorizationGrantTypes().contains(AuthorizationGrantType.REFRESH_TOKEN);
+        return new com.openwolf.iam.dto.TrustedClientResponse(client.getId(), client.getExternalClientId(),
+                registered.getRedirectUris().stream().sorted().toList(),
+                registered.getClientAuthenticationMethods().iterator().next().getValue(), client.getAllowedScopes(), refresh,
+                refresh ? registered.getTokenSettings().getRefreshTokenTimeToLive().toSeconds() : null,
+                client.getPopulation(), client.getStatus(), client.getRevision(), registered.getClientName(),
+                registered.getTokenSettings().getAccessTokenTimeToLive().toSeconds());
+    }
+
     public void disableApplication(String tenantId, UUID applicationId, HttpServletRequest httpRequest) {
         TenantApplication app = applicationForTenant(tenantId, applicationId);
         if (app.getStatus() == TenantApplication.Status.DISABLED) return;
@@ -167,7 +282,7 @@ public class TenantApplicationService {
                 before, applicationResponse(app), correlation(httpRequest));
         // Disabling an application ends every session issued to any of its clients.
         clients.findByApplicationIdOrderByClientId(app.getId())
-                .forEach(c -> endClientSessions(tenantId, c.getClientId(), "application disabled"));
+                .forEach(c -> { endClientSessions(tenantId, c.getClientId(), "application disabled"); withdrawTrustedGrants(c); });
     }
 
     public void disableClient(String tenantId, UUID applicationId, UUID clientId, HttpServletRequest httpRequest) {
@@ -180,6 +295,7 @@ public class TenantApplicationService {
         audit.logRequired(tenantId, audit.currentActor(), "DISABLE_APPLICATION_CLIENT", "application_client", client.getId().toString(),
                 before, clientResponse(client), correlation(httpRequest));
         endClientSessions(tenantId, client.getClientId(), "client disabled");
+        withdrawTrustedGrants(client);
     }
 
     /** Rotates a confidential service credential and returns its plaintext exactly once. */
@@ -287,7 +403,12 @@ public class TenantApplicationService {
 
     /** Issued tokens of a disabled client stop at once: their durable sessions end (status checks then refuse). */
     private void endClientSessions(String tenantId, String clientId, String reason) {
-        if (sessionService != null) sessionService.revokeAllForClient(tenantId, clientId, reason);
+        if (sessionService != null) {
+            var row = clients.findByClientId(clientId).orElse(null);
+            if (row != null && row.getExternalClientId() != null) {
+                sessionService.revokeAllForApplicationClient(tenantId, row.getApplicationId(), row.getExternalClientId(), reason);
+            } else sessionService.revokeAllForClient(tenantId, clientId, reason);
+        }
     }
 
     private com.openwolf.iam.authority.lifecycle.ClientSecretOverlapStore secretOverlaps;
@@ -300,12 +421,29 @@ public class TenantApplicationService {
     /** Token-time authority; empty means a deployment-owned system client, not a permissive fallback. */
     @Transactional(readOnly = true)
     public Optional<ClientAuthority> activeAuthority(String clientId) {
-        return clients.findByClientId(clientId).flatMap(client -> applications.findById(client.getApplicationId())
+        return clientLookup.find(clientId).flatMap(client -> applications.findById(client.getApplicationId())
                 .filter(app -> activeTenants.isActive(app.getTenantId()))
                 .filter(app -> app.getStatus() == TenantApplication.Status.ACTIVE)
                 .filter(app -> client.getStatus() == TenantApplicationClient.Status.ACTIVE)
                 .map(app -> new ClientAuthority(app.getTenantId(), app.getAudience(), client.getClientType(),
                         client.getAllowedScopes(), app.getId(), client.getPopulation())));
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<ClientAuthority> activeAuthority(String clientId, String tenantId, String audience) {
+        if (clientId == null || !clientId.startsWith("https://")) return activeAuthority(clientId);
+        var matches = clients.findTrustedByResource(clientId, audience).stream()
+                .map(c -> activeAuthority(c.getClientId())).flatMap(Optional::stream)
+                .filter(authority -> authority.tenantId().equals(tenantId)).toList();
+        return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
+    }
+
+    /** Context-free resolution for persisted grants and consent management, using a server-owned registration id. */
+    @Transactional(readOnly = true)
+    public Optional<ClientAuthority> activeAuthorityByRegisteredClientId(String registeredId) {
+        RegisteredClient stored = registeredClients instanceof com.openwolf.iam.auth.CimdRegisteredClientRepository cimd
+                ? cimd.storedById(registeredId) : registeredClients.findById(registeredId);
+        return stored == null ? Optional.empty() : activeAuthority(stored.getClientId());
     }
 
     /** Serialize broker/workload registration on their shared OAuth client row. Caller must be transactional. */
@@ -325,7 +463,7 @@ public class TenantApplicationService {
 
     @Transactional(readOnly = true)
     public boolean knownButDisabled(String clientId) {
-        return clients.findByClientId(clientId).map(client -> activeAuthority(clientId).isEmpty()).orElse(false);
+        return clientLookup.find(clientId).map(client -> activeAuthority(clientId).isEmpty()).orElse(false);
     }
 
     @Transactional(readOnly = true)
@@ -351,7 +489,7 @@ public class TenantApplicationService {
     }
 
     private RegisteredClient registeredClientFor(TenantApplicationClient client) {
-        RegisteredClient registered = registeredClients.findByClientId(client.getClientId());
+        RegisteredClient registered = storedRegistration(client.getClientId());
         if (registered == null) throw new IllegalStateException("Persisted application client registration is missing");
         return registered;
     }
@@ -405,10 +543,17 @@ public class TenantApplicationService {
                             .requireAuthorizationConsent(Boolean.TRUE.equals(request.requireConsent()))
                             .setting(POPULATION_SETTING, population.name()).build());
             if (type == TenantApplicationClient.Type.PUBLIC_BROWSER) {
-                if (request.refreshTokenTtlSeconds() != null) {
-                    throw new IllegalArgumentException("Public browser clients receive no refresh tokens");
+                if (request.refreshTokenTtlSeconds() != null && !Boolean.TRUE.equals(request.refreshTokens())) {
+                    throw new IllegalArgumentException("Public browser refresh tokens require explicit opt-in");
                 }
                 builder.clientAuthenticationMethod(ClientAuthenticationMethod.NONE);
+                if (Boolean.TRUE.equals(request.refreshTokens())) {
+                    builder.authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
+                            .clientSettings(ClientSettings.builder().requireProofKey(true)
+                                    .requireAuthorizationConsent(Boolean.TRUE.equals(request.requireConsent()))
+                                    .setting(POPULATION_SETTING, population.name()).setting(com.openwolf.iam.auth.OptInRefreshTokenGenerator.ABSOLUTE_LIFETIME, true).build());
+                    tokens.reuseRefreshTokens(false).refreshTokenTimeToLive(publicRefreshTtl(request.refreshTokenTtlSeconds()));
+                }
             } else {
                 builder.clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
                         .clientSecret(passwordEncoder.encode(secret))
@@ -422,7 +567,7 @@ public class TenantApplicationService {
                 throw new IllegalArgumentException("Confidential service clients cannot register browser redirects");
             }
             if (request.requireConsent() != null || request.accessTokenTtlSeconds() != null
-                    || request.refreshTokenTtlSeconds() != null) {
+                    || request.refreshTokenTtlSeconds() != null || Boolean.TRUE.equals(request.refreshTokens())) {
                 throw new IllegalArgumentException("Service clients use the deployment's client-credentials lifetime");
             }
             builder.authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
@@ -467,6 +612,14 @@ public class TenantApplicationService {
         return requested;
     }
 
+    private Duration publicRefreshTtl(Long seconds) {
+        Duration ttl = seconds == null ? Duration.ofDays(30) : Duration.ofSeconds(seconds);
+        if (ttl.compareTo(Duration.ofMinutes(1)) < 0 || ttl.compareTo(refreshMaxTtl) > 0) {
+            throw new IllegalArgumentException("public refresh lifetime exceeds the deployment refresh-token bounds");
+        }
+        return ttl;
+    }
+
     private Duration refreshTokenTtl(CreateTenantApplicationClientRequest request) {
         if (request.refreshTokenTtlSeconds() == null) return refreshTtl;
         Duration requested = Duration.ofSeconds(request.refreshTokenTtlSeconds());
@@ -503,11 +656,11 @@ public class TenantApplicationService {
     }
 
     private List<String> approvedScopes(String tenantId, TenantApplicationClient.Type type,
-                                        TenantApplicationClient.Population population, List<String> requested) {
+                                        TenantApplicationClient.Population population, List<String> requested, boolean publicRefresh) {
         Set<String> scopes = new LinkedHashSet<>(requested == null ? Set.of() : requested);
         Set<String> allowed = new LinkedHashSet<>(!type.interactive() ? SERVICE_SCOPES
                 : population == TenantApplicationClient.Population.CUSTOMER ? CUSTOMER_SCOPES : PUBLIC_SCOPES);
-        if (type == TenantApplicationClient.Type.CONFIDENTIAL_WEB) allowed.add(OFFLINE_ACCESS);
+        if (type == TenantApplicationClient.Type.CONFIDENTIAL_WEB || type == TenantApplicationClient.Type.PUBLIC_BROWSER && publicRefresh) allowed.add(OFFLINE_ACCESS);
         if (scopes.isEmpty()) scopes.addAll(allowed);
         for (String scope : scopes) {
             if (!allowed.contains(scope) && !businessScopes.isApproved(tenantId, scope)) {
@@ -530,8 +683,8 @@ public class TenantApplicationService {
     }
     private String checkedBrowserUri(String value, String label) {
         URI uri = URI.create(value);
-        boolean localHttp = "http".equals(uri.getScheme()) && ("localhost".equals(uri.getHost()) || "127.0.0.1".equals(uri.getHost()));
-        if ((!"https".equals(uri.getScheme()) && !localHttp) || uri.getHost() == null || uri.getFragment() != null) {
+        boolean localHttp = "http".equals(uri.getScheme()) && ("localhost".equals(uri.getHost()) || "127.0.0.1".equals(uri.getHost()) || "[::1]".equals(uri.getHost()));
+        if ((!"https".equals(uri.getScheme()) && !localHttp) || uri.getHost() == null || uri.getFragment() != null || uri.getUserInfo() != null || uri.getPort() == 0 || uri.getPort() > 65535) {
             throw new IllegalArgumentException("Invalid " + label);
         }
         return uri.toString();
@@ -541,7 +694,7 @@ public class TenantApplicationService {
                 app.getDescription(), app.getAudience(), app.getStatus(), app.getRevision(), app.getCreatedAt(), app.getUpdatedAt());
     }
     private TenantApplicationClientResponse clientResponse(TenantApplicationClient client) {
-        RegisteredClient registered = registeredClients.findByClientId(client.getClientId());
+        RegisteredClient registered = storedRegistration(client.getClientId());
         if (registered == null) throw new IllegalStateException("Persisted application client registration is missing");
         return clientResponse(client, registered);
     }

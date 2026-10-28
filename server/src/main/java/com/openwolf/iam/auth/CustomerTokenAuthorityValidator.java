@@ -74,7 +74,7 @@ public final class CustomerTokenAuthorityValidator implements OAuth2TokenValidat
             CustomerIdentity customer = customers.findByTenantIdAndId(tenantId, customerId).orElse(null);
             if (customer == null || customer.getStatus() != CustomerIdentity.Status.ACTIVE
                     || customer.getTokenVersion() != tokenVersion.longValue()) return failure();
-            var client = applications.activeAuthority(clientId)
+            var client = clientAuthority(clientId, tenantId, token.getAudience().getFirst())
                     .filter(authority -> authority.clientType() == TenantApplicationClient.Type.PUBLIC_BROWSER)
                     .filter(authority -> authority.tenantId().equals(tenantId)).orElse(null);
             Set<String> scopes = scopes(token);
@@ -96,13 +96,17 @@ public final class CustomerTokenAuthorityValidator implements OAuth2TokenValidat
         CustomerIdentity customer = customers.findByTenantIdAndId(tenantId, customerId).orElse(null);
         if (customer == null || customer.getStatus() != CustomerIdentity.Status.ACTIVE
                 || customer.getTokenVersion() != tokenVersion.longValue()) return failure();
-        var client = applications.activeAuthority(clientId)
+        var client = clientAuthority(clientId, tenantId, token.getAudience().getFirst())
                 .filter(TenantApplicationService.ClientAuthority::customerSignIn)
                 .filter(authority -> authority.tenantId().equals(tenantId)).orElse(null);
         if (client == null || !client.audience().equals(token.getAudience().getFirst())) return failure();
         Set<String> scopes = scopes(token);
         if (scopes.isEmpty() || !client.scopes().containsAll(scopes)) return failure();
         return OAuth2TokenValidatorResult.success();
+    }
+
+    private java.util.Optional<TenantApplicationService.ClientAuthority> clientAuthority(String clientId, String tenantId, String audience) {
+        return clientId.startsWith("https://") ? applications.activeAuthority(clientId, tenantId, audience) : applications.activeAuthority(clientId);
     }
 
     private static String required(Jwt token, String name) {

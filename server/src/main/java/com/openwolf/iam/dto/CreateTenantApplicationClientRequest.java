@@ -14,7 +14,7 @@ import java.util.Map;
  *
  * <p>Optional IDP-baseline settings (all validated server-side; absent means the deployment default):
  * {@code population} (interactive clients: {@code WORKFORCE} or {@code CUSTOMER}), {@code accessTokenTtlSeconds}
- * (interactive clients), {@code refreshTokenTtlSeconds} (confidential web clients), {@code requireConsent}
+ * (interactive clients), {@code refreshTokenTtlSeconds} (refresh-enabled interactive clients), {@code refreshTokens} (public clients: explicit opt-in; default false), {@code requireConsent}
  * (interactive clients: show the OAuth consent page), {@code tokenEndpointAuthMethod} ({@code client_secret_basic}
  * or, for confidential service clients, {@code private_key_jwt}) and {@code jwks} (the public keys for
  * {@code private_key_jwt}; private key material is refused).</p>
@@ -31,7 +31,17 @@ public record CreateTenantApplicationClientRequest(
         Long refreshTokenTtlSeconds,
         Boolean requireConsent,
         String tokenEndpointAuthMethod,
-        Map<String, Object> jwks) {
+        Map<String, Object> jwks,
+        Boolean refreshTokens) {
+
+    /** Compatibility constructor: existing registrations retain the closed public-refresh default. */
+    public CreateTenantApplicationClientRequest(String clientId, TenantApplicationClient.Type clientType,
+            List<String> redirectUris, List<String> postLogoutRedirectUris, List<String> scopes, String clientSecret,
+            TenantApplicationClient.Population population, Long accessTokenTtlSeconds, Long refreshTokenTtlSeconds,
+            Boolean requireConsent, String tokenEndpointAuthMethod, Map<String, Object> jwks) {
+        this(clientId, clientType, redirectUris, postLogoutRedirectUris, scopes, clientSecret, population,
+                accessTokenTtlSeconds, refreshTokenTtlSeconds, requireConsent, tokenEndpointAuthMethod, jwks, false);
+    }
 
     public CreateTenantApplicationClientRequest(String clientId, TenantApplicationClient.Type clientType,
                                                 List<String> redirectUris, List<String> postLogoutRedirectUris,

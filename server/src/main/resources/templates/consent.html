@@ -15,6 +15,12 @@
         <h2 class="form-title" id="consent-title"><span th:text="${clientName}">Application</span> requests access</h2>
         <p class="form-subtitle">Select the permissions you approve. Nothing is shared unless you submit.</p>
       </div>
+      <p class="form-subtitle" th:if="${documentName != null}">The app describes itself as <span th:text="${documentName}">Application</span>.</p>
+      <p class="form-subtitle" th:if="${callbackHost != null}">This sign-in returns to <strong th:text="${callbackHost}">callback host</strong>.</p>
+      <p class="form-subtitle" th:if="${clientHost != null}">App identity hosted at <strong th:text="${clientHost}">host</strong>.</p>
+      <p class="form-subtitle" th:if="${!redirectHosts.isEmpty()}">Approved callback hosts:
+        <span th:each="host : ${redirectHosts}" th:text="${host + ' '}">host</span>.</p>
+      <p class="form-subtitle" th:if="${loopbackOnly}">This app receives access on your device. Continue only if you started this sign-in from an app you trust.</p>
       <form name="consent_form" method="post" th:action="${authorizationEndpoint}" class="login-form">
         <input type="hidden" name="client_id" th:value="${clientId}">
         <input type="hidden" name="state" th:value="${state}">

@@ -39,4 +39,10 @@ public class CiamOAuthConsentController {
             HttpServletRequest request) {
         return ResponseEntity.ok(service.withdraw(tenantId, customerId, clientId, request.getHeader("X-Correlation-ID")));
     }
+    @DeleteMapping("/registrations/{registeredClientId}")
+    public ResponseEntity<CustomerOAuthConsentService.ConsentResponse> withdrawRegistration(
+            @PathVariable String tenantId, @PathVariable UUID customerId, @PathVariable String registeredClientId,
+            HttpServletRequest request) {
+        return ResponseEntity.ok(service.withdrawRegistration(tenantId, customerId, registeredClientId, request.getHeader("X-Correlation-ID")));
+    }
 }

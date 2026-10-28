@@ -39,22 +39,43 @@ public class ConsentController {
                           @RequestParam("state") String state) {
         RegisteredClient client = clients.findByClientId(clientId);
         if (client == null) throw new IllegalArgumentException("unknown client");
+        boolean cimd = client.getClientSettings().getSetting(com.openwolf.iam.auth.CimdRegisteredClientRepository.CLIENT_ID) != null;
+        String callbackHost = null, documentName = null;
+        Set<String> requestedScopes = new LinkedHashSet<>(java.util.Arrays.asList(scope.trim().split("\\s+")));
+        if (cimd) {
+            var binding = com.openwolf.iam.auth.CimdClientContext.current();
+            var pending = binding == null ? null : binding.authorization();
+            if (pending == null || !principal.getName().equals(pending.getPrincipalName())) throw new IllegalArgumentException("invalid consent state");
+            org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest original = pending.getAttribute(
+                    org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest.class.getName());
+            if (original == null || original.getRedirectUri() == null) throw new IllegalArgumentException("invalid consent request");
+            requestedScopes = original.getScopes();
+            callbackHost = java.net.URI.create(original.getRedirectUri()).getHost();
+            String savedName = pending.getAttribute(com.openwolf.iam.auth.CimdRegisteredClientRepository.DOCUMENT_NAME);
+            if (savedName != null) documentName = com.openwolf.iam.auth.CimdDocuments.safeDisplayName(savedName);
+            model.addAttribute("loopbackOnly", com.openwolf.iam.auth.LoopbackRedirects.isLoopback(original.getRedirectUri()));
+        }
         Set<String> previously = new LinkedHashSet<>();
         OAuth2AuthorizationConsent existing = consents.findById(client.getId(), principal.getName());
-        if (existing != null) {
+        if (existing != null && !cimd) {
             for (GrantedAuthority authority : existing.getAuthorities()) {
                 if (authority.getAuthority().startsWith("SCOPE_")) previously.add(authority.getAuthority().substring(6));
             }
         }
         Set<String> toApprove = new LinkedHashSet<>();
-        for (String requested : scope.trim().split("\\s+")) {
+        for (String requested : requestedScopes) {
             // openid is implied by the OIDC request itself; only requested scopes the client is registered for are shown.
-            if (requested.isBlank() || OidcScopes.OPENID.equals(requested) || !client.getScopes().contains(requested)) continue;
+            if (requested.isBlank() || !cimd && OidcScopes.OPENID.equals(requested) || !client.getScopes().contains(requested)) continue;
             if (!previously.contains(requested)) toApprove.add(requested);
         }
         previously.remove(OidcScopes.OPENID);
         model.addAttribute("clientId", clientId);
         model.addAttribute("clientName", client.getClientName());
+        model.addAttribute("documentName", documentName);
+        model.addAttribute("callbackHost", callbackHost);
+        model.addAttribute("redirectHosts", cimd ? client.getRedirectUris().stream().map(java.net.URI::create).map(java.net.URI::getHost).distinct().sorted().toList() : java.util.List.of());
+        model.addAttribute("clientHost", cimd ? java.net.URI.create(clientId).getHost() : null);
+        if (!cimd) model.addAttribute("loopbackOnly", false);
         model.addAttribute("state", state);
         model.addAttribute("scopes", toApprove);
         model.addAttribute("previouslyApprovedScopes", previously);

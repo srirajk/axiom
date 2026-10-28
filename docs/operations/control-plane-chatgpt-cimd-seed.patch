@@ -1,0 +1,17 @@
+--- a/deploy/setup/config/mcp-clients.yaml
++++ b/deploy/setup/config/mcp-clients.yaml
+@@ -81,12 +81,12 @@
+     redirect_uris: [https://claude.ai/api/mcp/auth_callback]
+     token_endpoint_auth_method: none
+   chatgpt:
+-    # The card allows none and private_key_jwt (keys at https://chatgpt.com/oauth/jwks.json); Axiom offers both.
++    # The card declares private_key_jwt; use its delegated keys at https://chatgpt.com/oauth/jwks.json.
+     # Without RFC 9207 ChatGPT uses https://chatgpt.com/oauth/{callback_id}/client.json and
+     # https://chatgpt.com/connector/oauth/{callback_id} instead.
+     client_id: https://chatgpt.com/oauth/client.json
+     redirect_uris: [https://chatgpt.com/connector_platform_oauth_redirect]
+-    token_endpoint_auth_method: none
++    token_endpoint_auth_method: private_key_jwt
+   # Not yet known, so not listed: Codex (OpenAI documents CIMD and DCR for it, but not its card address, and it is
+   # not ChatGPT's card) and Factory Droid (documents CIMD with "Factory's published client metadata", address not
+   # published; a pre-registered client with oauth.clientId and oauth.callbackPort also works). Add each from the

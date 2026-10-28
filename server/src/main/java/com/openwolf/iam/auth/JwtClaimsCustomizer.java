@@ -59,6 +59,10 @@ public class JwtClaimsCustomizer {
                 // matching media type as well as the Admin audience.
                 context.getJwsHeader().type("at+jwt");
                 String clientId = context.getRegisteredClient().getClientId();
+                if (context.getRegisteredClient().getClientSettings() != null
+                        && context.getRegisteredClient().getClientSettings().getSetting(CimdRegisteredClientRepository.CLIENT_ID) != null) {
+                    context.getClaims().claim("azp", clientId);
+                }
                 if (context.getAuthorizationGrant() instanceof ServerResolvedClaims resolvedGrant) {
                     // Phase 3 grants: every claim was resolved from durable state by the grant's provider.
                     context.getClaims().subject(resolvedGrant.subject());
@@ -227,6 +231,10 @@ public class JwtClaimsCustomizer {
                 addSession(context, String.valueOf(enriched.get("tenant_id")), null, clientId, subject, true, true);
             } else if (OidcParameterNames.ID_TOKEN.equals(context.getTokenType().getValue())) {
                 String clientId = context.getRegisteredClient().getClientId();
+                if (context.getRegisteredClient().getClientSettings() != null
+                        && context.getRegisteredClient().getClientSettings().getSetting(CimdRegisteredClientRepository.CLIENT_ID) != null) {
+                    context.getClaims().claim("azp", clientId);
+                }
                 var authority = applications == null ? java.util.Optional.<TenantApplicationService.ClientAuthority>empty()
                         : applications.activeAuthority(clientId);
                 if (context.getPrincipal() instanceof CustomerAuthenticationToken) {

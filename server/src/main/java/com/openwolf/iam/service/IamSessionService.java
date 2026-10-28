@@ -167,6 +167,31 @@ public class IamSessionService {
         return active.size();
     }
 
+    /** One approval of a shared CIMD URL; other applications using that URL retain their own sessions. */
+    public int revokeAllForApplicationClient(String tenantId, UUID applicationId, String clientId, String reason) {
+        List<IamSession> active = sessions.findActiveForClientForUpdate(tenantId, clientId, IamSession.Status.ACTIVE)
+                .stream().filter(session -> applicationId.equals(session.getApplicationId())).toList();
+        for (IamSession session : active) {
+            session.revoke();
+            if (invocationContexts != null) invocationContexts.revokeForRootSession(tenantId, session.getId(), reason);
+        }
+        if (!active.isEmpty()) audit.logRequired(tenantId, audit.currentActor(), "REVOKE_CLIENT_SESSIONS", "application_client", clientId,
+                null, java.util.Map.of("applicationId", applicationId.toString(), "reason", reason, "revoked_sessions", active.size()), clientId);
+        return active.size();
+    }
+
+    public int revokeAllForPrincipalAndApplicationClient(String tenantId, String principalId, UUID applicationId, String clientId, String reason) {
+        List<IamSession> active = sessions.findActiveForPrincipalForUpdate(tenantId, principalId, IamSession.Status.ACTIVE).stream()
+                .filter(session -> applicationId.equals(session.getApplicationId()) && clientId.equals(session.getClientId())).toList();
+        for (IamSession session : active) {
+            session.revoke();
+            if (invocationContexts != null) invocationContexts.revokeForRootSession(tenantId, session.getId(), reason);
+        }
+        if (!active.isEmpty()) audit.logRequired(tenantId, principalId, "REVOKE_PRINCIPAL_CLIENT_SESSIONS", "application_client", clientId,
+                null, java.util.Map.of("applicationId", applicationId.toString(), "reason", reason, "revoked_sessions", active.size()), clientId);
+        return active.size();
+    }
+
     /** Ends one principal's sessions issued to one client (e.g. a customer withdrawing an application's consent). */
     public int revokeAllForPrincipalAndClient(String tenantId, String principalId, String clientId, String reason) {
         List<IamSession> active = sessions.findActiveForPrincipalForUpdate(tenantId, principalId, IamSession.Status.ACTIVE)

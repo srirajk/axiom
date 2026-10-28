@@ -185,6 +185,12 @@ Probata-specific registration is intentionally owned by the Probata repository. 
 operate without Probata, and Probata can reconcile its application access model against an existing
 Axiom deployment without resetting Axiom.
 
+MCP clients can use tenant-application approvals for Client ID Metadata Documents (CIMD), public
+S256 PKCE sign-in, and explicitly enabled rotating refresh tokens. The same vendor URL can have
+independent approvals in multiple applications. See [MCP client support](docs/operations/mcp-client-support-2026-10-28.md)
+for the API, security boundaries, standards corrections, and acceptance evidence. The
+[review resolution register](docs/operations/mcp-client-review-resolutions-2026-10-28.md) maps the 24 findings to fixes and handoff work. No client is trusted by default.
+
 ## Probata consumer contract
 
 The supported local handoff uses separate sibling repositories:

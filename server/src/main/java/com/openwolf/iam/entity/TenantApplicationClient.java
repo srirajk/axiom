@@ -19,7 +19,7 @@ import java.util.UUID;
 @Table(name = "tenant_application_clients")
 public class TenantApplicationClient {
     /**
-     * {@code PUBLIC_BROWSER}: a browser (SPA/native) client without a secret, authorization code + S256 PKCE.
+     * {@code PUBLIC_BROWSER}: a browser (SPA/native) client without a secret, authorization code + S256 PKCE, optionally rotating refresh tokens after explicit opt-in.
      * {@code CONFIDENTIAL_WEB}: a server-side web client (BFF) with its own credential, authorization code + S256 PKCE
      * and, when it is granted {@code offline_access}, rotating refresh tokens. {@code CONFIDENTIAL_SERVICE}: software
      * acting as itself (client credentials, token exchange); never a person's sign-in client.
@@ -37,6 +37,9 @@ public class TenantApplicationClient {
     @Id private UUID id;
     @Column(name = "application_id", nullable = false) private UUID applicationId;
     @Column(name = "client_id", nullable = false) private String clientId;
+    @Column(name = "external_client_id") private String externalClientId;
+    public String getExternalClientId() { return externalClientId; }
+    public void trustExternalClient(String clientId) { this.externalClientId = clientId; }
     @Enumerated(EnumType.STRING) @Column(name = "client_type", nullable = false) private Type clientType;
     @Enumerated(EnumType.STRING) @Column(nullable = false) private Status status;
     @JdbcTypeCode(SqlTypes.JSON)

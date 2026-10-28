@@ -19,4 +19,9 @@ public interface TenantApplicationClientRepository extends JpaRepository<TenantA
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select c from TenantApplicationClient c where c.id = :id")
     Optional<TenantApplicationClient> findByIdForUpdate(UUID id);
+    @org.springframework.data.jpa.repository.Query("select c from TenantApplicationClient c, TenantApplication a "
+            + "where c.applicationId = a.id and c.externalClientId = :clientId and a.audience = :audience")
+    java.util.List<TenantApplicationClient> findTrustedByResource(String clientId, String audience);
+    boolean existsByExternalClientId(String externalClientId);
+    boolean existsByApplicationIdAndExternalClientIdAndStatus(java.util.UUID applicationId, String externalClientId, TenantApplicationClient.Status status);
 }

@@ -49,6 +49,7 @@ public class ApplicationAccessService {
     private final PrincipalRepository principals;
     private final ExecutionTenant executionTenant;
     private final AuditService audit;
+    private final TenantClientLookup clientLookup;
 
     public ApplicationAccessService(
             TenantApplicationRepository applications,
@@ -67,6 +68,7 @@ public class ApplicationAccessService {
         this.principals = principals;
         this.executionTenant = executionTenant;
         this.audit = audit;
+        this.clientLookup = new TenantClientLookup(clients);
     }
 
     public ApplicationRoleResponse createRole(String tenantId, UUID applicationId,
@@ -229,7 +231,7 @@ public class ApplicationAccessService {
     /** Token-time claims for one exact public application client and active member. */
     @Transactional(readOnly = true)
     public Map<String, Object> tokenClaims(String clientId, String principalId) {
-        TenantApplicationClient client = clients.findByClientId(clientId)
+        TenantApplicationClient client = clientLookup.find(clientId)
                 .filter(value -> value.getStatus() == TenantApplicationClient.Status.ACTIVE)
                 .filter(value -> value.getClientType().interactive())
                 .filter(value -> value.getPopulation() == TenantApplicationClient.Population.WORKFORCE)

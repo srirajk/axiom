@@ -98,4 +98,34 @@ public class TenantApplicationController {
             HttpServletRequest httpRequest) {
         throw new ResourceConflictException("approval required for application-client secret revocation");
     }
+    @PostMapping("/{applicationId}/trusted-clients")
+    @PreAuthorize("hasAnyRole('platform_admin','tenant_admin')")
+    public ResponseEntity<com.openwolf.iam.dto.TrustedClientResponse> addTrustedClient(@PathVariable String tenantId,
+            @PathVariable UUID applicationId, @Valid @RequestBody com.openwolf.iam.dto.TrustedClientRequest request,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.status(201).body(service.createTrustedClient(tenantId, applicationId, request, httpRequest));
+    }
+
+    @GetMapping("/{applicationId}/trusted-clients")
+    @PreAuthorize("hasAnyRole('platform_admin','tenant_admin')")
+    public ResponseEntity<List<com.openwolf.iam.dto.TrustedClientResponse>> trustedClients(@PathVariable String tenantId,
+            @PathVariable UUID applicationId) {
+        return ResponseEntity.ok(service.listTrustedClients(tenantId, applicationId));
+    }
+
+    @DeleteMapping("/{applicationId}/trusted-clients/{id}")
+    @PreAuthorize("hasAnyRole('platform_admin','tenant_admin')")
+    public ResponseEntity<Void> removeTrustedClient(@PathVariable String tenantId, @PathVariable UUID applicationId,
+            @PathVariable UUID id, @org.springframework.web.bind.annotation.RequestParam long expectedRevision,
+            HttpServletRequest httpRequest) {
+        service.deleteTrustedClient(tenantId, applicationId, id, expectedRevision, httpRequest);
+        return ResponseEntity.noContent().build();
+    }
+    @org.springframework.web.bind.annotation.PutMapping("/{applicationId}/trusted-clients/{id}")
+    @PreAuthorize("hasAnyRole('platform_admin','tenant_admin')")
+    public ResponseEntity<com.openwolf.iam.dto.TrustedClientResponse> updateTrustedClient(@PathVariable String tenantId,
+            @PathVariable UUID applicationId, @PathVariable UUID id,
+            @Valid @RequestBody com.openwolf.iam.dto.TrustedClientRequest request, HttpServletRequest httpRequest) {
+        return ResponseEntity.ok(service.updateTrustedClient(tenantId, applicationId, id, request, httpRequest));
+    }
 }

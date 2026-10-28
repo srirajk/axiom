@@ -289,7 +289,7 @@ public class AgentExchangeAuthorityService {
         String identityKind = required(subject, "identity_kind");
         if (!exchanged(subject)) {
             String clientId = required(subject, "client_id");
-            var client = applications.activeAuthority(clientId)
+            var client = sourceClientAuthority(clientId, tenantId, subject)
                     .filter(value -> value.tenantId().equals(tenantId))
                     .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
             if ("workforce".equals(identityKind)) {
@@ -512,7 +512,7 @@ public class AgentExchangeAuthorityService {
                                                Set<String> scopes) {
         var actorClient = confidentialAuthority(requester.getOauthClientId(), requester.getTenantId());
         String sourceClientId = required(subject, "client_id");
-        var sourceClient = applications.activeAuthority(sourceClientId)
+        var sourceClient = sourceClientAuthority(sourceClientId, requester.getTenantId(), subject)
                 .filter(TenantApplicationService.ClientAuthority::workforceSignIn)
                 .filter(value -> value.tenantId().equals(requester.getTenantId()))
                 .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
@@ -622,7 +622,7 @@ public class AgentExchangeAuthorityService {
                                                      Set<String> scopes) {
         var actorClient = confidentialAuthority(requester.getOauthClientId(), requester.getTenantId());
         String sourceClientId = required(subject, "client_id");
-        var sourceClient = applications.activeAuthority(sourceClientId)
+        var sourceClient = sourceClientAuthority(sourceClientId, requester.getTenantId(), subject)
                 .filter(TenantApplicationService.ClientAuthority::customerSignIn)
                 .filter(value -> value.tenantId().equals(requester.getTenantId()))
                 .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
@@ -970,6 +970,12 @@ public class AgentExchangeAuthorityService {
 
     private String receivingAudience(AgentWorkloadIdentity workload) {
         return confidentialAuthority(workload.getOauthClientId(), workload.getTenantId()).audience();
+    }
+
+    private java.util.Optional<TenantApplicationService.ClientAuthority> sourceClientAuthority(String clientId, String tenantId, Jwt subject) {
+        return clientId.startsWith("https://")
+                ? applications.activeAuthority(clientId, tenantId, subject.getAudience().size() == 1 ? subject.getAudience().getFirst() : "")
+                : applications.activeAuthority(clientId);
     }
 
     private TenantApplicationService.ClientAuthority confidentialAuthority(String clientId, String tenantId) {

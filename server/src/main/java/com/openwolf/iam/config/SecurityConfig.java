@@ -231,6 +231,8 @@ public class SecurityConfig {
             org.springframework.data.redis.core.StringRedisTemplate redis,
             @Value("${iam.oauth2.authorization-store.redis.key-prefix:iam:oauth2}") String redisKeyPrefix,
             BusinessScopeRegistry businessScopeRegistry,
+            com.openwolf.iam.repository.TenantApplicationClientRepository productClients,
+            ObjectProvider<com.openwolf.iam.service.AuditService> audit,
             @Qualifier("userInfoJwtDecoder") JwtDecoder userInfoJwtDecoder) throws Exception {
         java.util.List<com.openwolf.iam.auth.AuthorityGrantProvider> extensionGrants = authorityGrants.orderedStream().toList();
         // Build the authorization server configurer to get its endpoint matcher
@@ -249,7 +251,9 @@ public class SecurityConfig {
         // Include /login in this chain so form login is served here, not by the resource-server
         // chain. Static resources (/css/**) are intentionally NOT in this matcher — they fall
         // to Order-2 which permitAll()s them, avoiding the Bearer 401 from the resource server.
-        var clientAssertions = new com.openwolf.iam.auth.RegisteredKeyClientAssertionDecoderFactory(redis, redisKeyPrefix);
+        var clientAssertions = new com.openwolf.iam.auth.RegisteredKeyClientAssertionDecoderFactory(redis, redisKeyPrefix,
+                (com.openwolf.iam.auth.CimdRegisteredClientRepository) registeredClients);
+        var authorizationResponses = new com.openwolf.iam.auth.IssuerAuthorizationResponses(applications, audit);
         http
             .securityMatcher(authorizationServerMatcher(endpointsMatcher))
             .authorizeHttpRequests(auth -> auth
@@ -265,19 +269,28 @@ public class SecurityConfig {
             .with(authorizationServerConfigurer, configurer -> configurer
                     .registeredClientRepository(activeClients)
                     .tokenGenerator(tokenGenerator)
-                    .authorizationConsentService(consents)
+                    .authorizationConsentService(new com.openwolf.iam.auth.FreshCimdConsentService(consents))
                     // Axiom's own consent page (self-hosted assets; no third-party requests from the consent step).
-                    .authorizationEndpoint(endpoint -> endpoint.consentPage(com.openwolf.iam.controller.ConsentController.PATH))
+                    .authorizationEndpoint(endpoint -> endpoint.consentPage(com.openwolf.iam.controller.ConsentController.PATH)
+                            .authenticationProviders(providers -> providers.forEach(provider -> {
+                                if (provider instanceof org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationProvider code) {
+                                    code.setAuthorizationConsentRequired(com.openwolf.iam.auth.CimdConsentPolicy::required);
+                                    code.setAuthenticationValidator(((java.util.function.Consumer<org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationContext>) com.openwolf.iam.auth.LoopbackRedirects::validate)
+                                            .andThen(org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationValidator.DEFAULT_SCOPE_VALIDATOR));
+                                }
+                            }))
+                            .authorizationResponseHandler(authorizationResponses::success)
+                            .errorResponseHandler(authorizationResponses::failure))
                     .clientAuthentication(clientAuthentication -> {
                         var federation = workloadFederation.getIfAvailable();
                         var overlaps = secretOverlaps.getIfAvailable();
                         // One consumer each: the configurer keeps only the last consumer it was given.
-                        if (federation != null) {
-                            // Phase 3.12: federated workload assertions (default deny until a profile is selected).
-                            clientAuthentication.authenticationConverters(converters -> converters.add(0,
-                                    com.openwolf.iam.authority.federation.WorkloadFederationClientAuthentication.converter()));
-                        }
+                        clientAuthentication.authenticationConverters(converters -> {
+                            converters.add(0, com.openwolf.iam.auth.PublicRefreshClientAuthentication.converter());
+                            if (federation != null) converters.add(0, com.openwolf.iam.authority.federation.WorkloadFederationClientAuthentication.converter());
+                        });
                         clientAuthentication.authenticationProviders(providers -> {
+                            providers.add(0, new com.openwolf.iam.auth.PublicRefreshClientAuthentication(activeClients));
                             if (federation != null) {
                                 providers.add(0, com.openwolf.iam.authority.federation.WorkloadFederationClientAuthentication
                                         .provider(federation, activeClients));
@@ -312,7 +325,19 @@ public class SecurityConfig {
                         endpoint.accessTokenRequestConverter(new TokenExchangeAuthenticationConverter())
                                 .authenticationProvider(tokenExchangeProvider)
                                 // The response's scope is the scope actually issued in the token (RFC 6749 5.1).
-                                .accessTokenResponseHandler(new com.openwolf.iam.auth.IssuedScopeTokenResponseHandler());
+                                .accessTokenResponseHandler((request, response, authentication) -> {
+                                    if ("refresh_token".equals(request.getParameter("grant_type"))
+                                            && authentication instanceof org.springframework.security.oauth2.server.authorization.authentication.OAuth2AccessTokenAuthenticationToken issued
+                                            && issued.getRegisteredClient().getClientSettings().getSetting(com.openwolf.iam.auth.CimdRegisteredClientRepository.CLIENT_ID) != null) {
+                                        var authority = applications.getObject().activeAuthority(issued.getRegisteredClient().getClientId()).orElseThrow();
+                                        var record = authorizations.findByToken(issued.getAccessToken().getTokenValue(), org.springframework.security.oauth2.server.authorization.OAuth2TokenType.ACCESS_TOKEN);
+                                        if (record == null) throw new IllegalStateException("Refreshed authorization was not persisted");
+                                        audit.getObject().logRequired(authority.tenantId(), record.getPrincipalName(), "CIMD_REFRESH", "application_client", issued.getRegisteredClient().getClientId(),
+                                                null, java.util.Map.of("applicationId", authority.applicationId().toString(), "authorizationId", record.getId(), "grant_type", "refresh_token", "rotated", true),
+                                                request.getHeader("X-Correlation-ID"));
+                                    }
+                                    new com.openwolf.iam.auth.IssuedScopeTokenResponseHandler().onAuthenticationSuccess(request, response, authentication);
+                                });
                         // Phase 3 extension grants: each converter ignores every other grant_type.
                         extensionGrants.forEach(grant -> endpoint.accessTokenRequestConverter(grant.converter())
                                 .authenticationProvider(grant));
@@ -350,6 +375,8 @@ public class SecurityConfig {
             // instead of silently issuing a token for the default audience.
             .addFilterBefore(new com.openwolf.iam.auth.AuthorizationCodeResourceGuardFilter(applications),
                     SecurityContextHolderFilter.class)
+            .addFilterBefore(new com.openwolf.iam.auth.CimdClientBindingFilter(registeredClients, productClients, applications, authorizations),
+                    com.openwolf.iam.auth.AuthorizationCodeResourceGuardFilter.class)
             .addFilterBefore(codeRedemptionLockFilter, SecurityContextHolderFilter.class)
             .addFilterBefore(endSessionCleanupFilter, SecurityContextHolderFilter.class);
 
@@ -360,7 +387,7 @@ public class SecurityConfig {
      * Discovery advertises only what Axiom actually supports (RFC 8414 / OIDC Discovery). Spring Authorization
      * Server's defaults list grants and client-authentication methods no Axiom client is registered for (device_code,
      * client_secret_post, client_secret_jwt, mutual TLS) and sender-constraint features Axiom does not enforce (DPoP,
-     * certificate-bound tokens); those entries are removed. refresh_token (confidential web clients granted
+     * certificate-bound tokens); those entries are removed. refresh_token (opted-in interactive clients granted
      * offline_access) and private_key_jwt (confidential service clients with registered keys) are supported.
      */
     static void advertiseSupported(java.util.Map<String, Object> claims,
@@ -370,7 +397,7 @@ public class SecurityConfig {
 
     /**
      * {@code scopes_supported} lists the scopes a client of this deployment can actually be registered for: the OIDC
-     * scopes (openid, profile, email), offline_access (refresh, confidential web clients), roles (workforce clients)
+     * scopes (openid, profile, email), offline_access (refresh, opted-in interactive clients), roles (workforce clients)
      * and the deployment-approved business scopes. Which of them a given client may request is its registration.
      */
     static void advertiseSupported(java.util.Map<String, Object> claims,
@@ -380,6 +407,9 @@ public class SecurityConfig {
                 "openid", "profile", "email", "offline_access", "roles"));
         businessScopes.stream().sorted().forEach(scopes::add);
         claims.put("scopes_supported", scopes);
+        claims.put("authorization_response_iss_parameter_supported", true);
+        claims.put("client_id_metadata_document_supported", true);
+        claims.remove("registration_endpoint");
         java.util.List<String> grants = new java.util.ArrayList<>(java.util.List.of("authorization_code",
                 "refresh_token", "client_credentials", TokenExchangeConstants.GRANT_TYPE_VALUE));
         extensionGrants.forEach(grant -> grants.add(grant.grantType()));
@@ -686,8 +716,13 @@ public class SecurityConfig {
     // =========================================================
 
     @Bean
-    public RegisteredClientRepository registeredClientRepository(DataSource dataSource) {
-        return new JdbcRegisteredClientRepository(new org.springframework.jdbc.core.JdbcTemplate(dataSource));
+    public RegisteredClientRepository registeredClientRepository(DataSource dataSource,
+            ObjectProvider<TenantApplicationService> applications,
+            com.openwolf.iam.repository.TenantApplicationClientRepository clients,
+            com.openwolf.iam.auth.CimdDocuments documents, ObjectProvider<com.openwolf.iam.service.AuditService> audit) {
+        return new com.openwolf.iam.auth.CimdRegisteredClientRepository(
+                new JdbcRegisteredClientRepository(new org.springframework.jdbc.core.JdbcTemplate(dataSource)),
+                applications, clients, documents, audit);
     }
 
     /**
@@ -701,10 +736,7 @@ public class SecurityConfig {
             JwtEncoder jwtEncoder, OAuth2TokenCustomizer<JwtEncodingContext> jwtCustomizer) {
         JwtGenerator jwt = new JwtGenerator(jwtEncoder);
         jwt.setJwtCustomizer(jwtCustomizer);
-        var refresh = new org.springframework.security.oauth2.server.authorization.token.OAuth2RefreshTokenGenerator();
-        org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator<
-                org.springframework.security.oauth2.core.OAuth2RefreshToken> gatedRefresh = context ->
-                com.openwolf.iam.auth.OfflineAccess.granted(context) ? refresh.generate(context) : null;
+        var gatedRefresh = new com.openwolf.iam.auth.OptInRefreshTokenGenerator();
         return new org.springframework.security.oauth2.server.authorization.token.DelegatingOAuth2TokenGenerator(
                 jwt, new org.springframework.security.oauth2.server.authorization.token.OAuth2AccessTokenGenerator(),
                 gatedRefresh);
