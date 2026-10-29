@@ -81,6 +81,12 @@ networkPolicy:
   # Namespaces (by kubernetes.io/metadata.name) whose pods may call Axiom's HTTP ports. Empty: same namespace only
   # (kubectl port-forward is not affected by NetworkPolicy).
   clientNamespaces: []
+  # Outbound HTTPS from the Axiom server to the internet, for client ID metadata documents and their jwks_uri (MCP
+  # AI apps). Off by default. Private, loopback, link-local, CGNAT and metadata ranges stay closed here too; the
+  # server checks each address itself as well.
+  publicHttps:
+    enabled: false
+    except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, 127.0.0.0/8, 0.0.0.0/8]
 
 guardrails:
   enabled: true
