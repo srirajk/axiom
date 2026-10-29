@@ -245,6 +245,31 @@ class IdpBaselineIT extends AuthorityITSupport {
     // --------------------------------------------------------------------------------------------- logout
 
     @Test
+    void directLogoutRequiresConfirmationAndEndsTheBrowserSessionWithoutARedirect() throws Exception {
+        MockHttpSession browser = new MockHttpSession();
+        MvcResult confirm = mvc.perform(get("/connect/logout").session(browser)).andReturn();
+        assertThat(confirm.getResponse().getStatus()).isEqualTo(200);
+        assertThat(confirm.getResponse().getContentAsString()).contains("Sign out of Axiom?");
+        assertThat(confirm.getResponse().getCookie("JSESSIONID")).isNull();
+        assertThat(browser.isInvalid()).isFalse();
+
+        String html = confirm.getResponse().getContentAsString();
+        String nonce = html.split("name=\"nonce\" value=\"", 2)[1].split("\"", 2)[0];
+        MvcResult forged = mvc.perform(post("/connect/logout").session(browser)
+                .param("confirm_logout", "yes").param("nonce", "wrong")).andReturn();
+        assertThat(forged.getResponse().getStatus()).isEqualTo(403);
+        assertThat(browser.isInvalid()).isFalse();
+
+        MvcResult signedOut = mvc.perform(post("/connect/logout").session(browser)
+                .param("confirm_logout", "yes").param("nonce", nonce)).andReturn();
+        assertThat(signedOut.getResponse().getStatus()).isEqualTo(200);
+        assertThat(signedOut.getResponse().getContentAsString()).contains("Your Axiom browser session has ended");
+        assertThat(signedOut.getResponse().getCookie("JSESSIONID").getMaxAge()).isZero();
+        assertThat(signedOut.getResponse().getHeader(HttpHeaders.LOCATION)).isNull();
+        assertThat(browser.isInvalid()).isTrue();
+    }
+
+    @Test
     void rpInitiatedLogoutByFormPostFromARelyingPartyOriginIsNotRefusedByCors() throws Exception {
         Tenant t = tenant("idp-a");
         String person = principal(t.id, t.s + "-lou", null);
