@@ -4,11 +4,12 @@ This chart installs the Axiom server and Admin UI into one namespace. It deliber
 install PostgreSQL, Redis, Cerbos, an object store, or Gateway resources. Those dependencies may
 live in the same namespace, but must be healthy before Axiom is installed.
 
-For a self-contained, disposable Docker Desktop installation, install the separate
-[`axiom-dependencies` chart](../axiom-dependencies/README.md) first, then this chart with the
-[`axiom-test` profile](../../axiom-test/README.md). The two-release order is required because this chart's
-pre-install bootstrap hook runs before ordinary resources in its own release. The older `deploy/kind` profile and
-`deploy/phase0-isolated` files are historical and must not be used to install `axiom-test`.
+For the current self-contained, disposable Docker Desktop installation, use the
+[`axiom-local-edge` installer](../../axiom-local-edge/README.md). It installs the separate
+[`axiom-dependencies` chart](../axiom-dependencies/README.md) first, then this chart, and finally the local
+Envoy Gateway. The two-release order is required because this chart's pre-install bootstrap hook runs before
+ordinary resources in its own release. The older `deploy/kind`, `deploy/phase0-isolated`, and `axiom-test`
+profiles are historical; do not mix their values or images with the current local-edge estate.
 
 ## Current topology contract
 
@@ -153,6 +154,7 @@ policy runtime, audit state, and Redis namespace. Bootstrap must precede the ser
 tenant directory is loaded at process startup. A post-install and post-upgrade hook verifies readiness
 and issuer discovery. Hook Jobs have deadlines, bounded retry, and automatic cleanup.
 
-The validated local Docker Desktop profile is in [deploy/kind](../../kind/README.md). It reuses the
-existing `meridian-gateway` GatewayClass and `gateway-demo/meridian-edge` Gateway. Gateway ownership
-remains outside this chart.
+The current reset-cluster Docker Desktop procedure and evidence are in
+[`deploy/axiom-local-edge`](../../axiom-local-edge/README.md) and
+[`axiom-local-edge-evidence.md`](../../../docs/operations/axiom-local-edge-evidence.md). Its Gateway resources
+remain outside this chart. The generic chart commands above do not install Envoy or prove browser/consumer flows.

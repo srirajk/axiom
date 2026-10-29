@@ -1,4 +1,30 @@
-# Local Axiom and Envoy edge — 2026-10-04
+# Local Axiom and Envoy edge — deployment evidence
+
+## Fresh installer run on 2026-10-22
+
+After a Docker Desktop cluster reset, the local installer completed on Kubernetes 1.36.4 using the
+`hardening/phase-0-baseline` clone. The installed server image was
+`axiom-server:local-29082f3b8bcb6975`. This was a new local installation, not an in-place release upgrade.
+
+- `installer.py plan`, `validate`, `dry-run`, `install --allow-envoy-install`, and `status` completed. The install
+  built local server/Admin images, rendered and linted the charts, and passed Kubernetes server-side admission.
+  Envoy installation used the explicitly authorized local-cluster flag because its chart creates cluster-scoped
+  Gateway API resources and RBAC.
+- The Axiom dependency and application Helm tests passed. `status` reported
+  `Axiom, dependencies, and local Envoy: READY`; Gateway/HTTPRoute conditions and a ClusterIP Envoy data-plane
+  Service passed the installer's checks.
+- The network canary resolved the Redis Service and was denied a Redis connection; the dependency Helm test was
+  the authorized positive control. This is local isolation evidence, not a production CNI certification.
+- A foreground `127.0.0.1` port-forward served HTTPS readiness and OIDC discovery with HTTP 200. An unauthenticated
+  POST to the test-only customer-activation endpoint returned 401, confirming it was reachable but protected.
+  No authenticated activation was run: the reset database contained no demo customers. The endpoint's successful
+  activation behavior is covered by source tests, not by this fresh-cluster smoke check.
+
+The local private credentials were reused and checked against the new Secrets; they were not printed or rotated.
+The port-forward is a foreground local process, not a permanent cluster ingress. The issuer still requires local
+hostname resolution and trust in this estate's local CA. No production, Argus, or arbitrary-client integration
+claim follows from this run. For the reproducible procedure, use
+[`deploy/axiom-local-edge/README.md`](../../deploy/axiom-local-edge/README.md).
 
 ## Post-reset installation recorded on 2026-10-04
 
