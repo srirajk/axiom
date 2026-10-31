@@ -22,6 +22,8 @@ CONTEXT = "docker-desktop"
 BRANCH = "hardening/phase-0-baseline"
 ENVOY_CHART = "oci://docker.io/envoyproxy/gateway-helm"
 ENVOY_VERSION = "v1.9.1"
+EDGE_RELEASE = "axiom-local-edge"
+EDGE_CHART = ROOT / "deploy/helm/axiom-local-edge"
 ADMIN_BUILD_ARGS = (
     "VITE_AXIOM_ISSUER=https://identity.meridian.com",
     "VITE_AXIOM_API_URL=https://identity.meridian.com",
@@ -110,7 +112,7 @@ def release(namespace: str, name: str) -> dict:
 def check_tools() -> None:
     for command in (("git", "version"), ("docker", "--version"),
                     ("kubectl", "version", "--client"), ("helm", "version", "--short"),
-                    ("openssl", "version")):
+                    ("openssl", "version"), ("curl", "--version")):
         run(*command)
 
 
@@ -162,7 +164,7 @@ def check_private(allow_generate: bool) -> None:
 
 def check_namespace_safety() -> None:
     expected = {"axiom": {"axiom", "axiom-dependencies"},
-                "envoy-gateway-system": {"eg"}, "gateway-demo": set()}
+                "envoy-gateway-system": {"eg"}, "gateway-demo": {EDGE_RELEASE}}
     for namespace, allowed in expected.items():
         existing = kube_json("get", "namespace", namespace)
         if not existing:
@@ -182,7 +184,8 @@ def check_namespace_safety() -> None:
                     raise InstallError(f"{namespace} lacks restricted Pod Security {mode} label")
     for namespace, name, charts in (("axiom", "axiom", {"axiom-0.1.3", "axiom-0.1.4"}),
                                      ("axiom", "axiom-dependencies", {"axiom-dependencies-0.1.0"}),
-                                     ("envoy-gateway-system", "eg", {"gateway-helm-v1.9.1"})):
+                                     ("envoy-gateway-system", "eg", {"gateway-helm-v1.9.1"}),
+                                     ("gateway-demo", EDGE_RELEASE, {"axiom-local-edge-0.1.0"})):
         present = release(namespace, name)
         if present and (present.get("status") != "deployed" or present.get("chart") not in charts):
             raise InstallError(f"{namespace}/{name} is not the expected deployed chart; refusing takeover")
@@ -198,6 +201,8 @@ def ensure_namespace(name: str, restricted: bool) -> None:
 
 
 def render() -> None:
+    run("helm", "lint", str(EDGE_CHART))
+    run("helm", "template", EDGE_RELEASE, str(EDGE_CHART), "-n", "gateway-demo")
     for chart, values in (("axiom-dependencies", "dependencies-values.yaml"),
                           ("axiom", "values.yaml")):
         run("helm", "lint", str(ROOT / "deploy/helm" / chart), "-f", str(HERE / values))
@@ -249,11 +254,37 @@ def check_deployed_images(require_current_source: bool = True) -> None:
             raise InstallError(f"Existing {name} image differs from expected release: {image} != {wanted}; backup/review upgrade")
 
 
+def check_edge_configuration() -> None:
+    remaining = kube("create", "--dry-run=client", "--validate=false",
+                     "-f", str(HERE / "gateway.yaml"), "-o", "json").strip()
+    resources = []
+    decoder = json.JSONDecoder()
+    while remaining:
+        rendered, end = decoder.raw_decode(remaining)
+        resources.extend(rendered.get("items", [rendered]))
+        remaining = remaining[end:].strip()
+    shared = any(item.get("kind") == "EnvoyProxy" and item.get("spec", {}).get("mergeGateways") is True
+                 for item in resources)
+    if shared and any(item.get("kind") == "Gateway" and
+                      item.get("spec", {}).get("infrastructure", {}).get("parametersRef")
+                      for item in resources):
+        raise InstallError("Shared mode requires removing Gateway infrastructure.parametersRef; "
+                           "review that Gateway change before installing")
+
+
 def check_gateway() -> None:
     gateway_class = json.loads(kube("get", "gatewayclass", "axiom-local-gateway", "-o", "json"))
     if not any(c["type"] == "Accepted" and c["status"] == "True"
                for c in gateway_class["status"].get("conditions", [])):
         raise InstallError("Axiom local GatewayClass is not Accepted")
+    if gateway_class["spec"].get("parametersRef") != {
+        "group": "gateway.envoyproxy.io", "kind": "EnvoyProxy",
+        "name": "axiom-local-proxy", "namespace": "gateway-demo",
+    }:
+        raise InstallError("Axiom local GatewayClass must reference the shared EnvoyProxy")
+    proxy = json.loads(kube("-n", "gateway-demo", "get", "envoyproxy", "axiom-local-proxy", "-o", "json"))
+    if proxy["spec"].get("mergeGateways") is not True:
+        raise InstallError("Axiom local EnvoyProxy must enable mergeGateways")
     gateway = json.loads(kube("-n", "gateway-demo", "get", "gateway", "axiom-local-edge", "-o", "json"))
     if not any(c["type"] == "Programmed" and c["status"] == "True"
                for c in gateway["status"].get("conditions", [])):
@@ -271,13 +302,17 @@ def check_gateway() -> None:
     if expected:
         raise InstallError("Missing local HTTPRoutes: " + ", ".join(sorted(expected)))
     services = json.loads(kube("-n", "envoy-gateway-system", "get", "services", "-o", "json"))["items"]
-    matching = [item for item in services if item["metadata"]["name"].startswith("envoy-gateway-demo-axiom-local-edge-")]
+    matching = [item for item in services if item["metadata"].get("labels", {}).get(
+        "gateway.envoyproxy.io/owning-gatewayclass") == "axiom-local-gateway"]
     if len(matching) != 1 or matching[0]["spec"]["type"] != "LoadBalancer":
         raise InstallError("Expected exactly one LoadBalancer Axiom Envoy data-plane Service")
     if matching[0]["spec"].get("externalTrafficPolicy") != "Cluster":
         raise InstallError("Axiom Envoy LoadBalancer must route traffic to the ready pod from any node")
     if not matching[0].get("status", {}).get("loadBalancer", {}).get("ingress"):
         raise InstallError("Axiom Envoy LoadBalancer has no address")
+    if not any(port.get("port") == 443 and port.get("protocol", "TCP") == "TCP"
+               for port in matching[0]["spec"].get("ports", [])):
+        raise InstallError("Shared Axiom Envoy LoadBalancer must expose HTTPS port 443")
 
 
 def status() -> None:
@@ -313,10 +348,36 @@ def network_canary() -> None:
         kube("-n", "axiom", "delete", "pod", "axiom-local-network-canary", "--wait=false")
 
 
+def install_edge() -> None:
+    rendered = run("helm", "template", EDGE_RELEASE, str(EDGE_CHART), "-n", "gateway-demo")
+    run("kubectl", "--context", CONTEXT, "apply", "--dry-run=server", "-f", "-", input_data=rendered)
+    existing_release = release("gateway-demo", EDGE_RELEASE)
+    if existing_release or not kube_json("get", "gatewayclass", "axiom-local-gateway"):
+        helm_install(EDGE_RELEASE, "gateway-demo", str(EDGE_CHART), timeout="5m")
+    else:
+        # Keep ownership of older manifest installations; never force Helm adoption.
+        run("kubectl", "--context", CONTEXT, "apply", "-f", "-", input_data=rendered)
+        print("Existing manifest edge updated from the Helm chart; ownership retained")
+
+
+def check_https() -> None:
+    args = ("curl", "--noproxy", "*", "--fail", "--silent", "--show-error",
+            "--max-time", "10", "--retry", "6", "--retry-connrefused", "--retry-delay", "2",
+            "--retry-max-time", "30", "--cacert", str(HERE / "private/certs/local-ca.crt"))
+    issuer = "https://identity.meridian.com"
+    discovery = json.loads(run(*args, issuer + "/.well-known/openid-configuration"))
+    if discovery.get("issuer") != issuer:
+        raise InstallError("HTTPS discovery returned the wrong Axiom issuer")
+    run(*args, "--output", "/dev/null", issuer + "/actuator/health/readiness")
+    run(*args, "--output", "/dev/null", "https://identity-admin.meridian.com/")
+    print("Laptop HTTPS discovery, readiness and Admin with existing CA: PASS")
+
+
 def install(allow_envoy: bool, generate_private: bool) -> None:
     check_tools()
     check_source()
     check_cluster()
+    check_edge_configuration()
     check_private(generate_private)
     check_namespace_safety()
     if not (HERE / "private").exists() and any(
@@ -353,14 +414,14 @@ def install(allow_envoy: bool, generate_private: bool) -> None:
     if not release("envoy-gateway-system", "eg"):
         helm_install("eg", "envoy-gateway-system", ENVOY_CHART,
                      "--version", ENVOY_VERSION, timeout="5m")
-    kube("apply", "--dry-run=server", "-f", str(HERE / "gateway.yaml"))
-    kube("apply", "-f", str(HERE / "gateway.yaml"))
+    install_edge()
     kube("wait", "--for=condition=Accepted", "gatewayclass/axiom-local-gateway", "--timeout=3m")
     kube("-n", "gateway-demo", "wait", "--for=condition=Programmed",
          "gateway/axiom-local-edge", "--timeout=3m")
     status()
     network_canary()
-    print("Local cluster installation passed. Verify identity.meridian.com on HTTPS port 443.")
+    check_https()
+    print("Local cluster installation passed, including HTTPS port 443.")
 
 
 def plan() -> None:

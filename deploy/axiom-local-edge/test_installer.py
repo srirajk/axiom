@@ -27,6 +27,87 @@ private = load_module("axiom_private_helper", HERE / "prepare-private.py")
 
 
 class LocalInstallerTest(unittest.TestCase):
+    def test_https_requires_exact_issuer_before_reporting_success(self) -> None:
+        with patch.object(installer, "run", return_value='{"issuer":"https://wrong.example"}') as run:
+            with self.assertRaisesRegex(installer.InstallError, "wrong Axiom issuer"):
+                installer.check_https()
+            self.assertEqual(run.call_count, 1)
+        with patch.object(installer, "run", side_effect=[
+            '{"issuer":"https://identity.meridian.com"}', '', '']) as run:
+            installer.check_https()
+            self.assertEqual(run.call_count, 3)
+            self.assertTrue(all("--cacert" in c.args and "--fail" in c.args for c in run.call_args_list))
+
+    def test_first_install_uses_edge_helm_release_and_existing_manifest_keeps_ownership(self) -> None:
+        for managed, existing_class, expect_helm in (({}, {}, True), ({}, {"spec": {}}, False),
+                                                    ({"status": "deployed"}, {"spec": {}}, True)):
+            with self.subTest(managed=bool(managed), existing_class=bool(existing_class)), \
+                 patch.object(installer, "run", return_value="rendered edge") as run, \
+                 patch.object(installer, "release", return_value=managed), \
+                 patch.object(installer, "kube_json", return_value=existing_class), \
+                 patch.object(installer, "helm_install") as helm:
+                installer.install_edge()
+                self.assertEqual(helm.called, expect_helm)
+                mutations = [c for c in run.call_args_list if "apply" in c.args and "--dry-run=server" not in c.args]
+                self.assertEqual(bool(mutations), not expect_helm)
+
+    def test_shared_mode_rejects_gateway_reference_before_install(self) -> None:
+        gateway = {"kind": "Gateway", "spec": {"infrastructure": {
+            "parametersRef": {"name": "axiom-local-proxy"}}}}
+        resources = {"items": [{"kind": "EnvoyProxy", "spec": {"mergeGateways": True}}, gateway]}
+        with patch.object(installer, "kube", side_effect=lambda *args: json.dumps(resources)):
+            with self.assertRaisesRegex(installer.InstallError, "removing Gateway infrastructure.parametersRef"):
+                installer.check_edge_configuration()
+            del gateway["spec"]["infrastructure"]
+            installer.check_edge_configuration()
+        gateway["spec"]["infrastructure"] = {"parametersRef": {"name": "axiom-local-proxy"}}
+        with patch.object(installer, "kube", return_value="\n".join(json.dumps(item) for item in resources["items"])):
+            with self.assertRaisesRegex(installer.InstallError, "removing Gateway infrastructure.parametersRef"):
+                installer.check_edge_configuration()
+
+    def test_shared_gateway_requires_class_reference_merge_and_https_service(self) -> None:
+        gateway_class = {
+            "spec": {"parametersRef": {
+                "group": "gateway.envoyproxy.io", "kind": "EnvoyProxy",
+                "name": "axiom-local-proxy", "namespace": "gateway-demo"}},
+            "status": {"conditions": [{"type": "Accepted", "status": "True"}]}}
+        proxy = {"spec": {"mergeGateways": True}}
+        gateway = {"status": {"conditions": [{"type": "Programmed", "status": "True"}]}}
+        routes = {"items": [{"metadata": {"name": name}, "status": {"parents": [{
+            "conditions": [{"type": kind, "status": "True"}
+                           for kind in ("Accepted", "ResolvedRefs")]}]}}
+            for name in ("axiom-admin-http", "axiom-admin-https", "axiom-identity-http", "axiom-identity-https")]}
+        service = {"metadata": {"name": "envoy-axiom-local-gateway-arbitrary-hash", "labels": {
+            "gateway.envoyproxy.io/owning-gatewayclass": "axiom-local-gateway"}},
+            "spec": {"type": "LoadBalancer", "externalTrafficPolicy": "Cluster", "ports": [{"port": 443}]},
+            "status": {"loadBalancer": {"ingress": [{"ip": "127.0.0.1"}]}}}
+        services = {"items": [service]}
+
+        def fake_kube(*args):
+            for kind, response in (("gatewayclass", gateway_class), ("envoyproxy", proxy),
+                                   ("gateway", gateway), ("httproutes", routes), ("services", services)):
+                if kind in args:
+                    return json.dumps(response)
+            raise AssertionError(args)
+
+        with patch.object(installer, "kube", side_effect=fake_kube):
+            installer.check_gateway()
+            proxy["spec"]["mergeGateways"] = False
+            with self.assertRaisesRegex(installer.InstallError, "enable mergeGateways"):
+                installer.check_gateway()
+            proxy["spec"]["mergeGateways"] = True
+            gateway_class["spec"]["parametersRef"]["namespace"] = "wrong"
+            with self.assertRaisesRegex(installer.InstallError, "reference the shared"):
+                installer.check_gateway()
+            gateway_class["spec"]["parametersRef"]["namespace"] = "gateway-demo"
+            services["items"].append(service)
+            with self.assertRaisesRegex(installer.InstallError, "exactly one"):
+                installer.check_gateway()
+            services["items"].pop()
+            service["spec"]["ports"] = [{"port": 80}]
+            with self.assertRaisesRegex(installer.InstallError, "HTTPS port 443"):
+                installer.check_gateway()
+
     def test_build_context_must_exclude_deployment_private_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()

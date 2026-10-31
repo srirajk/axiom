@@ -11,6 +11,10 @@ Envoy Gateway. The two-release order is required because this chart's pre-instal
 ordinary resources in its own release. The older `deploy/kind`, `deploy/phase0-isolated`, and `axiom-test`
 profiles are historical; do not mix their values or images with the current local-edge estate.
 
+The installer then installs the separate [shared edge chart](../axiom-local-edge/README.md) on a fresh cluster.
+It enables `mergeGateways` through the GatewayClass, so Argus and other applications using
+`axiom-local-gateway` share Axiom's Envoy and HTTPS LoadBalancer from their first install.
+
 ## Current topology contract
 
 - Kubernetes 1.28 or newer.

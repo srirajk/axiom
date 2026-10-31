@@ -4,8 +4,20 @@ This profile builds the current Axiom source for a **new, disposable Docker Desk
 historical `deploy/kind/install.sh` profile. The app and its PostgreSQL, Redis and Cerbos dependencies live in
 `axiom`; Envoy Gateway's controller/data plane live in `envoy-gateway-system`, and its Gateway/TLS resources live in
 `gateway-demo`. The data-plane Service is a Docker Desktop **LoadBalancer** on ports 80 and 443. The installer does
-not configure public DNS or trust the local CA in clients. An optional shared-edge overlay for a cluster that already
-runs Argus is described below; do not expose two local load balancers on the same host port 443.
+not configure public DNS or trust the local CA in clients. All Gateways using `axiom-local-gateway`, including
+Argus's own Gateways, share one Envoy data plane and one LoadBalancer on port 443. This is the default for every
+install: the [edge Helm chart](../helm/axiom-local-edge/README.md) links the GatewayClass to
+`gateway-demo/axiom-local-proxy` with `mergeGateways: true`. A fresh install creates Helm release
+`axiom-local-edge` in `gateway-demo`. Existing manifest installations retain their ownership and receive the same
+rendered chart. `gateway.yaml` links to the chart template so both installation paths stay identical.
+Apply edge changes with `installer.py install`; keep both settings in this manifest instead of patching the live
+cluster. Applications retain their own Gateways, listeners, routes and TLS Secrets. Check the shared Service with
+`kubectl --context docker-desktop -n envoy-gateway-system get svc -l gateway.envoyproxy.io/owning-gatewayclass=axiom-local-gateway`.
+
+Envoy Gateway v1.9.1 also requires each Gateway to omit `spec.infrastructure.parametersRef` in shared mode.
+The Axiom Gateway inherits its proxy from the GatewayClass; other applications must do the same. The installer
+refuses the conflicting combination before changing the cluster. Each application retains its own listeners,
+routes and certificates.
 
 The issuer is `https://identity.meridian.com` and the Admin URL is
 `https://identity-admin.meridian.com`. These names need local resolution to `127.0.0.1` for a browser. The
@@ -122,11 +134,18 @@ uses a different exposure path. Its local Docker images and test CA are not a re
   bypass a failed check.
 - HTTPS cannot connect after `status` says `READY`: check the Envoy LoadBalancer address, its `Cluster` external
   traffic policy, port 443, local DNS and the client trust of `local-ca.crt`.
+  The installer now checks laptop HTTPS discovery, readiness and Admin before reporting installation success.
+  During migration from separate proxies, Docker Desktop can race while releasing the old port binding. If its
+  logs show the new shared load-balancer container failed to bind 443, verify that container's service label and
+  restart only that container after the old binding is gone; no Gateway, route or certificate patch is needed.
 
 `plan` and `dry-run` do not install anything. `validate` reads the live cluster but does not change it. An install
 failure may leave a partial local estate; inspect it before re-running. This installer is not a reset command.
 
 ## Optional shared Argus edge on Docker Desktop
+
+This section documents the older reverse attachment method. New installs use the shared Axiom GatewayClass
+described above; Argus should use that class without attaching Axiom listeners to an Argus Gateway.
 
 For this disposable cluster, `attach-shared-edge.py` adds `identity.meridian.com` and
 `identity-admin.meridian.com` as HTTPS listeners on **port 443 of the existing Argus load balancer**. It copies the

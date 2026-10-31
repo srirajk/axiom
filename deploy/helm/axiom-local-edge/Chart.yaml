@@ -1,0 +1,6 @@
+apiVersion: v2
+name: axiom-local-edge
+description: Shared Envoy edge for the disposable Docker Desktop Meridian estate
+type: application
+version: 0.1.0
+kubeVersion: ">=1.28.0-0"

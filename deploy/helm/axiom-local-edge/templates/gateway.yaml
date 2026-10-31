@@ -1,0 +1,142 @@
+# EnvoyProxy must exist before the GatewayClass that references it.
+# Docker Desktop LoadBalancer exposes the HTTPS listener on the standard host port.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: axiom-local-proxy
+  namespace: gateway-demo
+spec:
+  # All Gateways of axiom-local-gateway share this data plane and LoadBalancer.
+  mergeGateways: true
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: LoadBalancer
+        externalTrafficPolicy: Cluster
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: axiom-local-gateway
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: axiom-local-proxy
+    namespace: gateway-demo
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: axiom-local-edge
+  namespace: gateway-demo
+spec:
+  gatewayClassName: axiom-local-gateway
+  listeners:
+    - name: identity-http
+      hostname: identity.meridian.com
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces: {from: Same}
+    - name: identity-https
+      hostname: identity.meridian.com
+      port: 443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs: [{kind: Secret, name: axiom-identity-tls}]
+      allowedRoutes:
+        namespaces: {from: Same}
+    - name: admin-http
+      hostname: identity-admin.meridian.com
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces: {from: Same}
+    - name: admin-https
+      hostname: identity-admin.meridian.com
+      port: 443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs: [{kind: Secret, name: axiom-admin-tls}]
+      allowedRoutes:
+        namespaces: {from: Same}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: axiom-identity-http
+  namespace: gateway-demo
+spec:
+  parentRefs: [{name: axiom-local-edge, sectionName: identity-http}]
+  hostnames: [identity.meridian.com]
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect: {scheme: https, port: 443, statusCode: 301}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: axiom-identity-https
+  namespace: gateway-demo
+spec:
+  parentRefs: [{name: axiom-local-edge, sectionName: identity-https}]
+  hostnames: [identity.meridian.com]
+  rules:
+    - filters:
+        # Keep forwarded headers aligned with the standard HTTPS origin.
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set: [{name: X-Forwarded-Port, value: "443"}]
+      backendRefs: [{name: axiom, namespace: axiom, port: 8084}]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: axiom-admin-http
+  namespace: gateway-demo
+spec:
+  parentRefs: [{name: axiom-local-edge, sectionName: admin-http}]
+  hostnames: [identity-admin.meridian.com]
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect: {scheme: https, port: 443, statusCode: 301}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: axiom-admin-https
+  namespace: gateway-demo
+spec:
+  parentRefs: [{name: axiom-local-edge, sectionName: admin-https}]
+  hostnames: [identity-admin.meridian.com]
+  rules:
+    - filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set: [{name: X-Forwarded-Port, value: "443"}]
+      backendRefs: [{name: axiom-admin, namespace: axiom, port: 8080}]
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-axiom-local-edge
+  namespace: axiom
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: gateway-demo
+  to:
+    - group: ""
+      kind: Service
+      name: axiom
+    - group: ""
+      kind: Service
+      name: axiom-admin
