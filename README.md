@@ -18,8 +18,8 @@ development, integration, and product evaluation. It is not yet certified for pr
 - For consumer-neutral, executable identity integration examples, use the
   [Axiom identity cookbook](examples/identity_scenarios/README.md). Its local estate is separate from Kubernetes.
 - For the current disposable Docker Desktop Helm and Envoy installation, use the
-  [local-edge installer](deploy/axiom-local-edge/README.md). It is local-only, uses a loopback port-forward and has
-  no production claim. The older `axiom-test` profile remains for historical test evidence.
+  [local-edge installer](deploy/axiom-local-edge/README.md). It is local-only, exposes HTTPS through Envoy on port 443,
+  and has no production claim. The older `axiom-test` profile remains for historical test evidence.
 - For a Probata handoff, read [Probata consumer contract](#probata-consumer-contract).
 - For customer identity and Agent on-behalf-of authorization, read
   [CIAM and Agent On-Behalf-Of Contract](docs/architecture/ciam-agent-delegation.md), then run the

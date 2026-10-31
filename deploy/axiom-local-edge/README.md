@@ -3,12 +3,12 @@
 This profile builds the current Axiom source for a **new, disposable Docker Desktop Kubernetes cluster**. It is not the
 historical `deploy/kind/install.sh` profile. The app and its PostgreSQL, Redis and Cerbos dependencies live in
 `axiom`; Envoy Gateway's controller/data plane live in `envoy-gateway-system`, and its Gateway/TLS resources live in
-`gateway-demo`. The base profile's data-plane Service is **ClusterIP**, reached by an explicit loopback port-forward;
-no LoadBalancer, NodePort, public DNS or trusted certificate is installed by the base installer. An optional shared-edge
-overlay for a cluster that already runs Argus is described below.
+`gateway-demo`. The data-plane Service is a Docker Desktop **LoadBalancer** on ports 80 and 443. The installer does
+not configure public DNS or trust the local CA in clients. An optional shared-edge overlay for a cluster that already
+runs Argus is described below; do not expose two local load balancers on the same host port 443.
 
-The issuer is `https://identity.meridian.com:8443` and the Admin URL is
-`https://identity-admin.meridian.com:8443`. These names need local resolution to `127.0.0.1` for a browser. The
+The issuer is `https://identity.meridian.com` and the Admin URL is
+`https://identity-admin.meridian.com`. These names need local resolution to `127.0.0.1` for a browser. The
 local-CA-signed certificate is only for local testing. Its single key pair covers the ten Meridian test hostnames
 listed below; Axiom serves only the two identity hostnames. The other names remain owned by their respective
 applications and are not routed to Axiom. Do not use this profile with real users or secrets.
@@ -30,16 +30,15 @@ it does **not** prove control of a mailbox. The base Helm chart and application 
 enable it for a real tenant or real customer email domain. A platform-admin bearer token is required, and each
 activation is recorded as `CUSTOMER_DEMO_ACTIVATED` with `SIMULATED_DEMO` evidence.
 
-With the foreground `installer.py expose` port-forward running, call it once with the pending demo addresses:
+After installation, call it once with the pending demo addresses:
 
 ```bash
 curl --noproxy '*' --fail-with-body \
   --cacert deploy/axiom-local-edge/private/certs/local-ca.crt \
-  --resolve identity.meridian.com:8443:127.0.0.1 \
   -H "Authorization: Bearer $AXIOM_ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"emails":["customer-one@meridian.local","customer-two@meridian.local"]}' \
-  https://identity.meridian.com:8443/admin/tenants/meridian/ciam/demo-customers/activate
+  https://identity.meridian.com/admin/tenants/meridian/ciam/demo-customers/activate
 ```
 
 Replace the example addresses with the actual pending synthetic addresses; set `AXIOM_ADMIN_TOKEN` from your existing
@@ -71,8 +70,6 @@ python3 deploy/axiom-local-edge/installer.py validate
 python3 deploy/axiom-local-edge/installer.py dry-run
 python3 deploy/axiom-local-edge/installer.py install --allow-envoy-install
 python3 deploy/axiom-local-edge/installer.py status
-# In a foreground terminal, while browser access is needed:
-python3 deploy/axiom-local-edge/installer.py expose
 ```
 
 For a genuinely new estate with **no** `deploy/axiom-local-edge/private/` folder and no Axiom namespace, pass
@@ -84,22 +81,21 @@ python3 deploy/axiom-local-edge/installer.py validate --generate-private
 python3 deploy/axiom-local-edge/installer.py install --allow-envoy-install --generate-private
 ```
 
-In another terminal, verify the forwarded HTTPS endpoint and exact issuer:
+Verify the HTTPS LoadBalancer endpoint and exact issuer:
 
 ```bash
 curl --noproxy '*' --fail --cacert deploy/axiom-local-edge/private/certs/local-ca.crt \
-  --resolve identity.meridian.com:8443:127.0.0.1 \
-  https://identity.meridian.com:8443/actuator/health/readiness
+  https://identity.meridian.com/actuator/health/readiness
 curl --noproxy '*' --fail --cacert deploy/axiom-local-edge/private/certs/local-ca.crt \
-  --resolve identity.meridian.com:8443:127.0.0.1 \
-  https://identity.meridian.com:8443/.well-known/openid-configuration
+  https://identity.meridian.com/.well-known/openid-configuration
 ```
 
 Success means `status` reports `READY`, both Helm tests and the DNS-positive/Redis-denied canary passed during
-`install`, readiness returns `UP`, and discovery advertises exactly `https://identity.meridian.com:8443` as issuer.
+`install`, readiness returns `UP`, and discovery advertises exactly `https://identity.meridian.com` as issuer.
 These checks prove this local installation, not a complete OAuth browser flow or a production-ready endpoint.
-For browser use, resolve both documented hostnames to `127.0.0.1` locally and trust this estate's
-`private/certs/local-ca.crt` in the test client. The `curl --resolve` checks above do not require a hosts-file edit.
+For browser use, both hostnames must resolve to the reachable LoadBalancer address and the test client must trust
+`private/certs/local-ca.crt`. In this Docker Desktop cluster, the existing local hostname entries resolve to
+`127.0.0.1`, which Docker Desktop serves on port 443; no port-forward is required.
 
 `install` needs `--allow-envoy-install` only if the pinned Envoy Gateway chart is absent; that flag authorizes the
 chart's cluster-scoped CRDs and RBAC in this disposable cluster. For a genuinely new estate with **no** local private
@@ -107,15 +103,12 @@ folder, also pass `--generate-private`; otherwise the installer preserves and ve
 The installer checks context, branch, tools, the selected worker, namespace Pod Security labels, chart versions,
 Secret equality, offline render, server-side admission, Helm tests, route conditions, deployment readiness and a
 DNS-positive/Redis-denied NetworkPolicy canary. Secret creation can resume after a partial install, but a mismatched
-Secret fails closed. It prints no passwords or key material. `status` checks the deployed release; the separate
-`expose` command keeps the local port-forward foreground and visible.
+Secret fails closed. It prints no passwords or key material. `status` checks the deployed release; verify the
+external HTTPS route separately with the `curl` commands above.
 
-On 2026-10-22, this command sequence completed on a reset Docker Desktop Kubernetes 1.36.4 cluster: it built the
-then-current server and Admin images, installed PostgreSQL/Redis/Cerbos, Axiom and Envoy, passed server-side
-admission dry-run, both Helm tests, Gateway/HTTPRoute checks and the network canary. A loopback-only forward then
-returned HTTP 200 for readiness and discovery. The observed run is recorded in
-[`axiom-local-edge-evidence.md`](../../docs/operations/axiom-local-edge-evidence.md). The local Docker images and
-foreground port-forward are still not a registry-backed or durable production release.
+The 2026-10-22 loopback-only installation is historical evidence in
+[`axiom-local-edge-evidence.md`](../../docs/operations/axiom-local-edge-evidence.md). The current LoadBalancer profile
+uses a different exposure path. Its local Docker images and test CA are not a registry-backed production release.
 
 ### If it stops
 
@@ -127,8 +120,8 @@ foreground port-forward are still not a registry-backed or durable production re
   over or replace it.
 - Failed Helm test, Gateway check or network canary: inspect the named Job, Pod or route and its logs. Do not
   bypass a failed check.
-- HTTPS cannot connect after `status` says `READY`: keep `installer.py expose` running in another terminal and
-  check that ports 8080 and 8443 are free.
+- HTTPS cannot connect after `status` says `READY`: check the Envoy LoadBalancer address, its `Cluster` external
+  traffic policy, port 443, local DNS and the client trust of `local-ca.crt`.
 
 `plan` and `dry-run` do not install anything. `validate` reads the live cluster but does not change it. An install
 failure may leave a partial local estate; inspect it before re-running. This installer is not a reset command.
@@ -136,10 +129,11 @@ failure may leave a partial local estate; inspect it before re-running. This ins
 ## Optional shared Argus edge on Docker Desktop
 
 For this disposable cluster, `attach-shared-edge.py` adds `identity.meridian.com` and
-`identity-admin.meridian.com` as HTTPS listeners on **port 8443 of the existing Argus load balancer**. It copies the
+`identity-admin.meridian.com` as HTTPS listeners on **port 443 of the existing Argus load balancer**. It copies the
 existing Axiom test certificates into `argus-edge`, adds only two listeners to `argus-edge/argus-edge`, and applies
 the two Axiom HTTPRoutes in `gateway-demo`. Existing Argus listeners and the original private Axiom Gateway stay in
-place. Run it only after both gateways and the Axiom services are installed:
+place. First retire Axiom's separate LoadBalancer exposure, then run it only after both gateways and the Axiom
+services are installed:
 
 ```bash
 python3 deploy/axiom-local-edge/attach-shared-edge.py
@@ -148,17 +142,13 @@ kubectl --context docker-desktop -n gateway-demo get httproute axiom-identity-sh
 ```
 
 Both new routes must be `Accepted=True` and `ResolvedRefs=True`; both listeners must be `Programmed=True`.
-The shared Envoy service then has ports 443 for Argus and 8443 for Axiom. The public issuer stays exactly
-`https://identity.meridian.com:8443`; do not change it to 443 merely to make a browser request work.
-The local test certificates expire on **2026-11-10** and must be rotated in both namespaces together. The attachment
-script refuses to overwrite a different existing TLS Secret; rotate those Secrets deliberately before rerunning it.
+The shared Envoy service uses port 443 for both Argus and Axiom, selected by hostname. The public issuer stays
+exactly `https://identity.meridian.com`. The local leaf expires 30 days after issuance and must be rotated in both
+namespaces together. The attachment script refuses to overwrite a different existing TLS Secret; rotate those
+Secrets deliberately before rerunning it.
 
-On 2026-10-27 the Kubernetes listener and routes passed, and Axiom readiness and Admin returned 200 through the
-shared Envoy. Docker Desktop's `com.docker.backend` was already listening on the laptop's port 8443 and reset direct
-TLS connections, so the load balancer was **not yet directly reachable from the laptop** on that port. A temporary
-loopback forward to the shared Envoy restored browser access. The overlay persists in Kubernetes, but the forward
-does not survive Docker or laptop restarts. Do not claim the port-forward can be removed until a direct laptop
-request with the local CA succeeds after the forward is stopped. An Argus edge redeploy may also replace its Gateway
+The 2026-10-27 shared-edge check used the older port-8443 profile; it does not prove the current port-443 profile.
+Validate direct laptop HTTPS with the local CA after attaching. An Argus edge redeploy may also replace its Gateway
 listeners; rerun the attachment script after checking the current Gateway and route state.
 
 To remove only this optional overlay, delete the two `*-shared-edge` HTTPRoutes in `gateway-demo`, remove the two
@@ -258,7 +248,7 @@ upgrade plan. In particular, the static tags in `values.yaml` may not name the c
 4. Install the quickstart's pinned Envoy Gateway chart `v1.9.1`. The chart installs Gateway API CRDs and RBAC;
    review these cluster-scoped objects before install. The two local TLS Secrets were loaded in step 2. Then
    server-side dry-run and apply [gateway.yaml](gateway.yaml). The `EnvoyProxy` sets the data-plane Service to
-   ClusterIP; verify this in the live Service before any port-forward.
+   LoadBalancer with `externalTrafficPolicy: Cluster`; verify both fields in the live Service.
 
    ```bash
    helm --kube-context docker-desktop upgrade --install eg oci://docker.io/envoyproxy/gateway-helm \
@@ -268,37 +258,31 @@ upgrade plan. In particular, the static tags in `values.yaml` may not name the c
    ```
 
 5. Wait for `GatewayClass Accepted`, `Gateway Programmed`, all four HTTPRoutes `Accepted` and `ResolvedRefs`, and
-   a ready Envoy data-plane pod. Its Service must be ClusterIP, with no NodePort. Start a **foreground** port-forward
-   to only `127.0.0.1`, mapping local 8080/8443 to Envoy 80/443:
+   a ready Envoy data-plane pod. Its LoadBalancer Service must have an address and route traffic on port 443:
 
    ```bash
    kubectl --context docker-desktop wait --for=condition=Accepted gatewayclass/axiom-local-gateway --timeout=3m
    kubectl --context docker-desktop -n gateway-demo wait --for=condition=Programmed gateway/axiom-local-edge --timeout=3m
    kubectl --context docker-desktop -n gateway-demo get httproutes
    kubectl --context docker-desktop -n envoy-gateway-system get services
-   bash deploy/axiom-local-edge/expose-local.sh
    ```
 
-   In a second terminal, check HTTPS discovery through Envoy with the local CA, pinned hostname, exact issuer,
+   Check HTTPS discovery through Envoy with the local CA, exact issuer,
    Admin response and HTTP redirect. This applies only after a separately reviewed installation of the newly
    generated TLS Secrets; existing Secrets are never replaced by the generation helper:
 
    ```bash
    curl --noproxy '*' --fail --cacert deploy/axiom-local-edge/private/certs/local-ca.crt \
-     --resolve identity.meridian.com:8443:127.0.0.1 \
-     https://identity.meridian.com:8443/actuator/health/readiness
+     https://identity.meridian.com/actuator/health/readiness
    curl --noproxy '*' --fail --cacert deploy/axiom-local-edge/private/certs/local-ca.crt \
-     --resolve identity.meridian.com:8443:127.0.0.1 \
-     https://identity.meridian.com:8443/.well-known/openid-configuration
+     https://identity.meridian.com/.well-known/openid-configuration
    curl --noproxy '*' --fail --cacert deploy/axiom-local-edge/private/certs/local-ca.crt \
-     --resolve identity-admin.meridian.com:8443:127.0.0.1 \
-     https://identity-admin.meridian.com:8443/
+     https://identity-admin.meridian.com/
    ```
 
-   Discovery's `issuer` must exactly match `https://identity.meridian.com:8443`. The HTTPS HTTPRoutes overwrite
-   `X-Forwarded-Port` with `8443` so OAuth browser-login redirects return to the same local origin; this is specific
-   to the loopback-forwarded profile. Do not mistake a port-forward for a trusted public issuer. Stop the port-forward
-   with Ctrl-C when done; do not leave a hidden background proxy.
+   Discovery's `issuer` must exactly match `https://identity.meridian.com`. The HTTPS HTTPRoutes set
+   `X-Forwarded-Port` to `443` so OAuth browser-login redirects return to the same origin. The local CA still needs
+   explicit trust in each client.
 
 6. Check local network denial and remove the one canary pod:
 
@@ -315,7 +299,7 @@ upgrade plan. In particular, the static tags in `values.yaml` may not name the c
 
 A future client in this cluster can reach Axiom's HTTP transport at
 `http://axiom.axiom.svc.cluster.local:8084` **only after** an ingress NetworkPolicy explicitly permits its namespace
-and pod labels. The protected-token issuer remains the exact string `https://identity.meridian.com:8443`; consumers
+and pod labels. The protected-token issuer remains the exact string `https://identity.meridian.com`; consumers
 must compare JWT `iss` to that string, check audience and signature, and reject tokens when required validation
 cannot be completed. The internal transport can serve discovery, JWKS, introspection and token endpoints to clients
 whose libraries support an issuer distinct from their network endpoint. Do not rewrite the issuer claim to the
@@ -328,25 +312,33 @@ register a client, issue a token, test browser login or prove consumer authoriza
 [identity cookbook](../../examples/identity_scenarios/README.md) covers the broader OAuth/OIDC contracts in its own
 disposable estate and must not be pointed at this Kubernetes deployment.
 
-A strict OIDC library that insists on fetching the advertised `https://identity.meridian.com:8443` URLs directly
+A strict OIDC library that insists on fetching the advertised `https://identity.meridian.com` URLs directly
 cannot use this local deployment from another pod without an explicit DNS/routing and certificate-trust arrangement.
-The current self-signed issuer and foreground laptop port-forward are **not** a persistent endpoint for such a
-consumer. Select that consumer's actual namespace and trust model before opening any additional route; do not
-modify cluster DNS or expose a LoadBalancer as an implicit quick fix.
+The local CA and Docker Desktop LoadBalancer are **not** a production endpoint for such a consumer. Select that
+consumer's actual namespace and trust model before opening any additional route or changing cluster DNS.
 
 ## Recovery and removal
+
+An existing release from the older `:8443` profile has an `axiom-admin` OAuth client persisted with callback and
+post-logout URLs on that port. Before upgrading that release to the port-443 profile, verify that this is the only
+drift in `oauth2_registered_client` and change those two URLs to
+`https://identity-admin.meridian.com/callback` and `https://identity-admin.meridian.com/login`. The bootstrap hook
+intentionally refuses an unexpected registered-client change. Keep the exact old values for recovery: if Helm
+rolls back, restore the old URLs before restarting the old release. This is a deployment-specific data change, not
+a generic Flyway migration. The local 2026-10-31 upgrade updated one matching row, then Helm revision 4 and its
+smoke test passed without resetting PostgreSQL or rotating credentials.
 
 For an existing local release, the installer refuses a changed source image; it is **not** an upgrade command.
 Back up PostgreSQL, record the current image and chart values, and review the required Flyway migrations before a
 separate application-only upgrade. Keep the PVCs and operator-owned Secrets in place. Helm rollback does not undo
 database migrations (this source tree includes V43 broker-target storage and V44 customer-person names). Run chart
 lint and server-side dry-run, upgrade only `axiom` with `--atomic`, run `helm test axiom`, and verify migration state,
-readiness, discovery and Admin through the existing loopback Envoy route. Do not uninstall `axiom-dependencies` or
+readiness, discovery and Admin through the Envoy LoadBalancer route. Do not uninstall `axiom-dependencies` or
 Envoy for an application-only upgrade.
 
 If Axiom installation fails, inspect hooks, pods and dependency health. An `--atomic` app failure rolls back that
 release; it does not delete PostgreSQL, Redis, PVCs or operator-owned Secrets. Do not rotate a signing key or delete
-data as a first repair. To remove this disposable estate, stop the port-forward, delete this profile's GatewayClass,
+data as a first repair. To remove this disposable estate, delete this profile's GatewayClass,
 Gateway/HTTPRoutes/EnvoyProxy/ReferenceGrant and TLS Secrets, uninstall `axiom` then `axiom-dependencies`, and only
 then delete `gateway-demo`, `axiom` and `envoy-gateway-system` after checking for unrelated resources. Namespace
 deletion destroys the disposable PVC data; plain Helm uninstall retains some claims.

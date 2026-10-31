@@ -1,4 +1,4 @@
-# Fresh Docker Desktop cluster only; Axiom is not exposed except through a loopback port-forward to Envoy.
+# Disposable Docker Desktop cluster; Envoy exposes Axiom through a local LoadBalancer.
 server:
   image:
     repository: axiom-server
@@ -10,9 +10,9 @@ admin:
     tag: local-edge-20261013-r1
     pullPolicy: IfNotPresent
 config:
-  issuerUrl: https://identity.meridian.com:8443
-  adminPublicUrl: https://identity-admin.meridian.com:8443
-  corsAllowedOrigins: https://identity-admin.meridian.com:8443,http://localhost:5180,https://argus.meridian.com
+  issuerUrl: https://identity.meridian.com
+  adminPublicUrl: https://identity-admin.meridian.com
+  corsAllowedOrigins: https://identity-admin.meridian.com,http://localhost:5180,https://argus.meridian.com
   approvedBusinessScopes: example:read,example:write
   ciam:
     localDemoChallengeDisclosure: false
@@ -20,7 +20,7 @@ config:
       enabled: true
       allowedTenant: meridian
       allowedEmailDomain: meridian.local
-      allowedIssuer: https://identity.meridian.com:8443
+      allowedIssuer: https://identity.meridian.com
     tenantId: meridian
     customerClientId: demo-customer-web
     customerScopes: example:read

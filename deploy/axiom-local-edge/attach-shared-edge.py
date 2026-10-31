@@ -35,7 +35,7 @@ def main():
     )
     for name, hostname, secret, _ in expected:
         current = existing.get(name)
-        if current and (current.get("hostname") != hostname or current.get("port") != 8443
+        if current and (current.get("hostname") != hostname or current.get("port") != 443
                         or current.get("protocol") != "HTTPS"
                         or current.get("tls", {}).get("certificateRefs", [{}])[0].get("name") != secret
                         or current.get("allowedRoutes", {}).get("namespaces", {}).get("selector", {})
@@ -64,7 +64,7 @@ def main():
         if name in existing:
             continue
         patch.append({"op": "add", "path": "/spec/listeners/-", "value": {
-            "name": name, "hostname": hostname, "port": 8443, "protocol": "HTTPS",
+            "name": name, "hostname": hostname, "port": 443, "protocol": "HTTPS",
             "tls": {"mode": "Terminate", "certificateRefs": [{"kind": "Secret", "name": secret}]},
             "allowedRoutes": {"kinds": [{"kind": "HTTPRoute"}], "namespaces": {
                 "from": "Selector", "selector": {"matchLabels": {
@@ -73,7 +73,7 @@ def main():
     if len(patch) > 1:
         run(EDGE + ["patch", "gateway", "argus-edge", "--type=json", "-p", json.dumps(patch)])
     run(BASE + ["apply", "-f", str(HERE / "shared-edge-routes.yaml")])
-    print("Axiom routes attached to the shared edge. Verify host port 8443 separately.")
+    print("Axiom routes attached to the shared edge. Verify host port 443 separately.")
 
 
 if __name__ == "__main__":

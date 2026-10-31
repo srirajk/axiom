@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import stat
 import subprocess
@@ -23,6 +22,13 @@ CONTEXT = "docker-desktop"
 BRANCH = "hardening/phase-0-baseline"
 ENVOY_CHART = "oci://docker.io/envoyproxy/gateway-helm"
 ENVOY_VERSION = "v1.9.1"
+ADMIN_BUILD_ARGS = (
+    "VITE_AXIOM_ISSUER=https://identity.meridian.com",
+    "VITE_AXIOM_API_URL=https://identity.meridian.com",
+    "VITE_CIAM_TENANT_ID=meridian",
+    "VITE_CIAM_CUSTOMER_CLIENT_ID=demo-customer-web",
+    "VITE_CIAM_CUSTOMER_SCOPES=example:read",
+)
 PRIVATE_FILES = (
     "certs/local-ca.crt", "certs/local-ca.key", "certs/axiom-identity.crt",
     "certs/axiom-identity.key", "certs/axiom-admin.crt", "certs/axiom-admin.key",
@@ -70,6 +76,10 @@ def source_files(component: str) -> list[Path]:
 
 def image_tag(component: str) -> str:
     digest = hashlib.sha256()
+    if component == "admin":
+        for build_arg in ADMIN_BUILD_ARGS:
+            digest.update(build_arg.encode())
+            digest.update(b"\0")
     for path in source_files(component):
         digest.update(str(path.relative_to(ROOT)).encode())
         digest.update(b"\0")
@@ -262,8 +272,12 @@ def check_gateway() -> None:
         raise InstallError("Missing local HTTPRoutes: " + ", ".join(sorted(expected)))
     services = json.loads(kube("-n", "envoy-gateway-system", "get", "services", "-o", "json"))["items"]
     matching = [item for item in services if item["metadata"]["name"].startswith("envoy-gateway-demo-axiom-local-edge-")]
-    if len(matching) != 1 or matching[0]["spec"]["type"] != "ClusterIP":
-        raise InstallError("Expected exactly one ClusterIP Axiom Envoy data-plane Service")
+    if len(matching) != 1 or matching[0]["spec"]["type"] != "LoadBalancer":
+        raise InstallError("Expected exactly one LoadBalancer Axiom Envoy data-plane Service")
+    if matching[0]["spec"].get("externalTrafficPolicy") != "Cluster":
+        raise InstallError("Axiom Envoy LoadBalancer must route traffic to the ready pod from any node")
+    if not matching[0].get("status", {}).get("loadBalancer", {}).get("ingress"):
+        raise InstallError("Axiom Envoy LoadBalancer has no address")
 
 
 def status() -> None:
@@ -317,11 +331,8 @@ def install(allow_envoy: bool, generate_private: bool) -> None:
     for component in ("server", "admin"):
         run("docker", "build", "-f", str(ROOT / component / "Dockerfile"),
             "-t", f"axiom-{component}:{image_tag(component)}",
-            *( ["--build-arg", "VITE_AXIOM_ISSUER=https://identity.meridian.com:8443",
-                "--build-arg", "VITE_AXIOM_API_URL=https://identity.meridian.com:8443",
-                "--build-arg", "VITE_CIAM_TENANT_ID=meridian",
-                "--build-arg", "VITE_CIAM_CUSTOMER_CLIENT_ID=demo-customer-web",
-                "--build-arg", "VITE_CIAM_CUSTOMER_SCOPES=example:read"] if component == "admin" else []),
+            *(sum((["--build-arg", value] for value in ADMIN_BUILD_ARGS), [])
+              if component == "admin" else []),
             str(ROOT))
         print(f"Built axiom-{component}:{image_tag(component)}")
     ensure_namespace("axiom", restricted=True)
@@ -349,7 +360,7 @@ def install(allow_envoy: bool, generate_private: bool) -> None:
          "gateway/axiom-local-edge", "--timeout=3m")
     status()
     network_canary()
-    print("Local cluster installation passed. Run 'installer.py expose' in a foreground terminal for browser access.")
+    print("Local cluster installation passed. Verify identity.meridian.com on HTTPS port 443.")
 
 
 def plan() -> None:
@@ -359,12 +370,12 @@ def plan() -> None:
     print(f"admin image: axiom-admin:{image_tag('admin')}")
     print("order: validate -> render -> build -> namespaces/Secrets -> dependencies -> Axiom -> Envoy -> routes -> tests")
     print("cluster-scoped Envoy install needs --allow-envoy-install; no data or namespace teardown is performed")
-    print("browser access needs a separate foreground loopback port-forward (expose command)")
+    print("browser access uses the Envoy LoadBalancer on HTTPS port 443; no port-forward")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("plan", "validate", "dry-run", "install", "status", "expose"))
+    parser.add_argument("command", choices=("plan", "validate", "dry-run", "install", "status"))
     parser.add_argument("--allow-envoy-install", action="store_true")
     parser.add_argument("--generate-private", action="store_true")
     args = parser.parse_args()
@@ -387,9 +398,6 @@ def main() -> int:
         elif args.command == "status":
             check_cluster()
             status()
-        else:
-            check_cluster()
-            os.execv("/bin/bash", ["bash", str(HERE / "expose-local.sh")])
     except (InstallError, OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
         print(f"BLOCKED: {exc}", file=sys.stderr)
         return 1

@@ -48,7 +48,7 @@ spec:
           wget -qO /tmp/readiness "${base}/actuator/health/readiness"
           grep -q '"status":"UP"' /tmp/readiness
           wget -qO /tmp/metadata "${base}/.well-known/openid-configuration"
-          grep -q '"issuer":"https://identity.meridian.com:8443"' /tmp/metadata
+          grep -q '"issuer":"https://identity.meridian.com"' /tmp/metadata
           wget -qO /tmp/jwks "${base}/oauth2/jwks"
           grep -q '"keys"' /tmp/jwks
           echo "Cross-namespace Axiom readiness, exact issuer metadata and JWKS passed."

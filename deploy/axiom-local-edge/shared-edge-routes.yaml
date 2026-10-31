@@ -16,7 +16,7 @@ spec:
           requestHeaderModifier:
             set:
               - name: X-Forwarded-Port
-                value: "8443"
+                value: "443"
       backendRefs:
         - name: axiom
           namespace: axiom
@@ -40,7 +40,7 @@ spec:
           requestHeaderModifier:
             set:
               - name: X-Forwarded-Port
-                value: "8443"
+                value: "443"
       backendRefs:
         - name: axiom-admin
           namespace: axiom
