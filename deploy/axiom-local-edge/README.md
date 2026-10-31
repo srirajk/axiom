@@ -9,7 +9,15 @@ overlay for a cluster that already runs Argus is described below.
 
 The issuer is `https://identity.meridian.com:8443` and the Admin URL is
 `https://identity-admin.meridian.com:8443`. These names need local resolution to `127.0.0.1` for a browser. The
-local-CA-signed, single-host leaf certificates are only for local testing. Do not use this profile with real users or secrets.
+local-CA-signed certificate is only for local testing. Its single key pair covers the ten Meridian test hostnames
+listed below; Axiom serves only the two identity hostnames. The other names remain owned by their respective
+applications and are not routed to Axiom. Do not use this profile with real users or secrets.
+
+Certificate DNS names: `identity.meridian.com`, `identity-admin.meridian.com`, `argus.meridian.com`,
+`api.argus.meridian.com`, `grafana.argus.meridian.com`, `langfuse.argus.meridian.com`,
+`argus-edge-dev.argus.meridian.com`, `argus-edge-uat.argus.meridian.com`, `apps-dev.meridian.com`, and
+`apps-uat.meridian.com`. The leaf and key are stored as `private/certs/axiom-identity.crt` and `.key`; the installer
+copies the same pair to the existing Admin TLS Secret input. The local CA is in `private/certs/local-ca.crt`.
 This local release overlay allows the Admin origin, the Hub development origin `http://localhost:5180`, and
 `https://argus.meridian.com` in its global CORS list. CORS is not authorization: clients still need valid OAuth
 registration, redirect URI, scopes and user consent.
@@ -182,15 +190,15 @@ For a repeat of the same estate, `prepare-private.py ensure` verifies all four S
 creates only missing ones; it refuses to overwrite a mismatch. The installer uses this resumable mode.
 Preserve the matching private files and PostgreSQL data together if you plan to restore this estate after a cluster
 reset; a new password or master key cannot simply be substituted into an existing database. The local-CA-signed TLS
-leaf certificates expire after 30 days and require a planned local-only renewal. Keep `local-ca.crt` for clients
+leaf certificate expires after 30 days and requires a planned local-only renewal. Keep `local-ca.crt` for clients
 that validate TLS; do not use `--insecure` as a substitute outside disposable local diagnostics. This plaintext folder is convenient
 for disposable local use, not suitable for production or shared workstations.
 
 If the private folder already exists after a cluster reset, **do not run `generate` or rotate the administrator,
-master, database or signing credentials**. Check the existing leaf certificates; an older local set may be self-signed
-with `CA:TRUE` and lack `local-ca.crt`. Run `python3 deploy/axiom-local-edge/prepare-private.py renew-tls` to preserve
-the old TLS files in an owner-only `certs/previous-*` directory and generate a local CA plus `CA:FALSE` server leaves.
-This changes only local edge TLS material; `install` verifies the leaves and refuses to load malformed certificates.
+master, database or signing credentials**. Run `python3 deploy/axiom-local-edge/prepare-private.py renew-tls` to
+preserve the old local CA and leaf files in an owner-only `certs/previous-*` directory and generate a new local CA
+and `CA:FALSE` server leaf. This retains the signing key and passwords; `install` verifies the certificates and
+refuses to load malformed material. Clients that trusted the old local CA must trust the new `local-ca.crt`.
 
 ## Important new-cluster security check
 

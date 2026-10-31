@@ -17,6 +17,7 @@ import secrets
 import subprocess
 import sys
 import hmac
+import shutil
 
 
 ROOT = Path(__file__).resolve().parent
@@ -24,6 +25,18 @@ PRIVATE = ROOT / "private"
 CERTS = PRIVATE / "certs"
 PASSWORDS = PRIVATE / "passwords"
 CONTEXT = "docker-desktop"
+LOCAL_CERT_HOSTNAMES = (
+    "identity.meridian.com",
+    "identity-admin.meridian.com",
+    "argus.meridian.com",
+    "api.argus.meridian.com",
+    "grafana.argus.meridian.com",
+    "langfuse.argus.meridian.com",
+    "argus-edge-dev.argus.meridian.com",
+    "argus-edge-uat.argus.meridian.com",
+    "apps-dev.meridian.com",
+    "apps-uat.meridian.com",
+)
 
 
 def run(*command: str, input_data: bytes | None = None) -> None:
@@ -36,7 +49,7 @@ def write_private(path: Path, value: str) -> None:
     path.chmod(0o600)
 
 
-def generate_tls(stem: str, hostname: str) -> None:
+def generate_tls(stem: str, hostname: str, hostnames: tuple[str, ...] | None = None) -> None:
     key = CERTS / f"{stem}.key"
     cert = CERTS / f"{stem}.crt"
     request = CERTS / f"{stem}.csr"
@@ -45,9 +58,11 @@ def generate_tls(stem: str, hostname: str) -> None:
         "-subj", f"/CN={hostname}/O=Axiom Local Test",
         "-keyout", str(key), "-out", str(request),
     )
+    names = hostnames or (hostname,)
     extensions = (f"basicConstraints=critical,CA:FALSE\n"
                   f"keyUsage=critical,digitalSignature,keyEncipherment\n"
-                  f"extendedKeyUsage=serverAuth\nsubjectAltName=DNS:{hostname}\n")
+                  f"extendedKeyUsage=serverAuth\n"
+                  f"subjectAltName={','.join(f'DNS:{name}' for name in names)}\n")
     run("openssl", "x509", "-req", "-in", str(request),
         "-CA", str(CERTS / "local-ca.crt"), "-CAkey", str(CERTS / "local-ca.key"),
         "-CAcreateserial", "-days", "30", "-sha256", "-extfile", "/dev/stdin",
@@ -55,6 +70,15 @@ def generate_tls(stem: str, hostname: str) -> None:
     request.unlink()
     key.chmod(0o600)
     cert.chmod(0o600)
+
+
+def generate_shared_tls() -> None:
+    """One local leaf/key pair, copied to the two existing Axiom Secret inputs."""
+    generate_tls("axiom-identity", "identity.meridian.com", LOCAL_CERT_HOSTNAMES)
+    for suffix in ("crt", "key"):
+        target = CERTS / f"axiom-admin.{suffix}"
+        shutil.copyfile(CERTS / f"axiom-identity.{suffix}", target)
+        target.chmod(0o600)
 
 
 def generate_local_ca() -> None:
@@ -80,8 +104,7 @@ def generate() -> None:
     write_private(PASSWORDS / "postgres-password", secrets.token_urlsafe(36))
     write_private(PASSWORDS / "axiom-master-key", base64.b64encode(secrets.token_bytes(32)).decode("ascii"))
     generate_local_ca()
-    generate_tls("axiom-identity", "identity.meridian.com")
-    generate_tls("axiom-admin", "identity-admin.meridian.com")
+    generate_shared_tls()
     signer = ROOT.parent / "helm" / "axiom" / "scripts" / "create-signing-secret.py"
     run(sys.executable, str(signer), "--output-dir", str(CERTS))
     for name in ("signing-key.json", "jwks.json"):
@@ -90,11 +113,11 @@ def generate() -> None:
 
 
 def renew_tls() -> None:
-    """Replace only local edge TLS material; preserve old certificates and all Axiom credentials."""
+    """Replace the disposable local CA and leaf; preserve Axiom credentials."""
     if not PRIVATE.is_dir() or PRIVATE.is_symlink() or not CERTS.is_dir() or CERTS.is_symlink():
         raise SystemExit("Missing safe local private/certs directory")
-    names = ("local-ca.crt", "local-ca.key", "local-ca.srl", "axiom-identity.crt", "axiom-identity.key",
-             "axiom-admin.crt", "axiom-admin.key")
+    names = ("local-ca.crt", "local-ca.key", "local-ca.srl",
+             "axiom-identity.crt", "axiom-identity.key", "axiom-admin.crt", "axiom-admin.key")
     for name in names:
         path = CERTS / name
         if path.exists() and (not path.is_file() or path.is_symlink()):
@@ -110,8 +133,7 @@ def renew_tls() -> None:
                 source.rename(backup / name)
                 moved.append(name)
         generate_local_ca()
-        generate_tls("axiom-identity", "identity.meridian.com")
-        generate_tls("axiom-admin", "identity-admin.meridian.com")
+        generate_shared_tls()
         verify_tls()
     except BaseException:
         for name in names:
@@ -139,6 +161,7 @@ def verify_tls() -> None:
         details = subprocess.run(("openssl", "x509", "-in", str(cert), "-noout", "-text"),
                                  check=True, capture_output=True, text=True).stdout
         if "CA:FALSE" not in details or "TLS Web Server Authentication" not in details \
+                or any(f"DNS:{name}" not in details for name in LOCAL_CERT_HOSTNAMES) \
                 or f"DNS:{hostname}" not in details or "CA:TRUE" in details:
             raise SystemExit(f"Invalid server leaf certificate: {stem}")
 

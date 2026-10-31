@@ -21,9 +21,12 @@ class LocalTlsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="axiom-local-tls-") as directory:
             helper.CERTS = Path(directory)
             helper.generate_local_ca()
-            for stem, hostname in (("axiom-identity", "identity.meridian.com"),
-                                   ("axiom-admin", "identity-admin.meridian.com")):
-                helper.generate_tls(stem, hostname)
+            helper.generate_shared_tls()
+            self.assertEqual((helper.CERTS / "axiom-identity.crt").read_bytes(),
+                             (helper.CERTS / "axiom-admin.crt").read_bytes())
+            self.assertEqual((helper.CERTS / "axiom-identity.key").read_bytes(),
+                             (helper.CERTS / "axiom-admin.key").read_bytes())
+            for stem in ("axiom-identity", "axiom-admin"):
                 cert = helper.CERTS / f"{stem}.crt"
                 ca = helper.CERTS / "local-ca.crt"
                 subprocess.run(["openssl", "verify", "-CAfile", str(ca), str(cert)],
@@ -32,7 +35,8 @@ class LocalTlsTest(unittest.TestCase):
                                         check=True, capture_output=True, text=True).stdout
                 self.assertIn("CA:FALSE", output)
                 self.assertIn("TLS Web Server Authentication", output)
-                self.assertIn(f"DNS:{hostname}", output)
+                for hostname in helper.LOCAL_CERT_HOSTNAMES:
+                    self.assertIn(f"DNS:{hostname}", output)
                 self.assertIn("Digital Signature", output)
                 self.assertNotIn("CA:TRUE", output)
 
@@ -47,6 +51,8 @@ class LocalTlsTest(unittest.TestCase):
             helper.PASSWORDS = helper.PRIVATE / "passwords"
             helper.CERTS.mkdir()
             helper.PASSWORDS.mkdir()
+            helper.generate_local_ca()
+            old_ca = (helper.CERTS / "local-ca.crt").read_bytes()
             (helper.CERTS / "axiom-identity.crt").write_text("prior leaf")
             (helper.CERTS / "signing-key.json").write_text("unchanged signer")
             (helper.PASSWORDS / "axiom-admin-password").write_text("unchanged password")
@@ -56,6 +62,7 @@ class LocalTlsTest(unittest.TestCase):
             self.assertEqual((backups[0] / "axiom-identity.crt").read_text(), "prior leaf")
             self.assertEqual((helper.CERTS / "signing-key.json").read_text(), "unchanged signer")
             self.assertEqual((helper.PASSWORDS / "axiom-admin-password").read_text(), "unchanged password")
+            self.assertNotEqual((helper.CERTS / "local-ca.crt").read_bytes(), old_ca)
             helper.verify_tls()
 
 
