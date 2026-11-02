@@ -104,6 +104,9 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

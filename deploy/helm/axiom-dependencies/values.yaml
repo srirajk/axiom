@@ -18,6 +18,9 @@ runtimeSecret:
   # Only this key is projected into PostgreSQL (owner-only 0400).
   databasePasswordKey: spring.datasource.password
 
+# A PriorityClass for these pods (empty: the cluster default). An identity provider is what every other
+# workload signs in through, so a busy cluster should place it first.
+priorityClassName: ""
 nodeSelector: {}
 tolerations: []
 affinity: {}

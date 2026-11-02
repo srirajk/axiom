@@ -30,6 +30,9 @@ spec:
         checksum/policy-configmaps: {{ include (print $.Template.BasePath "/configmaps.yaml") . | sha256sum }}
     spec:
       automountServiceAccountToken: false
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

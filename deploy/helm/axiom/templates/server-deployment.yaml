@@ -102,6 +102,9 @@ spec:
             {{- include "axiom.serverVolumeMounts" . | nindent 12 }}
       volumes:
         {{- include "axiom.serverVolumes" (dict "root" . "bootstrap" false) | nindent 8 }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
