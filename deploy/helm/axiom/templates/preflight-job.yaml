@@ -87,6 +87,9 @@ spec:
             # Only the keys this check validates: the same set the bootstrap job receives.
             items:
               {{- include "axiom.runtimeSecretItems" (dict "root" . "bootstrap" true) | nindent 14 }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
