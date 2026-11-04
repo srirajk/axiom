@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import stat
 import subprocess
 import sys
@@ -105,7 +106,7 @@ def kube_json(*args: str) -> dict:
 
 
 def release(namespace: str, name: str) -> dict:
-    items = json.loads(run("helm", "--kube-context", CONTEXT, "list", "--all", "-n", namespace, "-o", "json"))
+    items = json.loads(run("helm", "--kube-context", CONTEXT, "list", "-n", namespace, "-o", "json"))
     return next((item for item in items if item["name"] == name), {})
 
 
@@ -170,7 +171,7 @@ def check_namespace_safety() -> None:
         if not existing:
             continue
         names = {item["name"] for item in json.loads(
-            run("helm", "--kube-context", CONTEXT, "list", "--all", "-n", namespace, "-o", "json"))}
+            run("helm", "--kube-context", CONTEXT, "list", "-n", namespace, "-o", "json"))}
         if names - allowed:
             raise InstallError(f"Unrelated Helm release in {namespace}; refusing to modify it")
         if namespace == "axiom" and not release(namespace, "axiom-dependencies"):
@@ -255,19 +256,13 @@ def check_deployed_images(require_current_source: bool = True) -> None:
 
 
 def check_edge_configuration() -> None:
-    remaining = kube("create", "--dry-run=client", "--validate=false",
-                     "-f", str(HERE / "gateway.yaml"), "-o", "json").strip()
-    resources = []
-    decoder = json.JSONDecoder()
-    while remaining:
-        rendered, end = decoder.raw_decode(remaining)
-        resources.extend(rendered.get("items", [rendered]))
-        remaining = remaining[end:].strip()
-    shared = any(item.get("kind") == "EnvoyProxy" and item.get("spec", {}).get("mergeGateways") is True
-                 for item in resources)
-    if shared and any(item.get("kind") == "Gateway" and
-                      item.get("spec", {}).get("infrastructure", {}).get("parametersRef")
-                      for item in resources):
+    # Render without asking kubectl to resolve Gateway API types before Envoy installs their CRDs.
+    rendered = run("helm", "template", EDGE_RELEASE, str(EDGE_CHART), "-n", "gateway-demo")
+    resources = rendered.split("\n---\n")
+    shared = any(re.search(r"(?m)^kind: EnvoyProxy\s*$", item) and
+                 re.search(r"(?m)^\s+mergeGateways: true\s*$", item) for item in resources)
+    if shared and any(re.search(r"(?m)^kind: Gateway\s*$", item) and
+                      re.search(r"(?m)^\s+parametersRef:\s*$", item) for item in resources):
         raise InstallError("Shared mode requires removing Gateway infrastructure.parametersRef; "
                            "review that Gateway change before installing")
 

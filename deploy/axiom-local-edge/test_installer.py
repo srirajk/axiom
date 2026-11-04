@@ -52,18 +52,13 @@ class LocalInstallerTest(unittest.TestCase):
                 self.assertEqual(bool(mutations), not expect_helm)
 
     def test_shared_mode_rejects_gateway_reference_before_install(self) -> None:
-        gateway = {"kind": "Gateway", "spec": {"infrastructure": {
-            "parametersRef": {"name": "axiom-local-proxy"}}}}
-        resources = {"items": [{"kind": "EnvoyProxy", "spec": {"mergeGateways": True}}, gateway]}
-        with patch.object(installer, "kube", side_effect=lambda *args: json.dumps(resources)):
+        proxy = "kind: EnvoyProxy\nspec:\n  mergeGateways: true\n"
+        gateway = "kind: Gateway\nspec:\n  infrastructure:\n    parametersRef:\n      name: axiom-local-proxy\n"
+        with patch.object(installer, "run", return_value=proxy + "\n---\n" + gateway):
             with self.assertRaisesRegex(installer.InstallError, "removing Gateway infrastructure.parametersRef"):
                 installer.check_edge_configuration()
-            del gateway["spec"]["infrastructure"]
+        with patch.object(installer, "run", return_value=proxy + "\n---\nkind: Gateway\nspec: {}\n"):
             installer.check_edge_configuration()
-        gateway["spec"]["infrastructure"] = {"parametersRef": {"name": "axiom-local-proxy"}}
-        with patch.object(installer, "kube", return_value="\n".join(json.dumps(item) for item in resources["items"])):
-            with self.assertRaisesRegex(installer.InstallError, "removing Gateway infrastructure.parametersRef"):
-                installer.check_edge_configuration()
 
     def test_shared_gateway_requires_class_reference_merge_and_https_service(self) -> None:
         gateway_class = {
