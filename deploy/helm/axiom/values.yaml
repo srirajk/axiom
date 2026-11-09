@@ -13,11 +13,12 @@ server:
   resources:
     requests:
       cpu: 250m
-      memory: 512Mi
+      memory: 1Gi
     limits:
       cpu: "2"
-      memory: 1Gi
-  javaToolOptions: "-Xmx768m"
+      memory: 2Gi
+  # Heap sized from the container limit, leaving room for metaspace, threads and direct buffers.
+  javaToolOptions: "-XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError"
   terminationGracePeriodSeconds: 45
 
 admin:
