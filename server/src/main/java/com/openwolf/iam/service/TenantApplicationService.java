@@ -318,6 +318,75 @@ public class TenantApplicationService {
         }
     }
 
+    /**
+     * Updates the mutable settings of a client: scopes (same approval rules as create), browser redirect URIs, display
+     * name and enabled state. Identity, type and application binding are immutable. Narrowing scopes, changing redirects
+     * or disabling ends the client's issued sessions; re-enabling does not resurrect any.
+     */
+    public TenantApplicationClientResponse updateClient(String tenantId, UUID applicationId, UUID clientId,
+            com.openwolf.iam.dto.UpdateTenantApplicationClientRequest request, HttpServletRequest httpRequest) {
+        TenantApplicationClient client = clientForTenant(tenantId, applicationId, clientId);
+        if (client.getExternalClientId() != null) {
+            throw new ResourceConflictException("Trusted client approvals are managed through trusted-clients");
+        }
+        if (request.clientId() != null && !request.clientId().equals(client.getClientId())) {
+            throw new IllegalArgumentException("clientId is immutable");
+        }
+        if (request.clientType() != null && request.clientType() != client.getClientType()) {
+            throw new IllegalArgumentException("clientType is immutable");
+        }
+        if (request.expectedRevision() != null) requireRevision(client, request.expectedRevision());
+        RegisteredClient registered = registeredClientFor(client);
+        TenantApplicationClientResponse before = clientResponse(client, registered);
+        boolean interactive = client.getClientType().interactive();
+        if (!interactive && (request.redirectUris() != null || request.postLogoutRedirectUris() != null)) {
+            throw new IllegalArgumentException("Confidential service clients cannot register browser redirects");
+        }
+        boolean enabling = Boolean.TRUE.equals(request.enabled()) && client.getStatus() == TenantApplicationClient.Status.DISABLED;
+        boolean disabling = Boolean.FALSE.equals(request.enabled()) && client.getStatus() == TenantApplicationClient.Status.ACTIVE;
+        if (enabling && applicationForTenant(tenantId, applicationId).getStatus() != TenantApplication.Status.ACTIVE) {
+            throw new ResourceConflictException("Application is disabled");
+        }
+        RegisteredClient.Builder builder = RegisteredClient.from(registered);
+        boolean registrationChanged = false, narrowed = false;
+        if (request.scopes() != null) {
+            if (request.scopes().isEmpty()) throw new IllegalArgumentException("scopes must not be empty");
+            boolean refresh = registered.getAuthorizationGrantTypes().contains(AuthorizationGrantType.REFRESH_TOKEN);
+            List<String> scopes = approvedScopes(tenantId, client.getClientType(), client.getPopulation(), request.scopes(), refresh);
+            narrowed = !scopes.containsAll(client.getAllowedScopes());
+            client.replaceAllowedScopes(scopes);
+            builder.scopes(set -> { set.clear(); set.addAll(scopes); });
+            registrationChanged = true;
+        }
+        if (request.redirectUris() != null) {
+            List<String> redirects = requireBrowserUris(request.redirectUris(), "redirect URI");
+            builder.redirectUris(set -> { set.clear(); set.addAll(redirects); });
+            registrationChanged = true;
+        }
+        if (request.postLogoutRedirectUris() != null) {
+            List<String> logout = optionalBrowserUris(request.postLogoutRedirectUris(), "post-logout redirect URI");
+            builder.postLogoutRedirectUris(set -> { set.clear(); set.addAll(logout); });
+            registrationChanged = true;
+        }
+        if (request.displayName() != null) {
+            if (request.displayName().isBlank()) throw new IllegalArgumentException("displayName must not be blank");
+            builder.clientName(request.displayName());
+            registrationChanged = true;
+        }
+        if (registrationChanged) registeredClients.save(builder.build());
+        if (enabling) client.enable();
+        if (disabling) client.disable();
+        clients.save(client);
+        clients.flush();
+        TenantApplicationClientResponse after = clientResponse(client, registeredClientFor(client), client.getRevision());
+        audit.logRequired(tenantId, audit.currentActor(), "UPDATE_APPLICATION_CLIENT", "application_client",
+                client.getId().toString(), before, after, correlation(httpRequest));
+        if (disabling || narrowed || request.redirectUris() != null) {
+            endClientSessions(tenantId, client.getClientId(), disabling ? "client disabled" : "client registration changed");
+        }
+        return after;
+    }
+
     public void disableClient(String tenantId, UUID applicationId, UUID clientId, HttpServletRequest httpRequest) {
         TenantApplication app = applicationForTenant(tenantId, applicationId);
         TenantApplicationClient client = clients.findByIdAndApplicationId(clientId, app.getId())

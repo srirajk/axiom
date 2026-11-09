@@ -61,6 +61,8 @@ public class TenantApplicationClient {
         this.population = population == null ? Population.WORKFORCE : population;
     }
     public void disable() { status = Status.DISABLED; updatedAt = Instant.now(); }
+    public void enable() { status = Status.ACTIVE; updatedAt = Instant.now(); }
+    public void replaceAllowedScopes(List<String> scopes) { this.allowedScopes = new ArrayList<>(scopes); updatedAt = Instant.now(); }
     public void rotateSecret() { updatedAt = Instant.now(); }
     public UUID getId() { return id; } public UUID getApplicationId() { return applicationId; }
     public String getClientId() { return clientId; } public Type getClientType() { return clientType; }
