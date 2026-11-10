@@ -145,7 +145,8 @@ public final class TokenExchangeAuthenticationProvider implements Authentication
                 authority.identityKind(), authority.actingWorkload().getId().toString(),
                 authority.actingWorkload().getWorkloadRef(), authority.actingWorkload().getOauthClientId(),
                 binding == null ? null : new TokenExchangeAuthenticationToken.InvocationBinding(
-                        binding.contextId().toString(), binding.version(), binding.tokenDepth())));
+                        binding.contextId().toString(), binding.version(), binding.tokenDepth()),
+                authority.gatewayEntryRouteId()));
         OAuth2Authorization pending = OAuth2Authorization.withRegisteredClient(actorClient)
                 .id(UUID.randomUUID().toString())
                 .principalName(subject.getSubject())
@@ -246,7 +247,8 @@ public final class TokenExchangeAuthenticationProvider implements Authentication
         var broker = exchangeAuthority.activeBroker(authority.tenantId(), requesterClientId);
         java.util.UUID gatewayRoute;
         try {
-            gatewayRoute = java.util.UUID.fromString(requiredClaim(subject, "authority_id"));
+            gatewayRoute = java.util.UUID.fromString(authority.gatewayEntryRouteId() == null
+                    ? requiredClaim(subject, "authority_id") : authority.gatewayEntryRouteId());
         } catch (IllegalArgumentException malformed) {
             throw new OAuth2AuthenticationException(INVALID_GRANT);
         }

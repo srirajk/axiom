@@ -28,6 +28,7 @@ An OAuth client is not a person:
 - A **confidential client** is a server-side service or Agent workload that can protect a credential.
 - A customer signs in through a public client.
 - An Agent workload authenticates through its confidential client.
+- A native laptop workload instead binds to a public workforce PKCE client; see [native laptop clients](../docs/operations/native-laptop-agent.md).
 - Axiom token exchange can issue a short-lived token that preserves the customer as the subject and the Agent workload as the actor.
 
 ## Package layout

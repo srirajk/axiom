@@ -77,10 +77,16 @@ public final class CiamContracts {
     public record RegisterAgentWorkloadRequest(
             @NotBlank @Size(max = 255) String workloadRef,
             @NotBlank @Size(max = 200) String name,
-            @NotBlank @Size(max = 255) String oauthClientId) {}
+            @NotBlank @Size(max = 255) String oauthClientId,
+            AgentWorkloadIdentity.Kind kind) {
+        public RegisterAgentWorkloadRequest(String workloadRef, String name, String oauthClientId) {
+            this(workloadRef, name, oauthClientId, AgentWorkloadIdentity.Kind.SERVER);
+        }
+    }
 
     public record AgentWorkloadResponse(UUID id, String workloadRef, String name,
-                                        String oauthClientId, AgentWorkloadIdentity.Status status,
+                                        String oauthClientId, AgentWorkloadIdentity.Kind kind,
+                                        AgentWorkloadIdentity.Status status,
                                         Instant createdAt, Instant revokedAt, long revision) {}
 
     public record AgentWorkloadConsentOption(UUID id, String workloadRef, String name,

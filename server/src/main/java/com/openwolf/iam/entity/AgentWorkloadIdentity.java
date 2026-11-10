@@ -16,6 +16,7 @@ import java.util.UUID;
 public class AgentWorkloadIdentity {
     /** SUSPENDED is reversible; REVOKED and RETIRED are terminal (Phase 3.15). Only ACTIVE carries authority. */
     public enum Status { ACTIVE, SUSPENDED, REVOKED, RETIRED }
+    public enum Kind { SERVER, NATIVE }
 
     @Id private UUID id;
     @Column(name = "tenant_id", nullable = false) private String tenantId;
@@ -23,6 +24,7 @@ public class AgentWorkloadIdentity {
     @Column(nullable = false) private String name;
     @Column(name = "oauth_client_id", nullable = false) private String oauthClientId;
     @Enumerated(EnumType.STRING) @Column(nullable = false) private Status status;
+    @Enumerated(EnumType.STRING) @Column(nullable = false) private Kind kind = Kind.SERVER;
     @Column(name = "created_at", nullable = false) private Instant createdAt;
     @Column(name = "revoked_at") private Instant revokedAt;
     @Version @Column(nullable = false) private long revision;
@@ -45,6 +47,11 @@ public class AgentWorkloadIdentity {
         this.oauthClientId = oauthClientId;
         this.status = Status.ACTIVE;
         this.createdAt = now;
+    }
+
+    public AgentWorkloadIdentity nativeAgent() {
+        this.kind = Kind.NATIVE;
+        return this;
     }
 
     public void revoke(Instant now) {
@@ -97,6 +104,7 @@ public class AgentWorkloadIdentity {
     public String getName() { return name; }
     public String getOauthClientId() { return oauthClientId; }
     public Status getStatus() { return status; }
+    public Kind getKind() { return kind; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getRevokedAt() { return revokedAt; }
     public long getRevision() { return revision; }

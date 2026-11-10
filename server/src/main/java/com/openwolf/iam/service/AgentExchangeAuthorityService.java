@@ -58,9 +58,18 @@ public class AgentExchangeAuthorityService {
             Profile profile, TokenUse tokenUse, Jwt subject, String tenantId, String audience,
             Set<String> scopes, String identityKind, String purpose, String authorityId,
             String delegationId, AgentWorkloadIdentity actingWorkload, Instant authorityExpiresAt,
-            String routeId, AgentExchangeRoute.DestinationType destinationType) {
+            String routeId, AgentExchangeRoute.DestinationType destinationType,
+            String gatewayEntryRouteId) {
         public ResolvedAuthority {
             scopes = Set.copyOf(scopes);
+        }
+        public ResolvedAuthority(Profile profile, TokenUse tokenUse, Jwt subject, String tenantId,
+                                 String audience, Set<String> scopes, String identityKind, String purpose,
+                                 String authorityId, String delegationId, AgentWorkloadIdentity actingWorkload,
+                                 Instant authorityExpiresAt, String routeId,
+                                 AgentExchangeRoute.DestinationType destinationType) {
+            this(profile, tokenUse, subject, tenantId, audience, scopes, identityKind, purpose,
+                    authorityId, delegationId, actingWorkload, authorityExpiresAt, routeId, destinationType, null);
         }
     }
 
@@ -177,7 +186,12 @@ public class AgentExchangeAuthorityService {
         }
         AgentWorkloadIdentity source = activeWorkload(tenantId, request.sourceWorkloadId());
         TreeSet<String> scopes = approvedScopes(tenantId, request.scopes());
-        var sourceClient = confidentialAuthority(source.getOauthClientId(), tenantId);
+        var sourceClient = applications.activeAuthority(source.getOauthClientId())
+                .filter(value -> value.tenantId().equals(tenantId))
+                .filter(value -> source.getKind() == AgentWorkloadIdentity.Kind.NATIVE
+                        ? value.clientType() == TenantApplicationClient.Type.PUBLIC_BROWSER && value.workforceSignIn()
+                        : value.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_SERVICE)
+                .orElseThrow(() -> new IllegalArgumentException("source workload client is not active"));
         if (!sourceClient.scopes().containsAll(scopes)) {
             throw new IllegalArgumentException("route scopes exceed source workload authority");
         }
@@ -311,11 +325,13 @@ public class AgentExchangeAuthorityService {
             fail(INVALID_GRANT);
         }
 
+        String profile = required(subject, "authority_profile");
         Actor current = currentActor(subject, tenantId);
-        AgentWorkloadIdentity actor = requireActiveActor(current, tenantId);
+        AgentWorkloadIdentity actor = Profile.GATEWAY_BACKEND.name().toLowerCase().equals(profile)
+                ? requireActiveGatewayActor(current, tenantId, subject)
+                : requireActiveActor(current, tenantId);
         if (!Set.of("workforce", "workload", "customer").contains(identityKind)) fail(INVALID_GRANT);
         String tokenUse = required(subject, "token_use");
-        String profile = required(subject, "authority_profile");
         if ("customer".equals(identityKind)) {
             // A customer chain exists only under the customer-session profile and while the customer is still active.
             if (Profile.CIAM_CUSTOMER.name().toLowerCase().equals(profile)) fail(INVALID_GRANT);
@@ -350,6 +366,8 @@ public class AgentExchangeAuthorityService {
         }
         if (TokenUse.EXCHANGE_SUBJECT.name().toLowerCase().equals(tokenUse)) {
             TrustedExchangeBroker broker = activeBrokerByClient(tenantId, required(subject, "client_id"));
+            if (actor.getKind() == AgentWorkloadIdentity.Kind.NATIVE)
+                requireGatewayEntryRoute(subject, actor, tenantId, broker);
             if (brokerTargetAuthority(subject)) {
                 TrustedExchangeBrokerTarget target = targetByAuthority(subject, tenantId, broker);
                 requireGatewayEntryRoute(subject, actor, tenantId, broker);
@@ -414,8 +432,10 @@ public class AgentExchangeAuthorityService {
                 && Profile.GATEWAY_BACKEND.name().toLowerCase().equals(token.getClaimAsString("authority_profile"))) {
             String tenantId = required(token, "tenant_id");
             if ("customer".equals(token.getClaimAsString("identity_kind"))) requireActiveCustomer(tenantId, token.getSubject());
-            AgentWorkloadIdentity actor = requireActiveActor(currentActor(token, tenantId), tenantId);
+            AgentWorkloadIdentity actor = requireActiveGatewayActor(currentActor(token, tenantId), tenantId, token);
             TrustedExchangeBroker broker = activeBrokerByClient(tenantId, required(token, "client_id"));
+            if (actor.getKind() == AgentWorkloadIdentity.Kind.NATIVE)
+                requireGatewayEntryRoute(token, actor, tenantId, broker);
             if (brokerTargetAuthority(token)) {
                 TrustedExchangeBrokerTarget target = targetByAuthority(token, tenantId, broker);
                 requireGatewayEntryRoute(token, actor, tenantId, broker);
@@ -585,12 +605,12 @@ public class AgentExchangeAuthorityService {
         if (brokerTargetAuthority(subject)) {
             TrustedExchangeBroker broker = activeBrokerByClient(requester.getTenantId(), required(subject, "client_id"));
             TrustedExchangeBrokerTarget inbound = targetByAuthority(subject, requester.getTenantId(), broker);
-            requireGatewayEntryRoute(subject, requireActiveActor(previous, requester.getTenantId()),
+            requireGatewayEntryRoute(subject, requireActiveGatewayActor(previous, requester.getTenantId(), subject),
                     requester.getTenantId(), broker);
             if (inbound.getDestinationType() != AgentExchangeRoute.DestinationType.AGENT
                     || !requester.getId().equals(inbound.getDestinationWorkloadId())
                     || !inbound.getAudience().equals(receivingAudience(requester))) fail(INVALID_GRANT);
-            requireActiveActor(previous, requester.getTenantId());
+            requireActiveGatewayActor(previous, requester.getTenantId(), subject);
             AgentExchangeRoute outbound = activeRoute(requester.getTenantId(), requester.getId(), audience,
                     AgentExchangeRoute.DestinationType.GATEWAY, scopes);
             TrustedExchangeBroker outboundBroker = activeBrokerByAudience(requester.getTenantId(), audience);
@@ -603,7 +623,7 @@ public class AgentExchangeAuthorityService {
                 || !requester.getId().equals(inbound.getDestinationWorkloadId())
                 || !previous.workloadId().equals(inbound.getSourceWorkloadId())
                 || !inbound.getAudience().equals(receivingAudience(requester))) fail(INVALID_GRANT);
-        requireActiveActor(previous, requester.getTenantId());
+        requireActiveGatewayActor(previous, requester.getTenantId(), subject);
         AgentExchangeRoute outbound = activeRoute(requester.getTenantId(), requester.getId(), audience,
                 AgentExchangeRoute.DestinationType.GATEWAY, scopes);
         TrustedExchangeBroker broker = activeBrokerByAudience(requester.getTenantId(), audience);
@@ -712,18 +732,28 @@ public class AgentExchangeAuthorityService {
     private ResolvedAuthority resolveGateway(Jwt subject, TrustedExchangeBroker broker,
                                              String audience, Set<String> scopes) {
         if (!broker.getTenantId().equals(required(subject, "tenant_id"))
-                || !TokenUse.GATEWAY_AUTHORIZATION.name().toLowerCase().equals(required(subject, "token_use"))
-                || !Profile.WORKLOAD_CONTINUATION.name().toLowerCase().equals(required(subject, "authority_profile"))
                 || !singleAudience(subject, broker.getGatewayAudience())) fail(INVALID_GRANT);
-        AgentWorkloadIdentity source = requireActiveActor(currentActor(subject, broker.getTenantId()), broker.getTenantId());
-        if ("customer".equals(subject.getClaimAsString("identity_kind"))) {
-            requireActiveCustomer(broker.getTenantId(), subject.getSubject());
+        AgentWorkloadIdentity source;
+        AgentExchangeRoute gatewayRoute;
+        boolean nativeEntry = !exchanged(subject);
+        if (nativeEntry) {
+            GatewayEntry entry = nativeGatewayEntry(subject, broker, scopes);
+            source = entry.source();
+            gatewayRoute = entry.route();
+        } else {
+            if (!TokenUse.GATEWAY_AUTHORIZATION.name().toLowerCase().equals(required(subject, "token_use"))
+                    || !Profile.WORKLOAD_CONTINUATION.name().toLowerCase().equals(required(subject, "authority_profile")))
+                fail(INVALID_GRANT);
+            source = requireActiveActor(currentActor(subject, broker.getTenantId()), broker.getTenantId());
+            if ("customer".equals(subject.getClaimAsString("identity_kind"))) {
+                requireActiveCustomer(broker.getTenantId(), subject.getSubject());
+            }
+            if (!source.getOauthClientId().equals(required(subject, "client_id"))) fail(INVALID_GRANT);
+            gatewayRoute = routeByAuthority(subject, broker.getTenantId());
+            if (gatewayRoute.getDestinationType() != AgentExchangeRoute.DestinationType.GATEWAY
+                    || !source.getId().equals(gatewayRoute.getSourceWorkloadId())
+                    || !broker.getGatewayAudience().equals(gatewayRoute.getAudience())) fail(INVALID_GRANT);
         }
-        if (!source.getOauthClientId().equals(required(subject, "client_id"))) fail(INVALID_GRANT);
-        AgentExchangeRoute gatewayRoute = routeByAuthority(subject, broker.getTenantId());
-        if (gatewayRoute.getDestinationType() != AgentExchangeRoute.DestinationType.GATEWAY
-                || !source.getId().equals(gatewayRoute.getSourceWorkloadId())
-                || !broker.getGatewayAudience().equals(gatewayRoute.getAudience())) fail(INVALID_GRANT);
         var brokerTarget = brokerTargets.resolve(broker.getTenantId(), broker.getId(), audience);
         if (brokerTarget.isPresent()) {
             TrustedExchangeBrokerTarget target = brokerTarget.get();
@@ -739,7 +769,7 @@ public class AgentExchangeAuthorityService {
             return new ResolvedAuthority(Profile.GATEWAY_BACKEND, use, subject, broker.getTenantId(),
                     audience, scopes, required(subject, "identity_kind"), target.getPurpose(),
                     "broker-target:" + target.getId(), null, source, subject.getExpiresAt(),
-                    null, target.getDestinationType());
+                    null, target.getDestinationType(), nativeEntry ? gatewayRoute.getId().toString() : null);
         }
         AgentExchangeRoute target = activeRoute(broker.getTenantId(), source.getId(), audience, null, scopes);
         if (target.getDestinationType() == AgentExchangeRoute.DestinationType.GATEWAY) fail(INVALID_TARGET);
@@ -753,8 +783,35 @@ public class AgentExchangeAuthorityService {
         requireScopeSubset(scopes, subjectScopes(subject), target.getAllowedScopes());
         TokenUse use = target.getDestinationType() == AgentExchangeRoute.DestinationType.AGENT
                 ? TokenUse.EXCHANGE_SUBJECT : TokenUse.DELEGATED_ACCESS;
-        return routeAuthority(Profile.GATEWAY_BACKEND, use, subject, source, target,
+        ResolvedAuthority resolved = routeAuthority(Profile.GATEWAY_BACKEND, use, subject, source, target,
                 required(subject, "identity_kind"), scopes);
+        return nativeEntry ? new ResolvedAuthority(resolved.profile(), resolved.tokenUse(), resolved.subject(),
+                resolved.tenantId(), resolved.audience(), resolved.scopes(), resolved.identityKind(),
+                resolved.purpose(), resolved.authorityId(), resolved.delegationId(), resolved.actingWorkload(),
+                resolved.authorityExpiresAt(), resolved.routeId(), resolved.destinationType(),
+                gatewayRoute.getId().toString()) : resolved;
+    }
+
+    private record GatewayEntry(AgentWorkloadIdentity source, AgentExchangeRoute route) {}
+
+    private GatewayEntry nativeGatewayEntry(Jwt subject, TrustedExchangeBroker broker, Set<String> scopes) {
+        String tenantId = broker.getTenantId();
+        if (!"workforce".equals(required(subject, "identity_kind"))) fail(INVALID_GRANT);
+        String clientId = required(subject, "client_id");
+        var client = sourceClientAuthority(clientId, tenantId, subject)
+                .filter(value -> value.tenantId().equals(tenantId))
+                .filter(value -> value.clientType() == TenantApplicationClient.Type.PUBLIC_BROWSER)
+                .filter(TenantApplicationService.ClientAuthority::workforceSignIn)
+                .filter(value -> value.audience().equals(broker.getGatewayAudience()))
+                .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
+        if (applicationAccess.decisionAuthority(tenantId, client.applicationId(), subject.getSubject()).isEmpty())
+            fail(INVALID_GRANT);
+        AgentWorkloadIdentity source = activeWorkloadByClient(clientId, tenantId);
+        if (source.getKind() != AgentWorkloadIdentity.Kind.NATIVE) fail(INVALID_GRANT);
+        AgentExchangeRoute route = activeRoute(tenantId, source.getId(), broker.getGatewayAudience(),
+                AgentExchangeRoute.DestinationType.GATEWAY, scopes);
+        requireScopeSubset(scopes, subjectScopes(subject), route.getAllowedScopes());
+        return new GatewayEntry(source, route);
     }
 
     private ResolvedAuthority resolvePersonResource(Profile profile, Jwt subject, AgentWorkloadIdentity requester,
@@ -870,6 +927,29 @@ public class AgentExchangeAuthorityService {
         if (applications.activeAuthority(workload.getOauthClientId())
                 .filter(value -> value.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_SERVICE)
                 .filter(value -> value.tenantId().equals(tenantId)).isEmpty()) fail(INVALID_GRANT);
+        return workload;
+    }
+
+    private AgentWorkloadIdentity requireActiveGatewayActor(Actor actor, String tenantId, Jwt token) {
+        AgentWorkloadIdentity workload;
+        try {
+            workload = activeWorkload(tenantId, actor.workloadId());
+        } catch (EntityNotFoundException unknownActor) {
+            throw new OAuth2AuthenticationException(INVALID_GRANT);
+        }
+        if (!workload.getWorkloadRef().equals(actor.workloadRef())
+                || !workload.getOauthClientId().equals(actor.clientId())) fail(INVALID_GRANT);
+        if (workload.getKind() == AgentWorkloadIdentity.Kind.SERVER) return requireActiveActor(actor, tenantId);
+        if (!"workforce".equals(required(token, "identity_kind"))
+                || !Profile.GATEWAY_BACKEND.name().toLowerCase().equals(required(token, "authority_profile")))
+            fail(INVALID_GRANT);
+        var client = applications.activeAuthority(workload.getOauthClientId())
+                .filter(value -> value.tenantId().equals(tenantId))
+                .filter(value -> value.clientType() == TenantApplicationClient.Type.PUBLIC_BROWSER)
+                .filter(TenantApplicationService.ClientAuthority::workforceSignIn)
+                .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
+        if (applicationAccess.decisionAuthority(tenantId, client.applicationId(), token.getSubject()).isEmpty()
+                || token.getClaimAsString("source_gateway_route_id") == null) fail(INVALID_GRANT);
         return workload;
     }
 
