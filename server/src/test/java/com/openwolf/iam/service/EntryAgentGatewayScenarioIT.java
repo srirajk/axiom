@@ -227,6 +227,38 @@ class EntryAgentGatewayScenarioIT {
     }
 
     @Test
+    void nativeLaptopSignInCanReachRegisteredTargetAndStopsWhenItsGatewayRouteIsRevoked() throws Exception {
+        World w = world(TENANT_A, "scn-admin-a");
+        String base = "/admin/tenants/" + TENANT_A;
+        String laptopClient = publicClient(w.admin, TENANT_A, w.gatewayApp, w.suffix + "-laptop");
+        grantMembership(w.admin, TENANT_A, w.gatewayApp, w.human);
+        String nativeId = body(send(post(base + "/ciam/agent-workloads"), w.admin, Map.of(
+                "workloadRef", "agent:" + w.suffix + "-laptop:test", "name", "Laptop tool",
+                "oauthClientId", laptopClient, "kind", "NATIVE")), 201).get("id").asText();
+        String gatewayRoute = route(w.admin, TENANT_A, nativeId, w.gatewayAudience);
+        String targetId = body(send(post(base + "/agent-exchange/brokers/" + w.brokerId + "/targets"),
+                w.admin, Map.of("audience", w.agentAudience, "destinationType", "AGENT",
+                        "destinationWorkloadId", w.agentWorkloadId, "scopes", List.of(SCOPE),
+                        "purpose", "native laptop scenario")), 201).get("id").asText();
+
+        String signedIn = pkce(laptopClient, w.human);
+        assertDenied(exchangeRaw(w.brokerSvc, signedIn, w.gatewayAudience, SCOPE), "invalid_target");
+        String toolToken = exchange(w.brokerSvc, signedIn, w.agentAudience, SCOPE)
+                .get("access_token").asText();
+        Map<String, Object> claims = claims(toolToken);
+        assertThat(claims).containsEntry("sub", w.human).containsEntry("client_id", w.brokerSvc.clientId)
+                .containsEntry("authority_id", "broker-target:" + targetId)
+                .containsEntry("source_gateway_route_id", gatewayRoute);
+        assertThat(aud(claims)).containsExactly(w.agentAudience);
+        assertActor(claims, "agent:" + w.suffix + "-laptop:test", laptopClient, nativeId);
+        assertDenied(exchangeRaw(w.spareSvc, signedIn, w.agentAudience, SCOPE), "unauthorized_client");
+
+        body(send(post(base + "/agent-exchange/routes/" + gatewayRoute + "/revoke"), w.admin, Map.of()), 200);
+        assertDenied(exchangeRaw(w.brokerSvc, signedIn, w.agentAudience, SCOPE), "invalid_target");
+        assertThat(introspect(w.agentSvc, toolToken).path("active").asBoolean()).isFalse();
+    }
+
+    @Test
     void revokedGatewayEntryRouteInvalidatesAlreadyIssuedBrokerTargetToken() throws Exception {
         World w = world(TENANT_A, "scn-admin-a");
         String ownToken = clientCredentials(w.agentSvc, SCOPE).get("access_token").asText();
@@ -410,7 +442,7 @@ class EntryAgentGatewayScenarioIT {
         String suffix, admin, human, humanToken;
         String entryApp, agentApp, entryAudience, entryWebClient, entryWorkloadRef, entryWorkloadId;
         String agentAudience, agentWorkloadRef, agentWorkloadId;
-        String gatewayAudience, entryToGatewayRoute, agentToGatewayRoute, brokerId;
+        String gatewayAudience, gatewayApp, entryToGatewayRoute, agentToGatewayRoute, brokerId;
         Svc entrySvc, agentSvc, brokerSvc, spareSvc;
     }
 
@@ -428,8 +460,8 @@ class EntryAgentGatewayScenarioIT {
         w.agentApp = app(w.admin, tenant, w.suffix + "-agent", w.agentAudience);
         w.agentSvc = confidentialClient(w.admin, tenant, w.agentApp, w.suffix + "-agent-svc");
         w.gatewayAudience = "gw:" + tenant + ":" + w.suffix + "-gateway";
-        String gatewayApp = app(w.admin, tenant, w.suffix + "-gateway", w.gatewayAudience);
-        w.brokerSvc = confidentialClient(w.admin, tenant, gatewayApp, w.suffix + "-broker", List.of(BROKER_SCOPE));
+        w.gatewayApp = app(w.admin, tenant, w.suffix + "-gateway", w.gatewayAudience);
+        w.brokerSvc = confidentialClient(w.admin, tenant, w.gatewayApp, w.suffix + "-broker", List.of(BROKER_SCOPE));
         String spareApp = app(w.admin, tenant, w.suffix + "-spare", "agent:" + tenant + ":" + w.suffix + "-spare");
         w.spareSvc = confidentialClient(w.admin, tenant, spareApp, w.suffix + "-spare-svc");
 

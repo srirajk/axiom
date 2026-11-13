@@ -2,11 +2,13 @@ package com.openwolf.iam.service;
 
 import com.openwolf.iam.auth.ExecutionTenant;
 import com.openwolf.iam.auth.ApplicationScopes;
+import com.openwolf.iam.auth.ApplicationResourceUris;
 import com.openwolf.iam.dto.CreatedTenantApplicationClientResponse;
 import com.openwolf.iam.dto.CreateTenantApplicationClientRequest;
 import com.openwolf.iam.dto.CreateTenantApplicationRequest;
 import com.openwolf.iam.dto.TenantApplicationClientResponse;
 import com.openwolf.iam.dto.TenantApplicationResponse;
+import com.openwolf.iam.dto.UpdateApplicationResourceUrisRequest;
 import com.openwolf.iam.dto.RevokeTenantApplicationClientRequest;
 import com.openwolf.iam.dto.RotateTenantApplicationClientSecretRequest;
 import com.openwolf.iam.entity.TenantApplication;
@@ -114,8 +116,12 @@ public class TenantApplicationService {
         if (applications.existsByTenantIdAndApplicationKey(tenantId, request.applicationKey())) {
             throw new ResourceConflictException("Application key already exists for this tenant");
         }
-        TenantApplication application = applications.save(new TenantApplication(tenantId, request.applicationKey(),
-                request.displayName(), request.description(), request.audience()));
+        List<String> resourceUris = ApplicationResourceUris.validate(request.resourceUris());
+        requireAvailableResourceUris(tenantId, null, resourceUris);
+        TenantApplication application = new TenantApplication(tenantId, request.applicationKey(),
+                request.displayName(), request.description(), request.audience());
+        application.setResourceUris(resourceUris);
+        applications.save(application);
         TenantApplicationResponse response = applicationResponse(application);
         audit.logRequired(tenantId, audit.currentActor(), "CREATE_APPLICATION", "application",
                 application.getId().toString(), null, response, correlation(httpRequest));
@@ -285,6 +291,33 @@ public class TenantApplicationService {
                 .forEach(c -> { endClientSessions(tenantId, c.getClientId(), "application disabled"); withdrawTrustedGrants(c); });
     }
 
+    public TenantApplicationResponse updateResourceUris(String tenantId, UUID applicationId,
+            UpdateApplicationResourceUrisRequest request, HttpServletRequest httpRequest) {
+        TenantApplication app = applicationForTenant(tenantId, applicationId);
+        if (app.getStatus() != TenantApplication.Status.ACTIVE) throw new ResourceConflictException("Application is disabled");
+        if (app.getRevision() != request.expectedRevision()) throw new ResourceConflictException("Application revision has changed");
+        List<String> resourceUris = ApplicationResourceUris.validate(request.resourceUris());
+        requireAvailableResourceUris(tenantId, applicationId, resourceUris);
+        TenantApplicationResponse before = applicationResponse(app);
+        app.setResourceUris(resourceUris);
+        applications.save(app);
+        TenantApplicationResponse after = applicationResponse(app);
+        audit.logRequired(tenantId, audit.currentActor(), "UPDATE_APPLICATION_RESOURCE_URIS", "application",
+                app.getId().toString(), before, after, correlation(httpRequest));
+        return after;
+    }
+
+    private void requireAvailableResourceUris(String tenantId, UUID applicationId, List<String> resourceUris) {
+        for (TenantApplication other : applications.findByTenantIdOrderByApplicationKey(tenantId)) {
+            if (other.getStatus() != TenantApplication.Status.ACTIVE || other.getId().equals(applicationId)) continue;
+            for (String candidate : resourceUris) {
+                if (other.getResourceUris().stream().anyMatch(existing -> ApplicationResourceUris.overlaps(candidate, existing))) {
+                    throw new ResourceConflictException("Application resource URI overlaps another application");
+                }
+            }
+        }
+    }
+
     public void disableClient(String tenantId, UUID applicationId, UUID clientId, HttpServletRequest httpRequest) {
         TenantApplication app = applicationForTenant(tenantId, applicationId);
         TenantApplicationClient client = clients.findByIdAndApplicationId(clientId, app.getId())
@@ -426,7 +459,7 @@ public class TenantApplicationService {
                 .filter(app -> app.getStatus() == TenantApplication.Status.ACTIVE)
                 .filter(app -> client.getStatus() == TenantApplicationClient.Status.ACTIVE)
                 .map(app -> new ClientAuthority(app.getTenantId(), app.getAudience(), client.getClientType(),
-                        client.getAllowedScopes(), app.getId(), client.getPopulation())));
+                        client.getAllowedScopes(), app.getId(), client.getPopulation(), app.getResourceUris())));
     }
 
     @Transactional(readOnly = true)
@@ -691,7 +724,7 @@ public class TenantApplicationService {
     }
     private TenantApplicationResponse applicationResponse(TenantApplication app) {
         return new TenantApplicationResponse(app.getId(), app.getTenantId(), app.getApplicationKey(), app.getDisplayName(),
-                app.getDescription(), app.getAudience(), app.getStatus(), app.getRevision(), app.getCreatedAt(), app.getUpdatedAt());
+                app.getDescription(), app.getAudience(), app.getStatus(), app.getRevision(), app.getCreatedAt(), app.getUpdatedAt(), app.getResourceUris());
     }
     private TenantApplicationClientResponse clientResponse(TenantApplicationClient client) {
         RegisteredClient registered = storedRegistration(client.getClientId());
@@ -719,9 +752,15 @@ public class TenantApplicationService {
     private static String correlation(HttpServletRequest request) { return request == null ? null : request.getHeader("X-Correlation-ID"); }
 
     public record ClientAuthority(String tenantId, String audience, TenantApplicationClient.Type clientType,
-                                  List<String> scopes, UUID applicationId, TenantApplicationClient.Population population) {
+                                  List<String> scopes, UUID applicationId, TenantApplicationClient.Population population,
+                                  List<String> resourceUris) {
         public ClientAuthority {
             if (population == null) population = TenantApplicationClient.Population.WORKFORCE;
+            resourceUris = resourceUris == null ? List.of() : List.copyOf(resourceUris);
+        }
+        public ClientAuthority(String tenantId, String audience, TenantApplicationClient.Type clientType,
+                               List<String> scopes, UUID applicationId, TenantApplicationClient.Population population) {
+            this(tenantId, audience, clientType, scopes, applicationId, population, List.of());
         }
         public ClientAuthority(String tenantId, String audience, TenantApplicationClient.Type clientType,
                                List<String> scopes, UUID applicationId) {

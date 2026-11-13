@@ -1,0 +1,2 @@
+{"applicationKey":"argus-gateway","clientId":"codex-hub-authoring","redirectUris":["http://127.0.0.1/callback"],"postLogoutRedirectUris":[],"scopes":["openid","profile","email","offline_access","argus:invoke"],"population":"WORKFORCE","accessTokenTtlSeconds":600,"refreshTokens":true}
+{"applicationKey":"argus-gateway","clientId":"claude-hub-authoring","redirectUris":["http://127.0.0.1/callback"],"postLogoutRedirectUris":[],"scopes":["openid","profile","email","offline_access","argus:invoke"],"population":"WORKFORCE","accessTokenTtlSeconds":600,"refreshTokens":true}

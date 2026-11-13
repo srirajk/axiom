@@ -1,0 +1,2 @@
+{"sourceWorkloadRef":"agent:codex-hub-authoring:development","destinationType":"GATEWAY","audience":"argus-gateway","scopes":["argus:invoke"],"purpose":"Codex on a laptop into the Argus Gateway","ttlSeconds":2592000}
+{"sourceWorkloadRef":"agent:claude-hub-authoring:development","destinationType":"GATEWAY","audience":"argus-gateway","scopes":["argus:invoke"],"purpose":"Claude Code on a laptop into the Argus Gateway","ttlSeconds":2592000}

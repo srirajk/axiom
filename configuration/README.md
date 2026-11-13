@@ -28,6 +28,7 @@ An OAuth client is not a person:
 - A **confidential client** is a server-side service or Agent workload that can protect a credential.
 - A customer signs in through a public client.
 - An Agent workload authenticates through its confidential client.
+- A native laptop workload instead binds to a public workforce PKCE client; see [native laptop clients](../docs/operations/native-laptop-agent.md).
 - Axiom token exchange can issue a short-lived token that preserves the customer as the subject and the Agent workload as the actor.
 
 ## Package layout
@@ -59,6 +60,14 @@ scripts/
 
 Each JSONL file contains one JSON object per line. Blank lines and lines beginning with `#` are ignored.
 The folder name must match the `id` in `tenant.json`.
+
+An application may set `resourceUris` in `ciam/applications.jsonl`, for example
+`["https://argus-edge-dev.argus.meridian.com/"]`. A trailing `/` matches that HTTPS path and its children;
+other entries match exactly. The publisher creates the list with a new application or updates an existing
+application through `PUT /admin/tenants/{tenant}/applications/{id}/resource-uris` with its current revision.
+These URLs let an interactive client send an RFC 8707 `resource` on authorization, code redemption and
+refresh. Axiom still issues the application's `audience` in the access token. The URL list is tenant-owned;
+it does not create a new audience or give another application's client access.
 
 ## Bootstrap, seed, and verification entry points
 

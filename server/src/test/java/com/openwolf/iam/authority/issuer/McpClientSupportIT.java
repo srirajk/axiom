@@ -267,6 +267,46 @@ class McpClientSupportIT extends AuthorityITSupport {
                 .param("resource",b.audience)).andReturn(),"invalid_target");
         assertThat(claims(body(refresh(id,issued.path("refresh_token").asText()),200).path("access_token").asText()).get("tenant_id")).isEqualTo(a.tenant.id);
     }
+
+    @Test void applicationResourceUrlMapsToItsAudienceOnCodeAndRefresh() throws Exception {
+        Tenant tenant = tenant("mcp-a");
+        String audience = "abstract-gateway-" + tenant.s;
+        String application = app(tenant, "gateway", audience);
+        String person = principal(tenant.id, tenant.s + "-gateway-person", null);
+        entitle(tenant, application, person, List.of(READ));
+        Fixture fixture = new Fixture(tenant, application, audience, person);
+        String client = staticClient(fixture, true);
+        String prefix = "https://edge.example.test/" + tenant.s + "/";
+        JsonNode current = body(send(get(base(tenant) + "/applications/" + application), tenant.admin, null), 200);
+        body(send(put(base(tenant) + "/applications/" + application + "/resource-uris"), tenant.admin,
+                Map.of("resourceUris", List.of(prefix), "expectedRevision", current.path("revision").asLong())), 200);
+        String otherApplication = app(tenant, "other-gateway", "other-gateway-" + tenant.s);
+        JsonNode otherCurrent = body(send(get(base(tenant) + "/applications/" + otherApplication), tenant.admin, null), 200);
+        assertThat(send(put(base(tenant) + "/applications/" + otherApplication + "/resource-uris"), tenant.admin,
+                Map.of("resourceUris", List.of(prefix + "v1/tools/"),
+                        "expectedRevision", otherCurrent.path("revision").asLong())).getResponse().getStatus()).isEqualTo(409);
+        String resource = prefix + "v1/tools/crm";
+        MockHttpSession session = new MockHttpSession();
+        MvcResult authorized = authorization(fixture, client, CALLBACK, "openid " + READ + " offline_access",
+                resource, challenge(), "S256", session);
+        assertThat(authorized.getResponse().getStatus()).isEqualTo(302);
+        String code = query(authorized.getResponse().getHeader("Location"), "code");
+        assertThat(code).isNotBlank();
+        JsonNode issued = body(mvc.perform(post("/oauth/token").contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .param("client_id", client).param("grant_type", "authorization_code").param("code", code)
+                .param("redirect_uri", CALLBACK).param("code_verifier", VERIFIER).param("resource", resource)).andReturn(), 200);
+        assertThat(audiences(claims(issued.path("access_token").asText()))).containsExactly(audience);
+        JsonNode renewed = body(mvc.perform(post("/oauth/token").contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .param("client_id", client).param("grant_type", "refresh_token")
+                .param("refresh_token", issued.path("refresh_token").asText()).param("resource", resource)).andReturn(), 200);
+        assertThat(audiences(claims(renewed.path("access_token").asText()))).containsExactly(audience);
+        denied(authorization(fixture, client, CALLBACK, "openid", "https://other.example.test/", challenge(), "S256",
+                new MockHttpSession()), "invalid_target");
+        denied(mvc.perform(post("/oauth/token").contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .param("client_id", client).param("grant_type", "refresh_token")
+                .param("refresh_token", renewed.path("refresh_token").asText())
+                .param("resource", "https://other.example.test/")).andReturn(), "invalid_target");
+    }
     @Test void expiredPublicRefreshIsInvalidGrantAndUnexpectedCredentialsCannotDowngradeAuthentication() throws Exception {
         Fixture f=fixture("mcp-a");String id=staticClient(f,true);JsonNode issued=tokens(code(f,id,CALLBACK,true));
         String refresh=issued.path("refresh_token").asText();

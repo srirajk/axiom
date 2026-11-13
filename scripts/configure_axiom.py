@@ -151,8 +151,19 @@ def validate_bundle(bundle: dict[str, Any], directory: pathlib.Path) -> None:
     public_ids = unique(bundle["public_clients"], "clientId", "public-clients.jsonl")
     workload_ids = unique(bundle["agent_workloads"], "clientId", "agent-workloads.jsonl")
     broker_ids = unique(bundle["trusted_brokers"], "clientId", "trusted-brokers.jsonl")
-    if public_ids & workload_ids or public_ids & broker_ids or workload_ids & broker_ids:
-        raise ConfigurationError("a clientId cannot represent more than one authority type")
+    if public_ids & broker_ids or workload_ids & broker_ids:
+        raise ConfigurationError("a broker clientId cannot represent another authority type")
+    public_by_id = {item["clientId"]: item for item in bundle["public_clients"]}
+    for workload in bundle["agent_workloads"]:
+        kind = workload.get("kind", "SERVER")
+        if kind not in {"SERVER", "NATIVE"}:
+            raise ConfigurationError("agent-workloads.jsonl: kind must be SERVER or NATIVE")
+        public = public_by_id.get(workload["clientId"])
+        if kind == "NATIVE":
+            if public is None or public["applicationKey"] != workload["applicationKey"]:
+                raise ConfigurationError("native workload requires a public client in the same application")
+        elif public is not None:
+            raise ConfigurationError("server workload cannot share a public clientId")
     workload_refs = unique(bundle["agent_workloads"], "workloadRef", "agent-workloads.jsonl")
     for source, records in (
         ("public-clients.jsonl", bundle["public_clients"]),
@@ -190,7 +201,7 @@ def validate_bundle(bundle: dict[str, Any], directory: pathlib.Path) -> None:
         if app_key not in app_keys:
             raise ConfigurationError("application-memberships.jsonl: unknown applicationKey")
         principal = str(require(membership, "principalId", "application-memberships.jsonl"))
-        if principal not in user_ids:
+        if principal not in user_ids and membership.get("existingPrincipal") is not True:
             raise ConfigurationError(f"application-memberships.jsonl: unknown principalId {principal}")
         for role_key in require(membership, "roleKeys", "application-memberships.jsonl"):
             if str(role_key) not in role_keys.get(app_key, set()):
@@ -465,13 +476,23 @@ class Publisher:
                         "displayName": spec["displayName"],
                         "description": spec.get("description"),
                         "audience": spec["audience"],
+                        "resourceUris": spec.get("resourceUris", []),
                     },
                 )
                 self.counts["applications_created"] += 1
             else:
                 if current.get("audience") != spec["audience"]:
                     raise ConfigurationError(f"application audience drift: {spec['key']}")
-                self.counts["applications_unchanged"] += 1
+                desired_resources = spec.get("resourceUris")
+                if desired_resources is not None and current.get("resourceUris", []) != desired_resources:
+                    current = self.api.request(
+                        f"/admin/tenants/{self.tenant}/applications/{current['id']}/resource-uris",
+                        method="PUT",
+                        body={"resourceUris": desired_resources, "expectedRevision": current["revision"]},
+                    )
+                    self.counts["applications_updated"] += 1
+                else:
+                    self.counts["applications_unchanged"] += 1
             resolved[spec["key"]] = current
         return resolved
 
@@ -561,6 +582,10 @@ class Publisher:
         for spec in self.bundle["application_memberships"]:
             app_key = spec["applicationKey"]
             app_id = applications[app_key]["id"]
+            if spec.get("existingPrincipal") is True:
+                principal = self.api.request(f"/users/{spec['principalId']}")
+                if principal.get("id") != spec["principalId"] or principal.get("isActive") is not True:
+                    raise ConfigurationError(f"existing principal is not active: {spec['principalId']}")
             existing = {
                 item["principalId"]: item
                 for item in self.api.request(
@@ -607,7 +632,15 @@ class Publisher:
         }
         for spec in self.bundle["agent_workloads"]:
             application = applications[spec["applicationKey"]]
-            client = self.ensure_client(application, spec, "CONFIDENTIAL_SERVICE")
+            kind = spec.get("kind", "SERVER")
+            if kind == "NATIVE":
+                client_spec = next(item for item in self.bundle["public_clients"]
+                                   if item["clientId"] == spec["clientId"])
+                client = self.find_client(application["id"], client_spec, "PUBLIC_BROWSER")
+                if client is None:
+                    raise ConfigurationError(f"native workload public client is missing: {spec['clientId']}")
+            else:
+                client = self.ensure_client(application, spec, "CONFIDENTIAL_SERVICE")
             current = existing.get(spec["workloadRef"])
             if current is None:
                 self.api.request(
@@ -617,11 +650,14 @@ class Publisher:
                         "workloadRef": spec["workloadRef"],
                         "name": spec["name"],
                         "oauthClientId": spec["clientId"],
+                        "kind": kind,
                     },
                 )
                 self.counts["agent_workloads_created"] += 1
             else:
-                if current.get("oauthClientId") != spec["clientId"] or current.get("name") != spec["name"]:
+                if (current.get("oauthClientId") != spec["clientId"]
+                        or current.get("name") != spec["name"]
+                        or current.get("kind", "SERVER") != kind):
                     raise ConfigurationError(f"Agent workload drift: {spec['workloadRef']}")
                 self.counts["agent_workloads_unchanged"] += 1
             if client.get("status") != "ACTIVE":
@@ -788,6 +824,13 @@ class Publisher:
         current = matches[0]
         if current.get("clientType") != client_type or set(current.get("scopes", [])) != set(spec["scopes"]):
             raise ConfigurationError(f"OAuth client drift: {spec['clientId']}")
+        for field in ("population", "accessTokenTtlSeconds", "refreshTokenTtlSeconds"):
+            if field in spec and current.get(field) != spec[field]:
+                raise ConfigurationError(f"OAuth client {field} drift: {spec['clientId']}")
+        if "refreshTokens" in spec:
+            actual_refresh = "refresh_token" in current.get("grantTypes", [])
+            if actual_refresh != spec["refreshTokens"]:
+                raise ConfigurationError(f"OAuth client refreshTokens drift: {spec['clientId']}")
         return current
 
     def post_client(self, app_id: str, spec: dict[str, Any], client_type: str, client_secret: str | None) -> Any:
@@ -798,6 +841,9 @@ class Publisher:
             "postLogoutRedirectUris": spec.get("postLogoutRedirectUris", []),
             "scopes": spec["scopes"],
         }
+        for field in ("population", "accessTokenTtlSeconds", "refreshTokenTtlSeconds", "refreshTokens"):
+            if field in spec:
+                body[field] = spec[field]
         if client_secret is not None:
             body["clientSecret"] = client_secret
         return self.api.request(f"/admin/tenants/{self.tenant}/applications/{app_id}/clients",

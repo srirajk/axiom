@@ -15,8 +15,8 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
- * Fail-closed RFC 8707 guard for Axiom's current one-audience authorization-code model.
- * A resource is accepted only if it is the tenant client's exact default audience and an absolute URI.
+ * Fail-closed RFC 8707 guard for Axiom's one-audience authorization-code model.
+ * A resource may name the tenant client's absolute-URI audience or an HTTPS URI registered on its application.
  * It never substitutes for OAuth client authentication or claims authorization.
  */
 public final class AuthorizationCodeResourceGuardFilter extends OncePerRequestFilter {
@@ -45,7 +45,8 @@ public final class AuthorizationCodeResourceGuardFilter extends OncePerRequestFi
         if (resources == null || resources.length != 1 || !validResource(resources[0])
                 || clientId == null || service == null || service.activeAuthority(clientId)
                         .filter(authority -> authority.clientType().interactive())
-                        .filter(authority -> resources[0].equals(authority.audience())).isEmpty()) {
+                        .filter(authority -> resources[0].equals(authority.audience())
+                                || ApplicationResourceUris.matches(resources[0], authority.resourceUris())).isEmpty()) {
             response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
             response.setContentType("application/json");
             response.getWriter().write("{\"error\":\"invalid_target\"}");

@@ -1,6 +1,6 @@
 {"key":"card-assistance","displayName":"Card Assistance","description":"Customer lost-card assistance","audience":"cards-api"}
 {"key":"card-actions","displayName":"Card Actions","description":"Bounded propose-only card actions","audience":"card-actions-api"}
-{"key":"argus-gateway","displayName":"Argus Gateway","description":"Trusted policy enforcement and Agent routing gateway","audience":"argus-gateway"}
+{"key":"argus-gateway","displayName":"Argus Gateway","description":"Trusted policy enforcement and Agent routing gateway","audience":"argus-gateway","resourceUris":["https://argus-edge-dev.argus.meridian.com/"]}
 {"key":"card-incident-records","displayName":"Card Incident Records","description":"Governed card-incident case resource","audience":"card-case-api"}
 {"key":"wealth-workforce","displayName":"Wealth Review Workforce","description":"Workforce entry and server-side ingress for Quarterly Portfolio Review","audience":"agent:meridian:wealth-entry-agent"}
 {"key":"wealth-orchestrator","displayName":"Wealth Orchestrator","description":"Coordinates the bounded Quarterly Portfolio Review workflow","audience":"agent:meridian:wealth-orchestrator"}

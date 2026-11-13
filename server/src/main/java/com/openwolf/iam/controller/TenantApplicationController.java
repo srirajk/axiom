@@ -7,6 +7,7 @@ import com.openwolf.iam.dto.RevokeTenantApplicationClientRequest;
 import com.openwolf.iam.dto.RotateTenantApplicationClientSecretRequest;
 import com.openwolf.iam.dto.TenantApplicationClientResponse;
 import com.openwolf.iam.dto.TenantApplicationResponse;
+import com.openwolf.iam.dto.UpdateApplicationResourceUrisRequest;
 import com.openwolf.iam.service.TenantApplicationService;
 import com.openwolf.iam.exception.ResourceConflictException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -48,6 +50,14 @@ public class TenantApplicationController {
     @PreAuthorize("hasAnyRole('platform_admin','tenant_admin')")
     public ResponseEntity<TenantApplicationResponse> get(@PathVariable String tenantId, @PathVariable UUID applicationId) {
         return ResponseEntity.ok(service.get(tenantId, applicationId));
+    }
+
+    @PutMapping("/{applicationId}/resource-uris")
+    @PreAuthorize("hasAnyRole('platform_admin','tenant_admin')")
+    public ResponseEntity<TenantApplicationResponse> updateResourceUris(@PathVariable String tenantId,
+            @PathVariable UUID applicationId, @Valid @RequestBody UpdateApplicationResourceUrisRequest request,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.ok(service.updateResourceUris(tenantId, applicationId, request, httpRequest));
     }
 
     @DeleteMapping("/{applicationId}")

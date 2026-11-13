@@ -20,12 +20,13 @@ public final class TokenExchangeAuthenticationToken extends OAuth2AuthorizationG
     public record AuthorityContext(Jwt subject, String audience, String purpose,
                                    String authorityProfile, String authorityId, String delegationId,
                                    String tokenUse, String identityKind, String workloadId,
-                                   String workloadRef, String actorClientId, InvocationBinding invocation) {
+                                   String workloadRef, String actorClientId, InvocationBinding invocation,
+                                   String gatewayEntryRouteId) {
         public AuthorityContext(Jwt subject, String audience, String purpose, String authorityProfile, String authorityId,
                                 String delegationId, String tokenUse, String identityKind, String workloadId,
                                 String workloadRef, String actorClientId) {
             this(subject, audience, purpose, authorityProfile, authorityId, delegationId, tokenUse, identityKind,
-                    workloadId, workloadRef, actorClientId, null);
+                    workloadId, workloadRef, actorClientId, null, null);
         }
     }
 

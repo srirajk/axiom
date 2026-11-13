@@ -75,27 +75,40 @@ public class CiamDelegationService {
     public AgentWorkloadResponse registerWorkload(String tenantId, String workloadRef, String name,
                                                    String oauthClientId, String actorId,
                                                    String correlationId) {
+        return registerWorkload(tenantId, workloadRef, name, oauthClientId,
+                AgentWorkloadIdentity.Kind.SERVER, actorId, correlationId);
+    }
+
+    public AgentWorkloadResponse registerWorkload(String tenantId, String workloadRef, String name,
+                                                   String oauthClientId, AgentWorkloadIdentity.Kind kind,
+                                                   String actorId, String correlationId) {
         String clientId = oauthClientId.trim();
+        AgentWorkloadIdentity.Kind selected = kind == null ? AgentWorkloadIdentity.Kind.SERVER : kind;
         applications.lockClientForIdentityRegistration(clientId);
         if (brokers.findByTenantIdAndOauthClientId(tenantId, clientId).isPresent()) {
             throw new ResourceConflictException("trusted Gateway broker cannot be an Agent workload");
         }
         var clientAuthority = applications.activeAuthority(clientId)
                 .filter(value -> value.tenantId().equals(tenantId))
-                .filter(value -> value.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_SERVICE)
+                .filter(value -> selected == AgentWorkloadIdentity.Kind.SERVER
+                        ? value.clientType() == TenantApplicationClient.Type.CONFIDENTIAL_SERVICE
+                        : value.clientType() == TenantApplicationClient.Type.PUBLIC_BROWSER
+                          && value.workforceSignIn())
                 .orElseThrow(() -> new IllegalArgumentException(
-                        "agent workload requires an active same-tenant confidential service client"));
+                        "agent workload requires an active same-tenant client of the selected kind"));
         if (workloads.existsByTenantIdAndWorkloadRef(tenantId, workloadRef)) {
             throw new ResourceConflictException("agent workload reference already exists");
         }
         if (workloads.existsByTenantIdAndOauthClientId(tenantId, clientId)) {
             throw new ResourceConflictException("agent OAuth client is already registered");
         }
-        AgentWorkloadIdentity workload = workloads.save(new AgentWorkloadIdentity(tenantId,
-                workloadRef.trim(), name.trim(), clientId, clock.instant()));
+        AgentWorkloadIdentity candidate = new AgentWorkloadIdentity(tenantId,
+                workloadRef.trim(), name.trim(), clientId, clock.instant());
+        AgentWorkloadIdentity workload = workloads.save(selected == AgentWorkloadIdentity.Kind.NATIVE
+                ? candidate.nativeAgent() : candidate);
         audit.record(tenantId, actorId, "AGENT_WORKLOAD_REGISTERED", "agent_workload_identity",
                 workload.getId().toString(), Map.of("workloadRef", workload.getWorkloadRef(),
-                        "oauthClientId", workload.getOauthClientId()), correlationId);
+                        "oauthClientId", workload.getOauthClientId(), "kind", workload.getKind().name()), correlationId);
         return toResponse(workload);
     }
 
@@ -261,7 +274,7 @@ public class CiamDelegationService {
 
     private static AgentWorkloadResponse toResponse(AgentWorkloadIdentity value) {
         return new AgentWorkloadResponse(value.getId(), value.getWorkloadRef(), value.getName(),
-                value.getOauthClientId(), value.getStatus(), value.getCreatedAt(), value.getRevokedAt(),
+                value.getOauthClientId(), value.getKind(), value.getStatus(), value.getCreatedAt(), value.getRevokedAt(),
                 value.getRevision());
     }
 

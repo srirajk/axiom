@@ -1,0 +1,2 @@
+{"applicationKey":"argus-gateway","clientId":"codex-hub-authoring","workloadRef":"agent:codex-hub-authoring:development","name":"Codex (Argus Hub authoring)","kind":"NATIVE","scopes":["argus:invoke"]}
+{"applicationKey":"argus-gateway","clientId":"claude-hub-authoring","workloadRef":"agent:claude-hub-authoring:development","name":"Claude Code (Argus Hub authoring)","kind":"NATIVE","scopes":["argus:invoke"]}

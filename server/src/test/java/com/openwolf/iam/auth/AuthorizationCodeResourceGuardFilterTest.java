@@ -80,6 +80,48 @@ class AuthorizationCodeResourceGuardFilterTest {
         assertDenied(request);
     }
 
+    @Test
+    void registeredExactAndPrefixResourcesAreAcceptedWithoutChangingAudience() throws Exception {
+        when(applications.activeAuthority("browser")).thenReturn(Optional.of(
+                new TenantApplicationService.ClientAuthority("tenant-a", "argus-gateway",
+                        TenantApplicationClient.Type.PUBLIC_BROWSER, List.of("openid"), UUID.randomUUID(),
+                        TenantApplicationClient.Population.WORKFORCE,
+                        List.of("https://edge.example.test/exact", "https://edge.example.test/tools/"))));
+        for (String target : List.of("https://edge.example.test/exact", "https://edge.example.test/tools/crm")) {
+            MockHttpServletRequest authorize = new MockHttpServletRequest("GET", "/oauth/authorize");
+            authorize.setParameter("client_id", "browser");
+            authorize.setParameter("resource", target);
+            assertAllowed(authorize);
+            MockHttpServletRequest refresh = new MockHttpServletRequest("POST", "/oauth/token");
+            refresh.setParameter("grant_type", "refresh_token");
+            refresh.setParameter("client_id", "browser");
+            refresh.setParameter("resource", target);
+            assertAllowed(refresh);
+        }
+        for (String target : List.of("https://edge.example.test/exact/child", "https://edge.example.test/toolsmith",
+                "https://other.example.test/tools/crm", "http://edge.example.test/tools/crm")) {
+            MockHttpServletRequest authorize = new MockHttpServletRequest("GET", "/oauth/authorize");
+            authorize.setParameter("client_id", "browser");
+            authorize.setParameter("resource", target);
+            assertDenied(authorize);
+        }
+        MockHttpServletRequest duplicate = new MockHttpServletRequest("GET", "/oauth/authorize");
+        duplicate.setParameter("client_id", "browser");
+        duplicate.setParameter("resource", "https://edge.example.test/exact", "https://edge.example.test/tools/crm");
+        assertDenied(duplicate);
+    }
+
+    @Test
+    void anotherApplicationsPublicClientCannotUseTheResource() throws Exception {
+        when(applications.activeAuthority("other")).thenReturn(Optional.of(
+                new TenantApplicationService.ClientAuthority("tenant-a", "other-app",
+                        TenantApplicationClient.Type.PUBLIC_BROWSER, List.of("openid"), UUID.randomUUID())));
+        MockHttpServletRequest authorize = new MockHttpServletRequest("GET", "/oauth/authorize");
+        authorize.setParameter("client_id", "other");
+        authorize.setParameter("resource", "https://edge.example.test/tools/crm");
+        assertDenied(authorize);
+    }
+
     private void assertAllowed(MockHttpServletRequest request) throws Exception {
         AtomicBoolean reachedOAuth = new AtomicBoolean();
         MockHttpServletResponse response = new MockHttpServletResponse();

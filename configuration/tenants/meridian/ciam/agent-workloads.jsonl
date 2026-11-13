@@ -1,4 +1,5 @@
 {"applicationKey":"card-assistance","clientId":"card-assistance-agent","workloadRef":"agent:card-assistance:development","name":"Card Assistance Agent","scopes":["cards:incident.read"]}
+{"applicationKey":"argus-gateway","clientId":"quickstart-laptop-tool","workloadRef":"agent:quickstart-laptop-tool:development","name":"Quickstart Laptop Tool","kind":"NATIVE","scopes":["quickstart:invoke"]}
 {"applicationKey":"card-actions","clientId":"card-actions-agent","workloadRef":"agent:card-actions:development","name":"Card Actions Agent","scopes":["cards:incident.read"]}
 {"applicationKey":"wealth-workforce","clientId":"wealth-entry-agent","workloadRef":"agent:wealth-entry-agent:development","name":"Wealth Entry Agent","scopes":["wealth:review.invoke"],"kubernetesSecret":{"namespace":"wealth","name":"wealth-entry-agent-axiom-oauth-client"}}
 {"applicationKey":"wealth-orchestrator","clientId":"wealth-orchestrator","workloadRef":"agent:wealth-orchestrator:development","name":"Wealth Orchestrator","scopes":["wealth:review.invoke"],"kubernetesSecret":{"namespace":"wealth","name":"wealth-orchestrator-workload-oauth-client"}}

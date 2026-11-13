@@ -7,8 +7,12 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 @Entity
@@ -22,6 +26,8 @@ public class TenantApplication {
     @Column(name = "display_name", nullable = false) private String displayName;
     private String description;
     @Column(nullable = false) private String audience;
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "resource_uris", nullable = false, columnDefinition = "jsonb") private List<String> resourceUris = new ArrayList<>();
     @Enumerated(EnumType.STRING) @Column(nullable = false) private Status status;
     @Version @Column(nullable = false) private long revision;
     @Column(name = "created_at", nullable = false) private Instant createdAt;
@@ -34,9 +40,11 @@ public class TenantApplication {
         this.status = Status.ACTIVE; this.revision = 1; this.createdAt = Instant.now(); this.updatedAt = this.createdAt;
     }
     public void disable() { status = Status.DISABLED; updatedAt = Instant.now(); }
+    public void setResourceUris(List<String> resourceUris) { this.resourceUris = new ArrayList<>(resourceUris); updatedAt = Instant.now(); }
     public UUID getId() { return id; } public String getTenantId() { return tenantId; }
     public String getApplicationKey() { return applicationKey; } public String getDisplayName() { return displayName; }
     public String getDescription() { return description; } public String getAudience() { return audience; }
+    public List<String> getResourceUris() { return List.copyOf(resourceUris); }
     public Status getStatus() { return status; } public long getRevision() { return revision; }
     public Instant getCreatedAt() { return createdAt; } public Instant getUpdatedAt() { return updatedAt; }
 }

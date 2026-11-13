@@ -47,7 +47,7 @@ public class CiamAdminController {
             @PathVariable String tenantId, @Valid @RequestBody RegisterAgentWorkloadRequest request,
             HttpServletRequest httpRequest) {
         return ResponseEntity.status(201).body(delegations.registerWorkload(tenantId,
-                request.workloadRef(), request.name(), request.oauthClientId(), audit.currentActor(),
+                request.workloadRef(), request.name(), request.oauthClientId(), request.kind(), audit.currentActor(),
                 correlation(httpRequest)));
     }
 

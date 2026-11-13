@@ -371,8 +371,8 @@ public class SecurityConfig {
                             applications::getIfAvailable),
                     org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
             .addFilterAfter(s256PkceEnforcementFilter, SecurityContextHolderFilter.class)
-            // Axiom currently binds browser clients to one audience. Reject a different RFC 8707 resource
-            // instead of silently issuing a token for the default audience.
+            // Browser clients retain one token audience. A registered HTTPS resource URI may identify it;
+            // reject every other RFC 8707 resource instead of silently issuing for the default audience.
             .addFilterBefore(new com.openwolf.iam.auth.AuthorizationCodeResourceGuardFilter(applications),
                     SecurityContextHolderFilter.class)
             .addFilterBefore(new com.openwolf.iam.auth.CimdClientBindingFilter(registeredClients, productClients, applications, authorizations),

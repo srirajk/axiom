@@ -118,8 +118,10 @@ public class JwtClaimsCustomizer {
                     if (act == null && authorityId.startsWith("broker-target:")) {
                         context.getClaims().claim("source_workload_id", workloadId);
                     }
-                    if (authorityId.startsWith("broker-target:")) {
-                        String gatewayRouteId = subjectJwt.getClaimAsString("authority_id");
+                    if (authorityId.startsWith("broker-target:") ||
+                            (resolved != null && resolved.gatewayEntryRouteId() != null)) {
+                        String gatewayRouteId = resolved != null && resolved.gatewayEntryRouteId() != null
+                                ? resolved.gatewayEntryRouteId() : subjectJwt.getClaimAsString("authority_id");
                         if (gatewayRouteId == null || gatewayRouteId.isBlank()) {
                             throw new IllegalStateException("broker-target exchange is missing gateway route authority");
                         }

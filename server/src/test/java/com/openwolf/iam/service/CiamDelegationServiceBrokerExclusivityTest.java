@@ -70,4 +70,21 @@ class CiamDelegationServiceBrokerExclusivityTest {
         assertThat(created.oauthClientId()).isEqualTo(CLIENT);
         verify(workloads).save(any(AgentWorkloadIdentity.class));
     }
+
+    @Test
+    void nativeWorkloadRequiresPublicWorkforceClientAndKeepsItsKind() {
+        when(applications.activeAuthority(CLIENT)).thenReturn(Optional.of(
+                new TenantApplicationService.ClientAuthority(TENANT, "argus-gateway",
+                        TenantApplicationClient.Type.PUBLIC_BROWSER,
+                        List.of("quickstart:invoke"), UUID.randomUUID())));
+        when(workloads.save(any(AgentWorkloadIdentity.class))).thenAnswer(call -> call.getArgument(0));
+
+        var created = service.registerWorkload(TENANT, "agent:laptop:development", "Laptop", CLIENT,
+                AgentWorkloadIdentity.Kind.NATIVE, "admin", "test");
+
+        assertThat(created.kind()).isEqualTo(AgentWorkloadIdentity.Kind.NATIVE);
+        assertThatThrownBy(() -> service.registerWorkload(TENANT, "agent:server:development", "Server", CLIENT,
+                AgentWorkloadIdentity.Kind.SERVER, "admin", "test"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

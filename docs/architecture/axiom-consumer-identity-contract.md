@@ -34,7 +34,7 @@ There is no machine operator client yet (story 0.6).
 |---|---|---|
 | Workforce person | `POST /users`, `PUT /users/{id}`, `DELETE /users/{id}` (disable) | Tenant from the operator token. |
 | Tenant role (platform admin only) | `POST /users/{id}/roles` | `tenant_admin` is the provisioning role. |
-| Application | `POST /admin/tenants/{t}/applications` `{applicationKey, displayName, audience}` | `audience` is the resource indicator. |
+| Application | `POST /admin/tenants/{t}/applications` `{applicationKey, displayName, audience, resourceUris?}`; `PUT /admin/tenants/{t}/applications/{id}/resource-uris` | The token `aud` remains the application audience. Registered HTTPS `resourceUris` let interactive clients name an exact URL or trailing-slash path prefix in RFC 8707 requests. |
 | Client | `POST …/applications/{a}/clients` `{clientId, clientType: PUBLIC_BROWSER\|CONFIDENTIAL_SERVICE, redirectUris, scopes}` | A confidential secret is returned once (`serviceSecret`). Insecure redirects refused. |
 | Application access (workforce) | `…/access/roles` `{roleKey, permissions, permissionEffects}`, `…/access/memberships`, `…/memberships/{m}/roles` | Teams' default roles grant nothing by themselves. |
 | Workload | `POST /admin/tenants/{t}/ciam/agent-workloads` `{workloadRef, name, oauthClientId}`; `…/{w}/suspend\|reactivate\|retire` | Retire is terminal. |

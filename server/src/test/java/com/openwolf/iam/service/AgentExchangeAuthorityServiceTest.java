@@ -43,6 +43,7 @@ class AgentExchangeAuthorityServiceTest {
     private static final String SOURCE_CLIENT = "card-assistance-agent";
     private static final String DESTINATION_CLIENT = "card-actions-agent";
     private static final String GATEWAY_CLIENT = "argus-gateway-broker";
+    private static final String NATIVE_CLIENT = "codex-support";
     private static final String BROKER_SCOPE = "gateway:exchange";
     private static final String SOURCE_AUDIENCE = "cards-api";
     private static final String DESTINATION_AUDIENCE = "card-actions-api";
@@ -227,6 +228,96 @@ class AgentExchangeAuthorityServiceTest {
         assertThatThrownBy(() -> service.resolve(gatewaySubject, GATEWAY_CLIENT,
                 "sibling-agent-api", Set.of(SCOPE)))
                 .isInstanceOf(OAuth2AuthenticationException.class);
+    }
+
+    @Test
+    void nativeWorkforceSignInCanSwapThroughTargetAndRouteWithLiveGatewayBinding() {
+        AgentWorkloadIdentity nativeAgent = nativeAgent();
+        AgentExchangeRoute nativeGateway = nativeGatewayRoute(nativeAgent);
+        Jwt signIn = token("meridian-1008", GATEWAY_AUDIENCE, Map.of(
+                "tenant_id", TENANT, "identity_kind", "workforce", "client_id", NATIVE_CLIENT,
+                "scope", SCOPE));
+        service.requireValidNonCustomerSubject(signIn);
+        when(applications.isActiveAudience(TENANT, DESTINATION_AUDIENCE)).thenReturn(true);
+        TrustedExchangeBrokerTarget target = new TrustedExchangeBrokerTarget(broker.getId(), TENANT,
+                DESTINATION_AUDIENCE, AgentExchangeRoute.DestinationType.RESOURCE, null,
+                List.of(SCOPE), "native tool call", NOW);
+        when(targetService.resolve(TENANT, broker.getId(), DESTINATION_AUDIENCE))
+                .thenReturn(Optional.of(target));
+        when(targetService.requireActive(TENANT, broker.getId(), target.getId())).thenReturn(target);
+
+        var resolved = service.resolve(signIn, GATEWAY_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE));
+        assertThat(resolved.actingWorkload().getId()).isEqualTo(nativeAgent.getId());
+        assertThat(resolved.gatewayEntryRouteId()).isEqualTo(nativeGateway.getId().toString());
+        assertThat(resolved.authorityId()).isEqualTo("broker-target:" + target.getId());
+        Jwt issued = nativeToolToken(nativeAgent, nativeGateway, "broker-target:" + target.getId());
+        service.requireValidIssuedToken(issued);
+
+        when(targetService.resolve(TENANT, broker.getId(), DESTINATION_AUDIENCE)).thenReturn(Optional.empty());
+        AgentExchangeRoute resource = new AgentExchangeRoute(TENANT, nativeAgent.getId(),
+                AgentExchangeRoute.DestinationType.RESOURCE, null, DESTINATION_AUDIENCE,
+                List.of(SCOPE), "legacy route", NOW.plusSeconds(3600), NOW);
+        when(routes.findByTenantIdAndSourceWorkloadIdAndAudienceAndStatus(TENANT, nativeAgent.getId(),
+                DESTINATION_AUDIENCE, AgentExchangeRoute.Status.ACTIVE)).thenReturn(List.of(resource));
+        when(routes.findByTenantIdAndId(TENANT, resource.getId())).thenReturn(Optional.of(resource));
+        var fallback = service.resolve(signIn, GATEWAY_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE));
+        assertThat(fallback.authorityId()).isEqualTo(resource.getId().toString());
+        assertThat(fallback.gatewayEntryRouteId()).isEqualTo(nativeGateway.getId().toString());
+        service.requireValidIssuedToken(nativeToolToken(nativeAgent, nativeGateway, resource.getId().toString()));
+    }
+
+    @Test
+    void nativeSwapRefusesMissingRouteWrongAudienceAndWithdrawnAgent() {
+        AgentWorkloadIdentity nativeAgent = nativeAgent();
+        AgentExchangeRoute route = nativeGatewayRoute(nativeAgent);
+        Jwt signIn = token("meridian-1008", GATEWAY_AUDIENCE, Map.of(
+                "tenant_id", TENANT, "identity_kind", "workforce", "client_id", NATIVE_CLIENT,
+                "scope", SCOPE));
+        when(routes.findByTenantIdAndSourceWorkloadIdAndAudienceAndStatus(TENANT, nativeAgent.getId(),
+                GATEWAY_AUDIENCE, AgentExchangeRoute.Status.ACTIVE)).thenReturn(List.of());
+        assertThatThrownBy(() -> service.resolve(signIn, GATEWAY_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE)))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+        when(routes.findByTenantIdAndSourceWorkloadIdAndAudienceAndStatus(TENANT, nativeAgent.getId(),
+                GATEWAY_AUDIENCE, AgentExchangeRoute.Status.ACTIVE)).thenReturn(List.of(route));
+        Jwt wrongAudience = token("meridian-1008", SOURCE_AUDIENCE, Map.of(
+                "tenant_id", TENANT, "identity_kind", "workforce", "client_id", NATIVE_CLIENT,
+                "scope", SCOPE));
+        assertThatThrownBy(() -> service.resolve(wrongAudience, GATEWAY_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE)))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+        nativeAgent.revoke(NOW);
+        assertThatThrownBy(() -> service.resolve(signIn, GATEWAY_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE)))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+    }
+
+    private AgentWorkloadIdentity nativeAgent() {
+        AgentWorkloadIdentity nativeAgent = new AgentWorkloadIdentity(TENANT, "agent:codex-support:development",
+                "Codex Support", NATIVE_CLIENT, NOW).nativeAgent();
+        when(workloads.findByOauthClientId(NATIVE_CLIENT)).thenReturn(Optional.of(nativeAgent));
+        when(workloads.findByTenantIdAndId(TENANT, nativeAgent.getId())).thenReturn(Optional.of(nativeAgent));
+        when(applications.activeAuthority(NATIVE_CLIENT)).thenReturn(Optional.of(authority(
+                GATEWAY_AUDIENCE, TenantApplicationClient.Type.PUBLIC_BROWSER, sourceApplicationId)));
+        when(applicationAccess.decisionAuthority(TENANT, sourceApplicationId, "meridian-1008"))
+                .thenReturn(Optional.of(new ApplicationAccessService.DecisionAuthority(
+                        "codex-support", 1, Set.of("operator"), Map.of(SCOPE, "allow"), Map.of(), "policy-v1")));
+        return nativeAgent;
+    }
+
+    private AgentExchangeRoute nativeGatewayRoute(AgentWorkloadIdentity nativeAgent) {
+        AgentExchangeRoute route = new AgentExchangeRoute(TENANT, nativeAgent.getId(),
+                AgentExchangeRoute.DestinationType.GATEWAY, null, GATEWAY_AUDIENCE,
+                List.of(SCOPE), "native gateway entry", NOW.plusSeconds(3600), NOW);
+        when(routes.findByTenantIdAndId(TENANT, route.getId())).thenReturn(Optional.of(route));
+        when(routes.findByTenantIdAndSourceWorkloadIdAndAudienceAndStatus(TENANT, nativeAgent.getId(),
+                GATEWAY_AUDIENCE, AgentExchangeRoute.Status.ACTIVE)).thenReturn(List.of(route));
+        return route;
+    }
+
+    private Jwt nativeToolToken(AgentWorkloadIdentity nativeAgent, AgentExchangeRoute route, String authorityId) {
+        return token("meridian-1008", DESTINATION_AUDIENCE, Map.of(
+                "tenant_id", TENANT, "identity_kind", "workforce", "client_id", GATEWAY_CLIENT,
+                "scope", SCOPE, "token_use", "delegated_access", "authority_profile", "gateway_backend",
+                "authority_id", authorityId, "source_gateway_route_id", route.getId().toString(),
+                "act", actor(nativeAgent)));
     }
 
     @Test

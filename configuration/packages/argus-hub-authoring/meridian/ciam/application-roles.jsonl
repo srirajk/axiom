@@ -1,0 +1,1 @@
+{"applicationKey":"argus-gateway","roleKey":"coding-agent-invoke","displayName":"Coding agent invocation","description":"May sign in through a coding tool's laptop client","permissions":["argus:invoke"],"permissionEffects":{"argus:invoke":"allow"}}
