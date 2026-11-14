@@ -30,8 +30,8 @@ def main():
     gateway = get_json(EDGE + ["get", "gateway", "argus-edge"])
     existing = {listener["name"]: listener for listener in gateway["spec"]["listeners"]}
     expected = (
-        ("axiom-identity", "identity.meridian.com", "axiom-identity-shared-edge-tls", "axiom-identity"),
-        ("axiom-admin", "identity-admin.meridian.com", "axiom-admin-shared-edge-tls", "axiom-admin"),
+        ("axiom-identity", "identity.meridian.test", "axiom-identity-shared-edge-tls", "axiom-identity"),
+        ("axiom-admin", "identity-admin.meridian.test", "axiom-admin-shared-edge-tls", "axiom-admin"),
     )
     for name, hostname, secret, _ in expected:
         current = existing.get(name)

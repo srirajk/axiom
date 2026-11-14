@@ -10,9 +10,9 @@ admin:
     tag: local-edge-20261013-r1
     pullPolicy: IfNotPresent
 config:
-  issuerUrl: https://identity.meridian.com
-  adminPublicUrl: https://identity-admin.meridian.com
-  corsAllowedOrigins: https://identity-admin.meridian.com,http://localhost:5180,https://argus.meridian.com
+  issuerUrl: https://identity.meridian.test
+  adminPublicUrl: https://identity-admin.meridian.test
+  corsAllowedOrigins: https://identity-admin.meridian.test,http://localhost:5180,https://argus.meridian.test
   approvedBusinessScopes: example:read,example:write
   ciam:
     localDemoChallengeDisclosure: false
@@ -20,7 +20,7 @@ config:
       enabled: true
       allowedTenant: meridian
       allowedEmailDomain: meridian.local
-      allowedIssuer: https://identity.meridian.com
+      allowedIssuer: https://identity.meridian.test
     tenantId: meridian
     customerClientId: demo-customer-web
     customerScopes: example:read

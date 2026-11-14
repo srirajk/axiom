@@ -26,8 +26,8 @@ ENVOY_VERSION = "v1.9.1"
 EDGE_RELEASE = "axiom-local-edge"
 EDGE_CHART = ROOT / "deploy/helm/axiom-local-edge"
 ADMIN_BUILD_ARGS = (
-    "VITE_AXIOM_ISSUER=https://identity.meridian.com",
-    "VITE_AXIOM_API_URL=https://identity.meridian.com",
+    "VITE_AXIOM_ISSUER=https://identity.meridian.test",
+    "VITE_AXIOM_API_URL=https://identity.meridian.test",
     "VITE_CIAM_TENANT_ID=meridian",
     "VITE_CIAM_CUSTOMER_CLIENT_ID=demo-customer-web",
     "VITE_CIAM_CUSTOMER_SCOPES=example:read",
@@ -359,12 +359,12 @@ def check_https() -> None:
     args = ("curl", "--noproxy", "*", "--fail", "--silent", "--show-error",
             "--max-time", "10", "--retry", "6", "--retry-connrefused", "--retry-delay", "2",
             "--retry-max-time", "30", "--cacert", str(HERE / "private/certs/local-ca.crt"))
-    issuer = "https://identity.meridian.com"
+    issuer = "https://identity.meridian.test"
     discovery = json.loads(run(*args, issuer + "/.well-known/openid-configuration"))
     if discovery.get("issuer") != issuer:
         raise InstallError("HTTPS discovery returned the wrong Axiom issuer")
     run(*args, "--output", "/dev/null", issuer + "/actuator/health/readiness")
-    run(*args, "--output", "/dev/null", "https://identity-admin.meridian.com/")
+    run(*args, "--output", "/dev/null", "https://identity-admin.meridian.test/")
     print("Laptop HTTPS discovery, readiness and Admin with existing CA: PASS")
 
 

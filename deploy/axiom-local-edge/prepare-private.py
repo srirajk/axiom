@@ -26,14 +26,14 @@ CERTS = PRIVATE / "certs"
 PASSWORDS = PRIVATE / "passwords"
 CONTEXT = "docker-desktop"
 LOCAL_CERT_HOSTNAMES = (
-    "identity.meridian.com",
-    "identity-admin.meridian.com",
-    "argus.meridian.com",
-    "api.argus.meridian.com",
-    "grafana.argus.meridian.com",
-    "langfuse.argus.meridian.com",
-    "argus-edge-dev.argus.meridian.com",
-    "argus-edge-uat.argus.meridian.com",
+    "identity.meridian.test",
+    "identity-admin.meridian.test",
+    "argus.meridian.test",
+    "api.argus.meridian.test",
+    "grafana.argus.meridian.test",
+    "langfuse.argus.meridian.test",
+    "argus-edge-dev.argus.meridian.test",
+    "argus-edge-uat.argus.meridian.test",
     "apps-dev.meridian.com",
     "apps-uat.meridian.com",
 )
@@ -74,7 +74,7 @@ def generate_tls(stem: str, hostname: str, hostnames: tuple[str, ...] | None = N
 
 def generate_shared_tls() -> None:
     """One local leaf/key pair, copied to the two existing Axiom Secret inputs."""
-    generate_tls("axiom-identity", "identity.meridian.com", LOCAL_CERT_HOSTNAMES)
+    generate_tls("axiom-identity", "identity.meridian.test", LOCAL_CERT_HOSTNAMES)
     for suffix in ("crt", "key"):
         target = CERTS / f"axiom-admin.{suffix}"
         shutil.copyfile(CERTS / f"axiom-identity.{suffix}", target)
@@ -147,12 +147,45 @@ def renew_tls() -> None:
     print(f"Replaced local TLS material; prior files retained under {backup}; signing key and passwords unchanged.")
 
 
+def renew_leaf() -> None:
+    """Reissue the local server leaf using the existing CA and credentials."""
+    if not PRIVATE.is_dir() or PRIVATE.is_symlink() or not CERTS.is_dir() or CERTS.is_symlink():
+        raise SystemExit("Missing safe local private/certs directory")
+    ca_files = (CERTS / "local-ca.crt", CERTS / "local-ca.key")
+    if any(not path.is_file() or path.is_symlink() for path in ca_files):
+        raise SystemExit("Missing safe existing local CA")
+    names = ("axiom-identity.crt", "axiom-identity.key", "axiom-admin.crt", "axiom-admin.key")
+    for name in names:
+        path = CERTS / name
+        if not path.is_file() or path.is_symlink():
+            raise SystemExit(f"Missing safe existing TLS file: {path}")
+    backup = CERTS / ("previous-leaf-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                      + "-" + secrets.token_hex(3))
+    backup.mkdir(mode=0o700)
+    try:
+        for name in names:
+            (CERTS / name).rename(backup / name)
+        generate_shared_tls()
+        verify_tls()
+    except BaseException:
+        for name in names:
+            current = CERTS / name
+            if current.exists():
+                current.unlink()
+            prior = backup / name
+            if prior.exists():
+                prior.rename(current)
+        backup.rmdir()
+        raise
+    print(f"Reissued TLS leaf from existing CA; prior leaf retained under {backup}.")
+
+
 def verify_tls() -> None:
     ca = CERTS / "local-ca.crt"
     if not ca.is_file() or ca.is_symlink():
         raise SystemExit("Missing regular local CA certificate")
-    for stem, hostname in (("axiom-identity", "identity.meridian.com"),
-                           ("axiom-admin", "identity-admin.meridian.com")):
+    for stem, hostname in (("axiom-identity", "identity.meridian.test"),
+                           ("axiom-admin", "identity-admin.meridian.test")):
         cert = CERTS / f"{stem}.crt"
         key = CERTS / f"{stem}.key"
         if any(not path.is_file() or path.is_symlink() for path in (cert, key)):
@@ -285,12 +318,14 @@ def ensure() -> None:
 if __name__ == "__main__":
     os.umask(0o077)
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("generate", "renew-tls", "install", "ensure"))
+    parser.add_argument("action", choices=("generate", "renew-tls", "renew-leaf", "install", "ensure"))
     selected = parser.parse_args().action
     if selected == "generate":
         generate()
     elif selected == "renew-tls":
         renew_tls()
+    elif selected == "renew-leaf":
+        renew_leaf()
     elif selected == "install":
         install()
     else:

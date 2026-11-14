@@ -19,19 +19,19 @@ The Axiom Gateway inherits its proxy from the GatewayClass; other applications m
 refuses the conflicting combination before changing the cluster. Each application retains its own listeners,
 routes and certificates.
 
-The issuer is `https://identity.meridian.com` and the Admin URL is
-`https://identity-admin.meridian.com`. These names need local resolution to `127.0.0.1` for a browser. The
-local-CA-signed certificate is only for local testing. Its single key pair covers the ten Meridian test hostnames
+The issuer is `https://identity.meridian.test` and the Admin URL is
+`https://identity-admin.meridian.test`. These names need local resolution to `127.0.0.1` for a browser. The
+local-CA-signed certificate is only for local testing. Its single key pair covers the ten local hostnames
 listed below; Axiom serves only the two identity hostnames. The other names remain owned by their respective
 applications and are not routed to Axiom. Do not use this profile with real users or secrets.
 
-Certificate DNS names: `identity.meridian.com`, `identity-admin.meridian.com`, `argus.meridian.com`,
-`api.argus.meridian.com`, `grafana.argus.meridian.com`, `langfuse.argus.meridian.com`,
-`argus-edge-dev.argus.meridian.com`, `argus-edge-uat.argus.meridian.com`, `apps-dev.meridian.com`, and
+Certificate DNS names: `identity.meridian.test`, `identity-admin.meridian.test`, `argus.meridian.test`,
+`api.argus.meridian.test`, `grafana.argus.meridian.test`, `langfuse.argus.meridian.test`,
+`argus-edge-dev.argus.meridian.test`, `argus-edge-uat.argus.meridian.test`, `apps-dev.meridian.com`, and
 `apps-uat.meridian.com`. The leaf and key are stored as `private/certs/axiom-identity.crt` and `.key`; the installer
 copies the same pair to the existing Admin TLS Secret input. The local CA is in `private/certs/local-ca.crt`.
 This local release overlay allows the Admin origin, the Hub development origin `http://localhost:5180`, and
-`https://argus.meridian.com` in its global CORS list. CORS is not authorization: clients still need valid OAuth
+`https://argus.meridian.test` in its global CORS list. CORS is not authorization: clients still need valid OAuth
 registration, redirect URI, scopes and user consent.
 
 ## Synthetic customer activation for the local demo
@@ -50,7 +50,7 @@ curl --noproxy '*' --fail-with-body \
   -H "Authorization: Bearer $AXIOM_ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"emails":["customer-one@meridian.local","customer-two@meridian.local"]}' \
-  https://identity.meridian.com/admin/tenants/meridian/ciam/demo-customers/activate
+  https://identity.meridian.test/admin/tenants/meridian/ciam/demo-customers/activate
 ```
 
 Replace the example addresses with the actual pending synthetic addresses; set `AXIOM_ADMIN_TOKEN` from your existing
@@ -97,13 +97,13 @@ Verify the HTTPS LoadBalancer endpoint and exact issuer:
 
 ```bash
 curl --noproxy '*' --fail --cacert deploy/axiom-local-edge/private/certs/local-ca.crt \
-  https://identity.meridian.com/actuator/health/readiness
+  https://identity.meridian.test/actuator/health/readiness
 curl --noproxy '*' --fail --cacert deploy/axiom-local-edge/private/certs/local-ca.crt \
-  https://identity.meridian.com/.well-known/openid-configuration
+  https://identity.meridian.test/.well-known/openid-configuration
 ```
 
 Success means `status` reports `READY`, both Helm tests and the DNS-positive/Redis-denied canary passed during
-`install`, readiness returns `UP`, and discovery advertises exactly `https://identity.meridian.com` as issuer.
+`install`, readiness returns `UP`, and discovery advertises exactly `https://identity.meridian.test` as issuer.
 These checks prove this local installation, not a complete OAuth browser flow or a production-ready endpoint.
 For browser use, both hostnames must resolve to the reachable LoadBalancer address and the test client must trust
 `private/certs/local-ca.crt`. In this Docker Desktop cluster, the existing local hostname entries resolve to
@@ -147,8 +147,8 @@ failure may leave a partial local estate; inspect it before re-running. This ins
 This section documents the older reverse attachment method. New installs use the shared Axiom GatewayClass
 described above; Argus should use that class without attaching Axiom listeners to an Argus Gateway.
 
-For this disposable cluster, `attach-shared-edge.py` adds `identity.meridian.com` and
-`identity-admin.meridian.com` as HTTPS listeners on **port 443 of the existing Argus load balancer**. It copies the
+For this disposable cluster, `attach-shared-edge.py` adds `identity.meridian.test` and
+`identity-admin.meridian.test` as HTTPS listeners on **port 443 of the existing Argus load balancer**. It copies the
 existing Axiom test certificates into `argus-edge`, adds only two listeners to `argus-edge/argus-edge`, and applies
 the two Axiom HTTPRoutes in `gateway-demo`. Existing Argus listeners and the original private Axiom Gateway stay in
 place. First retire Axiom's separate LoadBalancer exposure, then run it only after both gateways and the Axiom
@@ -162,7 +162,7 @@ kubectl --context docker-desktop -n gateway-demo get httproute axiom-identity-sh
 
 Both new routes must be `Accepted=True` and `ResolvedRefs=True`; both listeners must be `Programmed=True`.
 The shared Envoy service uses port 443 for both Argus and Axiom, selected by hostname. The public issuer stays
-exactly `https://identity.meridian.com`. The local leaf expires 30 days after issuance and must be rotated in both
+exactly `https://identity.meridian.test`. The local leaf expires 30 days after issuance and must be rotated in both
 namespaces together. The attachment script refuses to overwrite a different existing TLS Secret; rotate those
 Secrets deliberately before rerunning it.
 
@@ -204,10 +204,11 @@ that validate TLS; do not use `--insecure` as a substitute outside disposable lo
 for disposable local use, not suitable for production or shared workstations.
 
 If the private folder already exists after a cluster reset, **do not run `generate` or rotate the administrator,
-master, database or signing credentials**. Run `python3 deploy/axiom-local-edge/prepare-private.py renew-tls` to
-preserve the old local CA and leaf files in an owner-only `certs/previous-*` directory and generate a new local CA
-and `CA:FALSE` server leaf. This retains the signing key and passwords; `install` verifies the certificates and
-refuses to load malformed material. Clients that trusted the old local CA must trust the new `local-ca.crt`.
+master, database or signing credentials**. Run `python3 deploy/axiom-local-edge/prepare-private.py renew-leaf` to
+preserve the old leaf files in an owner-only `certs/previous-leaf-*` directory and issue a new `CA:FALSE` server
+leaf from the **same** local CA. This retains the signing key, passwords and client CA trust; `install` verifies
+the certificates and refuses to load malformed material. Use `renew-tls` only when intentionally replacing the
+local CA and re-establishing trust on every local client.
 
 ## Important new-cluster security check
 
@@ -292,14 +293,14 @@ upgrade plan. In particular, the static tags in `values.yaml` may not name the c
 
    ```bash
    curl --noproxy '*' --fail --cacert deploy/axiom-local-edge/private/certs/local-ca.crt \
-     https://identity.meridian.com/actuator/health/readiness
+     https://identity.meridian.test/actuator/health/readiness
    curl --noproxy '*' --fail --cacert deploy/axiom-local-edge/private/certs/local-ca.crt \
-     https://identity.meridian.com/.well-known/openid-configuration
+     https://identity.meridian.test/.well-known/openid-configuration
    curl --noproxy '*' --fail --cacert deploy/axiom-local-edge/private/certs/local-ca.crt \
-     https://identity-admin.meridian.com/
+     https://identity-admin.meridian.test/
    ```
 
-   Discovery's `issuer` must exactly match `https://identity.meridian.com`. The HTTPS HTTPRoutes set
+   Discovery's `issuer` must exactly match `https://identity.meridian.test`. The HTTPS HTTPRoutes set
    `X-Forwarded-Port` to `443` so OAuth browser-login redirects return to the same origin. The local CA still needs
    explicit trust in each client.
 
@@ -318,7 +319,7 @@ upgrade plan. In particular, the static tags in `values.yaml` may not name the c
 
 A future client in this cluster can reach Axiom's HTTP transport at
 `http://axiom.axiom.svc.cluster.local:8084` **only after** an ingress NetworkPolicy explicitly permits its namespace
-and pod labels. The protected-token issuer remains the exact string `https://identity.meridian.com`; consumers
+and pod labels. The protected-token issuer remains the exact string `https://identity.meridian.test`; consumers
 must compare JWT `iss` to that string, check audience and signature, and reject tokens when required validation
 cannot be completed. The internal transport can serve discovery, JWKS, introspection and token endpoints to clients
 whose libraries support an issuer distinct from their network endpoint. Do not rewrite the issuer claim to the
@@ -331,21 +332,21 @@ register a client, issue a token, test browser login or prove consumer authoriza
 [identity cookbook](../../examples/identity_scenarios/README.md) covers the broader OAuth/OIDC contracts in its own
 disposable estate and must not be pointed at this Kubernetes deployment.
 
-A strict OIDC library that insists on fetching the advertised `https://identity.meridian.com` URLs directly
+A strict OIDC library that insists on fetching the advertised `https://identity.meridian.test` URLs directly
 cannot use this local deployment from another pod without an explicit DNS/routing and certificate-trust arrangement.
 The local CA and Docker Desktop LoadBalancer are **not** a production endpoint for such a consumer. Select that
 consumer's actual namespace and trust model before opening any additional route or changing cluster DNS.
 
 ## Recovery and removal
 
-An existing release from the older `:8443` profile has an `axiom-admin` OAuth client persisted with callback and
-post-logout URLs on that port. Before upgrading that release to the port-443 profile, verify that this is the only
-drift in `oauth2_registered_client` and change those two URLs to
-`https://identity-admin.meridian.com/callback` and `https://identity-admin.meridian.com/login`. The bootstrap hook
-intentionally refuses an unexpected registered-client change. Keep the exact old values for recovery: if Helm
-rolls back, restore the old URLs before restarting the old release. This is a deployment-specific data change, not
-a generic Flyway migration. The local 2026-10-31 upgrade updated one matching row, then Helm revision 4 and its
-smoke test passed without resetting PostgreSQL or rotating credentials.
+An existing release from the older `.com` or `:8443` profile has an `axiom-admin` OAuth client persisted with
+the old callback and post-logout URLs. Before upgrading such a release, verify that this is the only drift in
+`oauth2_registered_client` and change those URLs to `https://identity-admin.meridian.test/callback` and
+`https://identity-admin.meridian.test/login`. The bootstrap hook intentionally refuses an unexpected
+registered-client change. Keep the exact old values for recovery: if Helm rolls back, restore the old URLs before
+restarting the old release. This is a deployment-specific data change, not a generic Flyway migration. The local
+2026-10-31 upgrade of the older `.com` profile updated one matching row, then Helm revision 4 and its smoke test
+passed without resetting PostgreSQL or rotating credentials.
 
 For an existing local release, the installer refuses a changed source image; it is **not** an upgrade command.
 Back up PostgreSQL, record the current image and chart values, and review the required Flyway migrations before a

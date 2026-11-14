@@ -9,7 +9,7 @@ spec:
       namespace: argus-edge
       sectionName: axiom-identity
   hostnames:
-    - identity.meridian.com
+    - identity.meridian.test
   rules:
     - filters:
         - type: RequestHeaderModifier
@@ -33,7 +33,7 @@ spec:
       namespace: argus-edge
       sectionName: axiom-admin
   hostnames:
-    - identity-admin.meridian.com
+    - identity-admin.meridian.test
   rules:
     - filters:
         - type: RequestHeaderModifier

@@ -36,13 +36,13 @@ spec:
   gatewayClassName: axiom-local-gateway
   listeners:
     - name: identity-http
-      hostname: identity.meridian.com
+      hostname: identity.meridian.test
       port: 80
       protocol: HTTP
       allowedRoutes:
         namespaces: {from: Same}
     - name: identity-https
-      hostname: identity.meridian.com
+      hostname: identity.meridian.test
       port: 443
       protocol: HTTPS
       tls:
@@ -51,13 +51,13 @@ spec:
       allowedRoutes:
         namespaces: {from: Same}
     - name: admin-http
-      hostname: identity-admin.meridian.com
+      hostname: identity-admin.meridian.test
       port: 80
       protocol: HTTP
       allowedRoutes:
         namespaces: {from: Same}
     - name: admin-https
-      hostname: identity-admin.meridian.com
+      hostname: identity-admin.meridian.test
       port: 443
       protocol: HTTPS
       tls:
@@ -73,7 +73,7 @@ metadata:
   namespace: gateway-demo
 spec:
   parentRefs: [{name: axiom-local-edge, sectionName: identity-http}]
-  hostnames: [identity.meridian.com]
+  hostnames: [identity.meridian.test]
   rules:
     - filters:
         - type: RequestRedirect
@@ -86,7 +86,7 @@ metadata:
   namespace: gateway-demo
 spec:
   parentRefs: [{name: axiom-local-edge, sectionName: identity-https}]
-  hostnames: [identity.meridian.com]
+  hostnames: [identity.meridian.test]
   rules:
     - filters:
         # Keep forwarded headers aligned with the standard HTTPS origin.
@@ -102,7 +102,7 @@ metadata:
   namespace: gateway-demo
 spec:
   parentRefs: [{name: axiom-local-edge, sectionName: admin-http}]
-  hostnames: [identity-admin.meridian.com]
+  hostnames: [identity-admin.meridian.test]
   rules:
     - filters:
         - type: RequestRedirect
@@ -115,7 +115,7 @@ metadata:
   namespace: gateway-demo
 spec:
   parentRefs: [{name: axiom-local-edge, sectionName: admin-https}]
-  hostnames: [identity-admin.meridian.com]
+  hostnames: [identity-admin.meridian.test]
   rules:
     - filters:
         - type: RequestHeaderModifier

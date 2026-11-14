@@ -33,7 +33,7 @@ class LocalInstallerTest(unittest.TestCase):
                 installer.check_https()
             self.assertEqual(run.call_count, 1)
         with patch.object(installer, "run", side_effect=[
-            '{"issuer":"https://identity.meridian.com"}', '', '']) as run:
+            '{"issuer":"https://identity.meridian.test"}', '', '']) as run:
             installer.check_https()
             self.assertEqual(run.call_count, 3)
             self.assertTrue(all("--cacert" in c.args and "--fail" in c.args for c in run.call_args_list))
