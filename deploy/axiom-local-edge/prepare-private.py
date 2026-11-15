@@ -34,8 +34,8 @@ LOCAL_CERT_HOSTNAMES = (
     "langfuse.argus.meridian.test",
     "argus-edge-dev.argus.meridian.test",
     "argus-edge-uat.argus.meridian.test",
-    "apps-dev.meridian.com",
-    "apps-uat.meridian.com",
+    "apps-dev.meridian.test",
+    "apps-uat.meridian.test",
 )
 
 
