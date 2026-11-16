@@ -161,6 +161,52 @@ class McpClientSupportIT extends AuthorityITSupport {
         verify(fetcher,never()).fetch(unknown);
         assertThat(jdbc.queryForObject("select count(*) from audit_log where tenant_id=? and action='CIMD_SIGN_IN' and resource_id=?",Integer.class,f.tenant.id,id)).isPositive();
     }
+
+    @Test void trustedCimdWorkforceTokenExchangesThroughItsNativeGatewayRoute() throws Exception {
+        Fixture f = fixture("mcp-a");
+        String url = url();
+        JsonNode trusted = trust(f, url, "none", List.of("http://127.0.0.1/callback"));
+        serve(url, document(url, "none", List.of("http://127.0.0.1/callback")));
+        String internalId = jdbc.queryForObject(
+                "select client_id from tenant_application_clients where id=?::uuid", String.class,
+                trusted.path("id").asText());
+        var broker = confidential(f.tenant, f.app, f.audience,
+                f.tenant.s + "-broker", List.of(READ));
+        String base = base(f.tenant);
+        String brokerId = body(send(post(base + "/agent-exchange/brokers"), f.tenant.admin,
+                Map.of("oauthClientId", broker.clientId(), "gatewayAudience", f.audience,
+                        "scopes", List.of(READ))), 201).path("id").asText();
+        String workloadRef = "native:" + f.tenant.s + ":external-host";
+        String workloadId = body(send(post(base + "/ciam/agent-workloads"), f.tenant.admin,
+                Map.of("workloadRef", workloadRef, "name", "External host",
+                        "oauthClientId", internalId, "kind", "NATIVE")), 201).path("id").asText();
+        String routeId = route(f.tenant, workloadId, "GATEWAY", null, f.audience, List.of(READ));
+        String toolAudience = "tool:" + f.tenant.id + ":" + f.tenant.s;
+        app(f.tenant, "tool", toolAudience);
+        String targetId = body(send(post(base + "/agent-exchange/brokers/" + brokerId + "/targets"),
+                f.tenant.admin, Map.of("audience", toolAudience, "destinationType", "RESOURCE",
+                        "scopes", List.of(READ), "purpose", "CIMD tool call")), 201).path("id").asText();
+
+        String signedIn = tokens(code(f, url, CALLBACK, false)).path("access_token").asText();
+        assertThat(claims(signedIn)).containsEntry("client_id", url).containsEntry("sub", f.person);
+        String issued = token(exchange(broker, signedIn, toolAudience, READ, Map.of()));
+        Map<String, Object> claims = claims(issued);
+        assertThat(claims).containsEntry("sub", f.person)
+                .containsEntry("authority_id", "broker-target:" + targetId)
+                .containsEntry("source_gateway_route_id", routeId)
+                .containsEntry("client_id", broker.clientId());
+        assertThat(claims.get("aud")).isEqualTo(toolAudience);
+        Map<?, ?> actor = (Map<?, ?>) claims.get("act");
+        assertThat(actor.get("sub")).isEqualTo(workloadRef);
+        assertThat(actor.get("client_id")).isEqualTo(internalId);
+        assertThat(actor.get("workload_id")).isEqualTo(workloadId);
+        assertThat(introspect(broker, issued).path("active").asBoolean()).isTrue();
+
+        body(send(post(base + "/agent-exchange/routes/" + routeId + "/revoke"), f.tenant.admin,
+                Map.of()), 200);
+        assertThat(introspect(broker, issued).path("active").asBoolean()).isFalse();
+        denied(exchange(broker, signedIn, toolAudience, READ, Map.of()), "invalid_target");
+    }
     @Test void group5IdentityRedirectAndDocumentSizeCannotExpandApproval() throws Exception {
         Fixture f=fixture("mcp-a");
         String mismatch=url();trust(f,mismatch,"none",List.of("http://127.0.0.1/callback"));

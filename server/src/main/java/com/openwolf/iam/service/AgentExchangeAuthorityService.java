@@ -806,7 +806,14 @@ public class AgentExchangeAuthorityService {
                 .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
         if (applicationAccess.decisionAuthority(tenantId, client.applicationId(), subject.getSubject()).isEmpty())
             fail(INVALID_GRANT);
-        AgentWorkloadIdentity source = activeWorkloadByClient(clientId, tenantId);
+        // CIMD sign-in tokens carry the external URL, while native workloads are registered
+        // against Axiom's internal client ID. Resolve only an active, unambiguous binding for
+        // this tenant and Gateway audience; all normal workload and route checks still apply.
+        String workloadClientId = clientId.startsWith("https://")
+                ? applications.activeTrustedInternalClientId(clientId, tenantId, broker.getGatewayAudience())
+                        .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT))
+                : clientId;
+        AgentWorkloadIdentity source = activeWorkloadByClient(workloadClientId, tenantId);
         if (source.getKind() != AgentWorkloadIdentity.Kind.NATIVE) fail(INVALID_GRANT);
         AgentExchangeRoute route = activeRoute(tenantId, source.getId(), broker.getGatewayAudience(),
                 AgentExchangeRoute.DestinationType.GATEWAY, scopes);

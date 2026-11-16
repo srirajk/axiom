@@ -267,6 +267,57 @@ class AgentExchangeAuthorityServiceTest {
     }
 
     @Test
+    void cimdWorkforceSignInUsesItsInternalNativeWorkloadAndKeepsGatewayRouteChecks() {
+        String externalId = "https://claude.example/client.json";
+        String internalId = "cimd-registered-client";
+        AgentWorkloadIdentity nativeAgent = new AgentWorkloadIdentity(TENANT,
+                "native:claude:quickstart", "Claude host", internalId, NOW).nativeAgent();
+        AgentExchangeRoute entry = new AgentExchangeRoute(TENANT, nativeAgent.getId(),
+                AgentExchangeRoute.DestinationType.GATEWAY, null, GATEWAY_AUDIENCE,
+                List.of(SCOPE), "CIMD gateway entry", NOW.plusSeconds(3600), NOW);
+        when(applications.activeAuthority(externalId, TENANT, GATEWAY_AUDIENCE)).thenReturn(Optional.of(
+                authority(GATEWAY_AUDIENCE, TenantApplicationClient.Type.PUBLIC_BROWSER, sourceApplicationId)));
+        when(applications.activeAuthority(internalId)).thenReturn(Optional.of(
+                authority(GATEWAY_AUDIENCE, TenantApplicationClient.Type.PUBLIC_BROWSER, sourceApplicationId)));
+        when(applications.activeTrustedInternalClientId(externalId, TENANT, GATEWAY_AUDIENCE))
+                .thenReturn(Optional.of(internalId));
+        when(applicationAccess.decisionAuthority(TENANT, sourceApplicationId, "meridian-1008"))
+                .thenReturn(Optional.of(new ApplicationAccessService.DecisionAuthority(
+                        "claude-host", 1, Set.of("operator"), Map.of(SCOPE, "allow"), Map.of(), "policy-v1")));
+        when(workloads.findByOauthClientId(internalId)).thenReturn(Optional.of(nativeAgent));
+        when(workloads.findByTenantIdAndId(TENANT, nativeAgent.getId())).thenReturn(Optional.of(nativeAgent));
+        when(routes.findByTenantIdAndSourceWorkloadIdAndAudienceAndStatus(TENANT, nativeAgent.getId(),
+                GATEWAY_AUDIENCE, AgentExchangeRoute.Status.ACTIVE)).thenReturn(List.of(entry));
+        when(routes.findByTenantIdAndId(TENANT, entry.getId())).thenReturn(Optional.of(entry));
+        when(applications.isActiveAudience(TENANT, DESTINATION_AUDIENCE)).thenReturn(true);
+        TrustedExchangeBrokerTarget target = new TrustedExchangeBrokerTarget(broker.getId(), TENANT,
+                DESTINATION_AUDIENCE, AgentExchangeRoute.DestinationType.RESOURCE, null,
+                List.of(SCOPE), "tool call", NOW);
+        when(targetService.resolve(TENANT, broker.getId(), DESTINATION_AUDIENCE)).thenReturn(Optional.of(target));
+        when(targetService.requireActive(TENANT, broker.getId(), target.getId())).thenReturn(target);
+        Jwt signIn = token("meridian-1008", GATEWAY_AUDIENCE, Map.of(
+                "tenant_id", TENANT, "identity_kind", "workforce", "client_id", externalId, "scope", SCOPE));
+
+        service.requireValidNonCustomerSubject(signIn);
+        var resolved = service.resolve(signIn, GATEWAY_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE));
+        assertThat(resolved.actingWorkload().getId()).isEqualTo(nativeAgent.getId());
+        assertThat(resolved.gatewayEntryRouteId()).isEqualTo(entry.getId().toString());
+        assertThat(resolved.authorityId()).isEqualTo("broker-target:" + target.getId());
+        service.requireValidIssuedToken(nativeToolToken(nativeAgent, entry, resolved.authorityId()));
+
+        when(applications.activeTrustedInternalClientId(externalId, TENANT, GATEWAY_AUDIENCE))
+                .thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.resolve(signIn, GATEWAY_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE)))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+        when(applications.activeTrustedInternalClientId(externalId, TENANT, GATEWAY_AUDIENCE))
+                .thenReturn(Optional.of(internalId));
+        when(routes.findByTenantIdAndSourceWorkloadIdAndAudienceAndStatus(TENANT, nativeAgent.getId(),
+                GATEWAY_AUDIENCE, AgentExchangeRoute.Status.ACTIVE)).thenReturn(List.of());
+        assertThatThrownBy(() -> service.resolve(signIn, GATEWAY_CLIENT, DESTINATION_AUDIENCE, Set.of(SCOPE)))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+    }
+
+    @Test
     void nativeSwapRefusesMissingRouteWrongAudienceAndWithdrawnAgent() {
         AgentWorkloadIdentity nativeAgent = nativeAgent();
         AgentExchangeRoute route = nativeGatewayRoute(nativeAgent);

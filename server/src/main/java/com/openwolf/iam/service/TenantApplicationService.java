@@ -540,6 +540,19 @@ public class TenantApplicationService {
         return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
     }
 
+    /** Resolve a signed CIMD client URL to one active, server-owned client in this tenant and audience. */
+    @Transactional(readOnly = true)
+    public Optional<String> activeTrustedInternalClientId(String externalClientId, String tenantId, String audience) {
+        if (externalClientId == null || !externalClientId.startsWith("https://")) return Optional.empty();
+        var matches = clients.findTrustedByResource(externalClientId, audience).stream()
+                .filter(client -> externalClientId.equals(client.getExternalClientId()))
+                .filter(client -> activeAuthority(client.getClientId())
+                        .filter(authority -> authority.tenantId().equals(tenantId))
+                        .filter(authority -> authority.audience().equals(audience)).isPresent())
+                .map(TenantApplicationClient::getClientId).distinct().toList();
+        return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
+    }
+
     /** Context-free resolution for persisted grants and consent management, using a server-owned registration id. */
     @Transactional(readOnly = true)
     public Optional<ClientAuthority> activeAuthorityByRegisteredClientId(String registeredId) {

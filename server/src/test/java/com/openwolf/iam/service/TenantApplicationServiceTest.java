@@ -146,6 +146,36 @@ class TenantApplicationServiceTest {
     }
 
     @Test
+    void resolvesOnlyOneActiveTrustedClientForTheSignedUrlTenantAndAudience() {
+        String url = "https://claude.example/client.json";
+        TenantApplication application = new TenantApplication("tenant-a", "gateway", "Gateway", "", "argus-gateway");
+        TenantApplicationClient trusted = new TenantApplicationClient(application.getId(), "cimd-one",
+                TenantApplicationClient.Type.PUBLIC_BROWSER, List.of("openid"));
+        trusted.trustExternalClient(url);
+        when(activeTenants.isActive("tenant-a")).thenReturn(true);
+        when(applications.findById(application.getId())).thenReturn(Optional.of(application));
+        when(clients.findByClientId("cimd-one")).thenReturn(Optional.of(trusted));
+        when(clients.findTrustedByResource(url, "argus-gateway")).thenReturn(List.of(trusted));
+
+        assertThat(service.activeTrustedInternalClientId(url, "tenant-a", "argus-gateway"))
+                .contains("cimd-one");
+        assertThat(service.activeTrustedInternalClientId(url, "tenant-b", "argus-gateway")).isEmpty();
+        assertThat(service.activeTrustedInternalClientId(url, "tenant-a", "other-gateway")).isEmpty();
+        assertThat(service.activeTrustedInternalClientId("cimd-one", "tenant-a", "argus-gateway")).isEmpty();
+
+        TenantApplicationClient second = new TenantApplicationClient(application.getId(), "cimd-two",
+                TenantApplicationClient.Type.PUBLIC_BROWSER, List.of("openid"));
+        second.trustExternalClient(url);
+        when(clients.findByClientId("cimd-two")).thenReturn(Optional.of(second));
+        when(clients.findTrustedByResource(url, "argus-gateway")).thenReturn(List.of(trusted, second));
+        assertThat(service.activeTrustedInternalClientId(url, "tenant-a", "argus-gateway")).isEmpty();
+
+        when(clients.findTrustedByResource(url, "argus-gateway")).thenReturn(List.of(trusted));
+        trusted.disable();
+        assertThat(service.activeTrustedInternalClientId(url, "tenant-a", "argus-gateway")).isEmpty();
+    }
+
+    @Test
     void storesApprovedScopesAsJsonArrayValuesRatherThanAJsonEncodedString() throws NoSuchFieldException {
         Field scopes = TenantApplicationClient.class.getDeclaredField("allowedScopes");
 
