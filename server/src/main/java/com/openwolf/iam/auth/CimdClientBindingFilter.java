@@ -52,6 +52,7 @@ public final class CimdClientBindingFilter extends OncePerRequestFilter {
             }
             if (!clients.existsByExternalClientId(clientId)) { error(response, unknownClient); return; }
             com.openwolf.iam.entity.TenantApplicationClient selected;
+            TenantApplicationService.ClientAuthority selectedAuthority;
             OAuth2Authorization savedAuthorization = null;
             if (consent || token) {
                 String parameter = consent ? "state" : "refresh_token".equals(request.getParameter("grant_type")) ? "refresh_token" : "code";
@@ -65,21 +66,28 @@ public final class CimdClientBindingFilter extends OncePerRequestFilter {
                 var registered = registrations.storedById(authorization.getRegisteredClientId());
                 selected = registered == null ? null : clients.findByClientId(registered.getClientId()).orElse(null);
                 if (selected == null || !clientId.equals(selected.getExternalClientId())) { error(response, "invalid_grant"); return; }
+                String appId = authorization.getAttribute(TenantApplicationService.TRUSTED_APPLICATION_ATTRIBUTE);
+                UUID selectedApp;
+                try { selectedApp = appId == null ? selected.getApplicationId() : UUID.fromString(appId); }
+                catch (IllegalArgumentException invalid) { error(response, "invalid_grant"); return; }
+                selectedAuthority = applications.getObject().activeTrustedApplication(selected, selectedApp).orElse(null);
             } else {
                 if (resources == null || resources.length != 1) { error(response, "invalid_target"); return; }
-                var candidates = clients.findTrustedByResource(clientId, resources[0]).stream()
-                        .filter(row -> applications.getObject().activeAuthority(row.getClientId()).isPresent()).toList();
-                if (candidates.size() != 1) { error(response, unknownClient); return; }
-                selected = candidates.getFirst();
+                var candidates = applications.getObject().trustedResourceMatches(clientId, resources[0]);
+                if (candidates.size() != 1) { error(response, "invalid_target"); return; }
+                selected = candidates.getFirst().client();
+                selectedAuthority = candidates.getFirst().authority();
             }
-            if (applications.getObject().activeAuthority(selected.getClientId()).isEmpty()) { error(response, unknownClient); return; }
+            if (selectedAuthority == null) { error(response, savedAuthorization == null ? unknownClient : "invalid_grant"); return; }
             var stored = registrations.storedByClientId(selected.getClientId());
             if (stored == null) { error(response, unknownClient); return; }
-            CimdClientContext.set(new CimdClientContext.Binding(clientId, selected.getClientId(), stored.getId()));
+            CimdClientContext.set(new CimdClientContext.Binding(clientId, selected.getClientId(), stored.getId(),
+                    selectedAuthority.applicationId(), selectedAuthority.scopes(), null, savedAuthorization));
             var client = registrations.findByClientId(clientId);
             if (client == null) { error(response, unknownClient); return; }
             if (authorize && !consent) client = registrations.validateAuthorization(client);
             CimdClientContext.set(new CimdClientContext.Binding(clientId, selected.getClientId(), stored.getId(),
+                    selectedAuthority.applicationId(), selectedAuthority.scopes(),
                     authorize && !consent ? client : null, savedAuthorization));
           } catch (OAuth2AuthenticationException | IllegalArgumentException refused) { error(response, unknownClient); return; }
           chain.doFilter(request, response);

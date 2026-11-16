@@ -52,7 +52,13 @@ public final class CimdRegisteredClientRepository implements RegisteredClientRep
         if (url == null) return client;
         if (applications.getObject().activeAuthority(client.getClientId()).isEmpty() || clients.findByClientId(client.getClientId())
                 .filter(row -> url.equals(row.getExternalClientId())).isEmpty()) return null;
-        return RegisteredClient.from(client).clientId(url).build();
+        var selected = CimdClientContext.current();
+        var view = RegisteredClient.from(client).clientId(url);
+        if (selected != null && selected.internalClientId().equals(client.getClientId())
+                && selected.applicationScopes() != null) {
+            view.scopes(scopes -> { scopes.clear(); scopes.addAll(selected.applicationScopes()); });
+        }
+        return view.build();
     }
     private Consumer<String> failureAudit(RegisteredClient client) {
         var row = stored.findById(client.getId());

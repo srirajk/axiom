@@ -236,7 +236,12 @@ public class ApplicationAccessService {
                 .filter(value -> value.getClientType().interactive())
                 .filter(value -> value.getPopulation() == TenantApplicationClient.Population.WORKFORCE)
                 .orElseThrow(() -> new IllegalStateException("workforce sign-in client is not active"));
-        TenantApplication application = applications.findById(client.getApplicationId())
+        var binding = com.openwolf.iam.auth.CimdClientContext.current();
+        UUID applicationId = binding != null && client.getClientId().equals(binding.internalClientId())
+                && binding.applicationId() != null ? binding.applicationId() : client.getApplicationId();
+        if (client.getExternalClientId() != null && client.trustedScopes(applicationId) == null)
+            throw new IllegalStateException("trusted client has no grant for this application");
+        TenantApplication application = applications.findById(applicationId)
                 .filter(value -> value.getStatus() == TenantApplication.Status.ACTIVE)
                 .orElseThrow(() -> new IllegalStateException("application is not active"));
         Principal principal = principals.findByIdAndTenantId(principalId, application.getTenantId())

@@ -152,10 +152,11 @@ class TenantApplicationServiceTest {
         TenantApplicationClient trusted = new TenantApplicationClient(application.getId(), "cimd-one",
                 TenantApplicationClient.Type.PUBLIC_BROWSER, List.of("openid"));
         trusted.trustExternalClient(url);
+        trusted.grantTrustedApplication(application.getId(), List.of("openid"));
         when(activeTenants.isActive("tenant-a")).thenReturn(true);
         when(applications.findById(application.getId())).thenReturn(Optional.of(application));
         when(clients.findByClientId("cimd-one")).thenReturn(Optional.of(trusted));
-        when(clients.findTrustedByResource(url, "argus-gateway")).thenReturn(List.of(trusted));
+        when(clients.findByExternalClientId(url)).thenReturn(List.of(trusted));
 
         assertThat(service.activeTrustedInternalClientId(url, "tenant-a", "argus-gateway"))
                 .contains("cimd-one");
@@ -166,11 +167,12 @@ class TenantApplicationServiceTest {
         TenantApplicationClient second = new TenantApplicationClient(application.getId(), "cimd-two",
                 TenantApplicationClient.Type.PUBLIC_BROWSER, List.of("openid"));
         second.trustExternalClient(url);
+        second.grantTrustedApplication(application.getId(), List.of("openid"));
         when(clients.findByClientId("cimd-two")).thenReturn(Optional.of(second));
-        when(clients.findTrustedByResource(url, "argus-gateway")).thenReturn(List.of(trusted, second));
+        when(clients.findByExternalClientId(url)).thenReturn(List.of(trusted, second));
         assertThat(service.activeTrustedInternalClientId(url, "tenant-a", "argus-gateway")).isEmpty();
 
-        when(clients.findTrustedByResource(url, "argus-gateway")).thenReturn(List.of(trusted));
+        when(clients.findByExternalClientId(url)).thenReturn(List.of(trusted));
         trusted.disable();
         assertThat(service.activeTrustedInternalClientId(url, "tenant-a", "argus-gateway")).isEmpty();
     }

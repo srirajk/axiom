@@ -56,6 +56,7 @@ public class TenantApplicationService {
     private static final Set<String> CUSTOMER_SCOPES = Set.of(OidcScopes.OPENID, OidcScopes.PROFILE, OidcScopes.EMAIL);
     /** OIDC Core section 11: requesting it (and being granted it) is what makes a refresh token issuable. */
     public static final String OFFLINE_ACCESS = "offline_access";
+    public static final String TRUSTED_APPLICATION_ATTRIBUTE = "axiom.trusted.application_id";
     private static final Set<String> SERVICE_SCOPES = Set.of(
             ApplicationScopes.APPLICATION_READ,
             ApplicationScopes.SUBJECT_CONTEXT_READ,
@@ -178,9 +179,6 @@ public class TenantApplicationService {
             throw new IllegalArgumentException("trusted redirects are required");
         }
         request.redirectUris().forEach(com.openwolf.iam.auth.CimdDocuments::requireRedirect);
-        if (clients.existsByApplicationIdAndExternalClientIdAndStatus(applicationId, request.clientId(), TenantApplicationClient.Status.ACTIVE)) {
-            throw new ResourceConflictException("This application already has an approval for that client URL");
-        }
         List<String> requestedScopes = request.scopes();
         if (requestedScopes == null || requestedScopes.isEmpty()) {
             Set<String> inherited = new LinkedHashSet<>(List.of("openid", "profile", "email"));
@@ -194,13 +192,45 @@ public class TenantApplicationService {
         Set<String> scopes = new LinkedHashSet<>(requestedScopes);
         if (refresh) scopes.add(OFFLINE_ACCESS);
         else if (scopes.contains(OFFLINE_ACCESS)) throw new IllegalArgumentException("offline_access requires refresh opt-in");
+        List<String> approved = approvedScopes(tenantId, TenantApplicationClient.Type.PUBLIC_BROWSER,
+                request.population() == null ? TenantApplicationClient.Population.WORKFORCE : request.population(),
+                List.copyOf(scopes), refresh);
+        var existing = clients.findByExternalClientId(request.clientId()).stream()
+                .filter(row -> applications.findById(row.getApplicationId())
+                        .filter(owner -> tenantId.equals(owner.getTenantId())).isPresent())
+                .filter(row -> row.getStatus() == TenantApplicationClient.Status.ACTIVE).toList();
+        if (!existing.isEmpty()) {
+            if (existing.size() != 1) throw new ResourceConflictException("Legacy duplicate trusted clients require a reseed");
+            TenantApplicationClient root = existing.getFirst();
+            if (root.getPopulation() == TenantApplicationClient.Population.CUSTOMER)
+                throw new ResourceConflictException("Customer consent requires a separate application client");
+            if (root.trustedScopes(applicationId) != null) throw new ResourceConflictException("Application already approved");
+            RegisteredClient stored = storedRegistration(root.getClientId());
+            if (stored == null || root.getPopulation() != (request.population() == null
+                    ? TenantApplicationClient.Population.WORKFORCE : request.population())
+                    || !stored.getRedirectUris().equals(Set.copyOf(request.redirectUris()))
+                    || !stored.getClientAuthenticationMethods().equals(Set.of(new ClientAuthenticationMethod(request.tokenEndpointAuthMethod())))
+                    || stored.getAuthorizationGrantTypes().contains(AuthorizationGrantType.REFRESH_TOKEN) != refresh
+                    || request.accessTokenTtlSeconds() != null && request.accessTokenTtlSeconds()
+                            != stored.getTokenSettings().getAccessTokenTimeToLive().toSeconds()
+                    || request.refreshTokenTtlSeconds() != null && request.refreshTokenTtlSeconds()
+                            != stored.getTokenSettings().getRefreshTokenTimeToLive().toSeconds()) {
+                throw new ResourceConflictException("Shared client settings differ from the existing trusted client");
+            }
+            root.grantTrustedApplication(applicationId, approved);
+            clients.save(root); clients.flush();
+            audit.logRequired(tenantId, audit.currentActor(), "ADD_TRUSTED_CLIENT_APPLICATION", "application_client",
+                    root.getClientId(), null, Map.of("applicationId", applicationId.toString(), "scopes", approved), correlation(httpRequest));
+            return trustedResponse(root);
+        }
         String internal = "cimd-" + UUID.randomUUID();
         var input = new CreateTenantApplicationClientRequest(internal, TenantApplicationClient.Type.PUBLIC_BROWSER,
                 request.redirectUris(), List.of(), List.copyOf(scopes), null, request.population(), request.accessTokenTtlSeconds(),
                 request.refreshTokenTtlSeconds(), true, "none", null, refresh);
         createClient(tenantId, applicationId, input, httpRequest);
         TenantApplicationClient client = clients.findByClientId(internal).orElseThrow();
-        client.trustExternalClient(request.clientId()); clients.save(client); clients.flush();
+        client.trustExternalClient(request.clientId()); client.grantTrustedApplication(applicationId, approved);
+        clients.save(client); clients.flush();
         RegisteredClient stored = storedRegistration(internal);
         var settings = ClientSettings.withSettings(stored.getClientSettings().getSettings())
                 .setting(com.openwolf.iam.auth.CimdRegisteredClientRepository.CLIENT_ID, request.clientId());
@@ -217,19 +247,27 @@ public class TenantApplicationService {
     @Transactional(readOnly = true)
     public List<com.openwolf.iam.dto.TrustedClientResponse> listTrustedClients(String tenantId, UUID applicationId) {
         TenantApplication app = applicationForTenant(tenantId, applicationId);
-        return clients.findByApplicationIdOrderByClientId(app.getId()).stream().filter(c -> c.getExternalClientId() != null)
+        return clients.findTrustedForTenantApplication(tenantId, app.getId().toString()).stream()
                 .map(this::trustedResponse).toList();
     }
 
     public void deleteTrustedClient(String tenantId, UUID applicationId, UUID id, long expectedRevision,
                                    HttpServletRequest httpRequest) {
-        TenantApplicationClient client = clientForTenant(tenantId, applicationId, id);
-        if (client.getExternalClientId() == null) throw EntityNotFoundException.forId("Trusted client", id);
+        applicationForTenant(tenantId, applicationId);
+        TenantApplicationClient client = clients.findById(id)
+                .filter(row -> row.getExternalClientId() != null && row.trustedScopes(applicationId) != null)
+                .filter(row -> applications.findById(row.getApplicationId())
+                        .filter(owner -> tenantId.equals(owner.getTenantId())).isPresent())
+                .orElseThrow(() -> EntityNotFoundException.forId("Trusted client", id));
         requireRevision(client, expectedRevision);
         var before = trustedResponse(client);
-        client.disable(); clients.save(client);
-        endClientSessions(tenantId, client.getClientId(), "trusted client approval removed");
-        withdrawTrustedGrants(client);
+        client.removeTrustedApplication(applicationId);
+        if (client.getTrustedApplicationScopes().isEmpty()) client.disable();
+        clients.save(client);
+        retireTrustedExchangeAuthority(tenantId, applicationId, client, httpRequest);
+        if (sessionService != null) sessionService.revokeAllForApplicationClient(tenantId, applicationId,
+                client.getExternalClientId(), "trusted client application approval removed");
+        if (client.getTrustedApplicationScopes().isEmpty()) withdrawTrustedGrants(client);
         audit.logRequired(tenantId, audit.currentActor(), "DELETE_TRUSTED_CLIENT", "application_client", client.getExternalClientId(),
                 before, Map.of("applicationId", applicationId.toString()), correlation(httpRequest));
     }
@@ -242,6 +280,44 @@ public class TenantApplicationService {
         }
     }
 
+    private com.openwolf.iam.repository.AgentWorkloadIdentityRepository trustedWorkloads;
+    private com.openwolf.iam.repository.AgentExchangeRouteRepository trustedRoutes;
+
+    @Autowired(required = false)
+    void setTrustedExchangeRepositories(com.openwolf.iam.repository.AgentWorkloadIdentityRepository workloads,
+                                        com.openwolf.iam.repository.AgentExchangeRouteRepository routes) {
+        this.trustedWorkloads = workloads;
+        this.trustedRoutes = routes;
+    }
+
+    /** Revoke the removed application's Gateway route; retire the shared native identity only at its last grant. */
+    private void retireTrustedExchangeAuthority(String tenantId, UUID applicationId, TenantApplicationClient client,
+                                                HttpServletRequest request) {
+        if (trustedWorkloads == null || trustedRoutes == null) return;
+        var workload = trustedWorkloads.findByOauthClientId(client.getClientId())
+                .filter(value -> tenantId.equals(value.getTenantId()))
+                .filter(value -> value.getKind() == com.openwolf.iam.entity.AgentWorkloadIdentity.Kind.NATIVE)
+                .orElse(null);
+        if (workload == null) return;
+        String audience = applications.findById(applicationId).orElseThrow().getAudience();
+        var activeRoutes = trustedRoutes.findByTenantIdAndSourceWorkloadIdAndStatus(tenantId, workload.getId(),
+                com.openwolf.iam.entity.AgentExchangeRoute.Status.ACTIVE);
+        boolean lastGrant = client.getTrustedApplicationScopes().isEmpty();
+        for (var route : activeRoutes) {
+            if (!lastGrant && (route.getDestinationType() != com.openwolf.iam.entity.AgentExchangeRoute.DestinationType.GATEWAY
+                    || !audience.equals(route.getAudience()))) continue;
+            route.revoke(java.time.Instant.now());
+            audit.logRequired(tenantId, audit.currentActor(), "AGENT_EXCHANGE_ROUTE_REVOKED", "agent_exchange_route",
+                    route.getId().toString(), null, Map.of("reason", "trusted client application removed",
+                            "applicationId", applicationId.toString()), correlation(request));
+        }
+        if (lastGrant && workload.retire(java.time.Instant.now())) {
+            audit.logRequired(tenantId, audit.currentActor(), "AGENT_WORKLOAD_RETIRED", "agent_workload_identity",
+                    workload.getId().toString(), null, Map.of("reason", "last trusted client application removed"),
+                    correlation(request));
+        }
+    }
+
     private org.springframework.beans.factory.ObjectProvider<org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService> authorizationStore;
     @Autowired
     void setAuthorizationStore(org.springframework.beans.factory.ObjectProvider<org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService> store) {
@@ -251,9 +327,44 @@ public class TenantApplicationService {
     /** Updating trust replaces the approval generation and withdraws every old grant before the new one can be used. */
     public com.openwolf.iam.dto.TrustedClientResponse updateTrustedClient(String tenantId, UUID applicationId, UUID id,
             com.openwolf.iam.dto.TrustedClientRequest request, HttpServletRequest httpRequest) {
-        var client = clientForTenant(tenantId, applicationId, id);
+        applicationForTenant(tenantId, applicationId);
+        var client = clients.findById(id)
+                .filter(row -> row.getExternalClientId() != null && row.trustedScopes(applicationId) != null)
+                .filter(row -> applications.findById(row.getApplicationId())
+                        .filter(owner -> tenantId.equals(owner.getTenantId())).isPresent())
+                .orElseThrow(() -> EntityNotFoundException.forId("Trusted client", id));
         if (request.expectedRevision() == null || !request.clientId().equals(client.getExternalClientId())) {
             throw new IllegalArgumentException("An update requires expectedRevision and the unchanged client URL");
+        }
+        requireRevision(client, request.expectedRevision());
+        if (client.getTrustedApplicationScopes().size() > 1) {
+            RegisteredClient stored = storedRegistration(client.getClientId());
+            boolean refresh = stored.getAuthorizationGrantTypes().contains(AuthorizationGrantType.REFRESH_TOKEN);
+            if (!stored.getRedirectUris().equals(Set.copyOf(request.redirectUris()))
+                    || !stored.getClientAuthenticationMethods().equals(Set.of(new ClientAuthenticationMethod(request.tokenEndpointAuthMethod())))
+                    || refresh != (request.refreshTokens() == null || request.refreshTokens())
+                    || request.accessTokenTtlSeconds() != null && request.accessTokenTtlSeconds()
+                            != stored.getTokenSettings().getAccessTokenTimeToLive().toSeconds()
+                    || request.refreshTokenTtlSeconds() != null && request.refreshTokenTtlSeconds()
+                            != stored.getTokenSettings().getRefreshTokenTimeToLive().toSeconds()
+                    || client.getPopulation() != (request.population() == null
+                            ? TenantApplicationClient.Population.WORKFORCE : request.population())) {
+                throw new ResourceConflictException("Shared client settings cannot change through one application");
+            }
+            if (request.scopes() == null || request.scopes().isEmpty())
+                throw new IllegalArgumentException("Application scopes are required for a shared-client update");
+            Set<String> scopes = new LinkedHashSet<>(request.scopes());
+            if (refresh) scopes.add(OFFLINE_ACCESS);
+            List<String> approved = approvedScopes(tenantId, TenantApplicationClient.Type.PUBLIC_BROWSER,
+                    client.getPopulation(), List.copyOf(scopes), refresh);
+            client.grantTrustedApplication(applicationId, approved);
+            clients.save(client); clients.flush();
+            if (sessionService != null) sessionService.revokeAllForApplicationClient(tenantId, applicationId,
+                    client.getExternalClientId(), "trusted client application changed");
+            audit.logRequired(tenantId, audit.currentActor(), "UPDATE_TRUSTED_CLIENT_APPLICATION", "application_client",
+                    client.getClientId(), null, Map.of("applicationId", applicationId.toString(), "scopes", approved),
+                    correlation(httpRequest));
+            return trustedResponse(client);
         }
         deleteTrustedClient(tenantId, applicationId, id, request.expectedRevision(), httpRequest);
         clients.flush();
@@ -271,12 +382,12 @@ public class TenantApplicationService {
     private com.openwolf.iam.dto.TrustedClientResponse trustedResponse(TenantApplicationClient client) {
         RegisteredClient registered = storedRegistration(client.getClientId());
         boolean refresh = registered.getAuthorizationGrantTypes().contains(AuthorizationGrantType.REFRESH_TOKEN);
-        return new com.openwolf.iam.dto.TrustedClientResponse(client.getId(), client.getExternalClientId(),
+        return new com.openwolf.iam.dto.TrustedClientResponse(client.getId(), client.getExternalClientId(), client.getClientId(),
                 registered.getRedirectUris().stream().sorted().toList(),
                 registered.getClientAuthenticationMethods().iterator().next().getValue(), client.getAllowedScopes(), refresh,
                 refresh ? registered.getTokenSettings().getRefreshTokenTimeToLive().toSeconds() : null,
                 client.getPopulation(), client.getStatus(), client.getRevision(), registered.getClientName(),
-                registered.getTokenSettings().getAccessTokenTimeToLive().toSeconds());
+                registered.getTokenSettings().getAccessTokenTimeToLive().toSeconds(), client.getTrustedApplicationScopes());
     }
 
     public void disableApplication(String tenantId, UUID applicationId, HttpServletRequest httpRequest) {
@@ -287,8 +398,12 @@ public class TenantApplicationService {
         audit.logRequired(tenantId, audit.currentActor(), "DISABLE_APPLICATION", "application", app.getId().toString(),
                 before, applicationResponse(app), correlation(httpRequest));
         // Disabling an application ends every session issued to any of its clients.
-        clients.findByApplicationIdOrderByClientId(app.getId())
-                .forEach(c -> { endClientSessions(tenantId, c.getClientId(), "application disabled"); withdrawTrustedGrants(c); });
+        clients.findByApplicationIdOrderByClientId(app.getId()).stream()
+                .filter(c -> c.getExternalClientId() == null)
+                .forEach(c -> endClientSessions(tenantId, c.getClientId(), "application disabled"));
+        if (sessionService != null) clients.findTrustedForTenantApplication(tenantId, app.getId().toString())
+                .forEach(c -> sessionService.revokeAllForApplicationClient(tenantId, app.getId(),
+                        c.getExternalClientId(), "application disabled"));
     }
 
     public TenantApplicationResponse updateResourceUris(String tenantId, UUID applicationId,
@@ -523,32 +638,76 @@ public class TenantApplicationService {
     /** Token-time authority; empty means a deployment-owned system client, not a permissive fallback. */
     @Transactional(readOnly = true)
     public Optional<ClientAuthority> activeAuthority(String clientId) {
-        return clientLookup.find(clientId).flatMap(client -> applications.findById(client.getApplicationId())
+        return clientLookup.find(clientId).flatMap(client -> {
+            var binding = com.openwolf.iam.auth.CimdClientContext.current();
+            if (binding == null && client.getExternalClientId() != null && client.getClientId().equals(clientId)) {
+                return client.getTrustedApplicationScopes().keySet().stream().map(UUID::fromString)
+                        .map(id -> activeAuthorityFor(client, id)).flatMap(Optional::stream).findFirst()
+                        .map(value -> new ClientAuthority(value.tenantId(), value.audience(),
+                                value.clientType(), client.getAllowedScopes(), value.applicationId(),
+                                value.population(), value.resourceUris()));
+            }
+            UUID selected = binding != null && client.getClientId().equals(binding.internalClientId())
+                    ? binding.applicationId() : client.getApplicationId();
+            return activeAuthorityFor(client, selected);
+        });
+    }
+
+    private Optional<ClientAuthority> activeAuthorityFor(TenantApplicationClient client, UUID applicationId) {
+        if (applicationId == null || client.getExternalClientId() != null && client.trustedScopes(applicationId) == null)
+            return Optional.empty();
+        return applications.findById(applicationId)
+                .filter(app -> applications.findById(client.getApplicationId())
+                        .filter(owner -> owner.getTenantId().equals(app.getTenantId())).isPresent())
                 .filter(app -> activeTenants.isActive(app.getTenantId()))
                 .filter(app -> app.getStatus() == TenantApplication.Status.ACTIVE)
                 .filter(app -> client.getStatus() == TenantApplicationClient.Status.ACTIVE)
                 .map(app -> new ClientAuthority(app.getTenantId(), app.getAudience(), client.getClientType(),
-                        client.getAllowedScopes(), app.getId(), client.getPopulation(), app.getResourceUris())));
+                        client.getExternalClientId() == null ? client.getAllowedScopes() : client.trustedScopes(app.getId()),
+                        app.getId(), client.getPopulation(), app.getResourceUris()));
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<ClientAuthority> activeTrustedApplication(TenantApplicationClient client, UUID applicationId) {
+        return client.getExternalClientId() == null ? Optional.empty() : activeAuthorityFor(client, applicationId);
     }
 
     @Transactional(readOnly = true)
     public Optional<ClientAuthority> activeAuthority(String clientId, String tenantId, String audience) {
         if (clientId == null || !clientId.startsWith("https://")) return activeAuthority(clientId);
-        var matches = clients.findTrustedByResource(clientId, audience).stream()
-                .map(c -> activeAuthority(c.getClientId())).flatMap(Optional::stream)
-                .filter(authority -> authority.tenantId().equals(tenantId)).toList();
+        var matches = clients.findByExternalClientId(clientId).stream()
+                .flatMap(c -> c.getTrustedApplicationScopes().keySet().stream()
+                        .map(UUID::fromString).map(id -> activeAuthorityFor(c, id)).flatMap(Optional::stream))
+                .filter(authority -> authority.tenantId().equals(tenantId) && authority.audience().equals(audience)).toList();
         return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
+    }
+
+    public record TrustedResource(TenantApplicationClient client, ClientAuthority authority) {}
+
+    /** A resource chooses exactly one active application grant for this external client URL. */
+    @Transactional(readOnly = true)
+    public List<TrustedResource> trustedResourceMatches(String externalClientId, String resource) {
+        if (externalClientId == null || !externalClientId.startsWith("https://") || resource == null) return List.of();
+        return clients.findByExternalClientId(externalClientId).stream()
+                .flatMap(client -> client.getTrustedApplicationScopes().keySet().stream()
+                        .map(UUID::fromString).map(id -> activeAuthorityFor(client, id)
+                                .filter(authority -> resource.equals(authority.audience())
+                                        || ApplicationResourceUris.matches(resource, authority.resourceUris()))
+                                .map(authority -> new TrustedResource(client, authority)))
+                        .flatMap(Optional::stream))
+                .toList();
     }
 
     /** Resolve a signed CIMD client URL to one active, server-owned client in this tenant and audience. */
     @Transactional(readOnly = true)
     public Optional<String> activeTrustedInternalClientId(String externalClientId, String tenantId, String audience) {
         if (externalClientId == null || !externalClientId.startsWith("https://")) return Optional.empty();
-        var matches = clients.findTrustedByResource(externalClientId, audience).stream()
-                .filter(client -> externalClientId.equals(client.getExternalClientId()))
-                .filter(client -> activeAuthority(client.getClientId())
-                        .filter(authority -> authority.tenantId().equals(tenantId))
-                        .filter(authority -> authority.audience().equals(audience)).isPresent())
+        var matches = clients.findByExternalClientId(externalClientId).stream()
+                .filter(client -> client.getTrustedApplicationScopes().keySet().stream()
+                        .map(UUID::fromString).map(id -> activeAuthorityFor(client, id))
+                        .flatMap(Optional::stream)
+                        .anyMatch(authority -> authority.tenantId().equals(tenantId)
+                                && authority.audience().equals(audience)))
                 .map(TenantApplicationClient::getClientId).distinct().toList();
         return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
     }

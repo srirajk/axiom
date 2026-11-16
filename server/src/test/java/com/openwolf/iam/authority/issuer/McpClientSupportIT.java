@@ -79,8 +79,11 @@ class McpClientSupportIT extends AuthorityITSupport {
         return mvc.perform(request).andReturn();
     }
     Code code(Fixture f,String client,String redirect,boolean offline) throws Exception {
+        return codeFor(f, client, redirect, offline, READ, f.audience);
+    }
+    Code codeFor(Fixture f,String client,String redirect,boolean offline,String businessScope,String resource) throws Exception {
         MockHttpSession session=new MockHttpSession();
-        MvcResult result=authorization(f,client,redirect,"openid "+READ+(offline?" offline_access":""),f.audience,
+        MvcResult result=authorization(f,client,redirect,"openid "+businessScope+(offline?" offline_access":""),resource,
                 challenge(),"S256",session);
         String location=result.getResponse().getHeader("Location");
         assertThat(result.getResponse().getStatus()).isEqualTo(302);
@@ -88,12 +91,12 @@ class McpClientSupportIT extends AuthorityITSupport {
         if(location.contains("/oauth2/consent")) {
             String state=query(location,"state");
             MvcResult page=mvc.perform(get("/oauth2/consent").with(user(f.person)).session(session)
-                    .param("client_id",client).param("state",state).param("scope",READ+" offline_access")).andReturn();
+                    .param("client_id",client).param("state",state).param("scope",businessScope+" offline_access")).andReturn();
             assertThat(page.getResponse().getStatus()).isEqualTo(200);
             assertThat(page.getResponse().getContentAsString()).contains("ai.example", java.net.URI.create(redirect).getHost());
             if(redirect.startsWith("http://"))assertThat(page.getResponse().getContentAsString()).contains("on your device");
             result=mvc.perform(post("/oauth/authorize").with(user(f.person)).session(session).param("client_id",client)
-                    .param("state",state).param("scope",offline?new String[]{READ,"offline_access"}:new String[]{READ})).andReturn();
+                    .param("state",state).param("scope",offline?new String[]{businessScope,"offline_access"}:new String[]{businessScope})).andReturn();
             location=result.getResponse().getHeader("Location");
         }
         assertThat(location).startsWith(redirect).contains("code=","iss=");
@@ -297,7 +300,7 @@ class McpClientSupportIT extends AuthorityITSupport {
                 .param("expectedRevision",approval.path("revision").asText()),f.tenant.admin,null);
         assertThat(removed.getResponse().getStatus()).isEqualTo(204);
         denied(refresh(id,issued.path("refresh_token").asText()),"invalid_grant");
-        denied(authorization(f,id,CALLBACK,"openid",f.audience,challenge(),"S256",new MockHttpSession()),"invalid_request");
+        denied(authorization(f,id,CALLBACK,"openid",f.audience,challenge(),"S256",new MockHttpSession()),"invalid_target");
     }
     @Test void tokenAndRefreshResourceCannotChangeTheGrantBinding() throws Exception {
         Fixture a=fixture("mcp-a"),b=fixture("mcp-b");String id=url();
@@ -404,20 +407,119 @@ class McpClientSupportIT extends AuthorityITSupport {
         String audience="https://mcp.example/second/"+t.s;String second=app(t,"second",audience);
         entitle(t,second,a.person,List.of(READ));Fixture b=new Fixture(t,second,audience,a.person);
         String id="https://ai.example/clients/"+"long-path-".repeat(20)+UUID.randomUUID()+".json";
-        JsonNode approval=trust(a,id,"none",List.of("http://127.0.0.1/callback"));trust(b,id,"none",List.of("http://127.0.0.1/callback"));
+        JsonNode approval=trust(a,id,"none",List.of("http://127.0.0.1/callback"));
+        JsonNode secondApproval=trust(b,id,"none",List.of("http://127.0.0.1/callback"));
+        assertThat(secondApproval.path("internalClientId").asText()).isEqualTo(approval.path("internalClientId").asText());
         serve(id,document(id,"none",List.of("http://127.0.0.1/callback")));
         JsonNode first=tokens(code(a,id,CALLBACK,true)),other=tokens(code(b,id,CALLBACK,true));
         assertThat(send(delete(base(t)+"/applications/"+a.app+"/trusted-clients/"+approval.path("id").asText())
-                .param("expectedRevision",approval.path("revision").asText()),t.admin,null).getResponse().getStatus()).isEqualTo(204);
+                .param("expectedRevision",secondApproval.path("revision").asText()),t.admin,null).getResponse().getStatus()).isEqualTo(204);
         denied(refresh(id,first.path("refresh_token").asText()),"invalid_grant");
         assertThat(audiences(claims(body(refresh(id,other.path("refresh_token").asText()),200).path("access_token").asText()))).containsExactly(b.audience);
+    }
+    @Test void onePrivateKeyCimdClientSelectsOneApplicationAndCannotSwitchOnRefresh() throws Exception {
+        Fixture mcp = fixture("mcp-a");
+        Tenant tenant = mcp.tenant;
+        String gatewayAudience = "gateway-" + tenant.s;
+        String gatewayApp = app(tenant, "gateway", gatewayAudience);
+        String gatewayResource = "https://assistants-dev.argus.sklabshq.com/" + tenant.s + "/";
+        JsonNode gatewayRecord = body(send(get(base(tenant) + "/applications/" + gatewayApp), tenant.admin, null), 200);
+        body(send(put(base(tenant) + "/applications/" + gatewayApp + "/resource-uris"), tenant.admin,
+                Map.of("resourceUris", List.of(gatewayResource),
+                        "expectedRevision", gatewayRecord.path("revision").asLong())), 200);
+        entitle(tenant, gatewayApp, mcp.person, List.of(WRITE));
+        Fixture gateway = new Fixture(tenant, gatewayApp, gatewayAudience, mcp.person);
+        String client = url(), jwks = url();
+        RSAKey key = new RSAKeyGenerator(2048).keyID("shared-key").generate();
+        JsonNode firstApproval = trust(mcp, client, "private_key_jwt", List.of("http://127.0.0.1/callback"));
+        JsonNode secondApproval = body(send(post(base(tenant) + "/applications/" + gatewayApp + "/trusted-clients"),
+                tenant.admin, Map.of("clientId", client, "redirectUris", List.of("http://127.0.0.1/callback"),
+                        "tokenEndpointAuthMethod", "private_key_jwt", "scopes", List.of("openid", WRITE),
+                        "refreshTokens", true)), 201);
+        assertThat(secondApproval.path("internalClientId").asText()).isEqualTo(firstApproval.path("internalClientId").asText());
+        assertThat(secondApproval.path("applications").size()).isEqualTo(2);
+        var metadata = document(client, "private_key_jwt", List.of("http://127.0.0.1/callback"));
+        metadata.put("jwks_uri", jwks); serve(client, metadata);
+        serve(jwks, Map.of("keys", List.of(key.toPublicJWK().toJSONObject())));
+        String issuer = discovery().path("issuer").asText();
+        JsonNode mcpTokens = body(redeem(codeFor(mcp, client, CALLBACK, true, READ, mcp.audience),
+                assertion(key, client, issuer, UUID.randomUUID().toString()), VERIFIER), 200);
+        JsonNode gatewayTokens = body(redeem(codeFor(gateway, client, CALLBACK, true, WRITE, gatewayResource + "tools"),
+                assertion(key, client, issuer, UUID.randomUUID().toString()), VERIFIER), 200);
+        Map<String, Object> mcpClaims = claims(mcpTokens.path("access_token").asText());
+        Map<String, Object> gatewayClaims = claims(gatewayTokens.path("access_token").asText());
+        assertThat(audiences(mcpClaims)).containsExactly(mcp.audience);
+        assertThat(audiences(gatewayClaims)).containsExactly(gatewayAudience);
+        assertThat(mcpClaims.get("scope").toString()).contains(READ).doesNotContain(WRITE);
+        assertThat(gatewayClaims.get("scope").toString()).contains(WRITE).doesNotContain(READ);
+        var broker = confidential(tenant, gatewayApp, gatewayAudience, tenant.s + "-shared-broker", List.of(WRITE));
+        String base = base(tenant);
+        String brokerId = body(send(post(base + "/agent-exchange/brokers"), tenant.admin,
+                Map.of("oauthClientId", broker.clientId(), "gatewayAudience", gatewayAudience,
+                        "scopes", List.of(WRITE))), 201).path("id").asText();
+        String workloadId = body(send(post(base + "/ciam/agent-workloads"), tenant.admin,
+                Map.of("workloadRef", "native:" + tenant.s + ":shared-cimd", "name", "Shared CIMD host",
+                        "oauthClientId", firstApproval.path("internalClientId").asText(), "kind", "NATIVE")), 201)
+                .path("id").asText();
+        String routeId = route(tenant, workloadId, "GATEWAY", null, gatewayAudience, List.of(WRITE));
+        String toolAudience = "tool:" + tenant.s + ":shared-client";
+        app(tenant, "shared-tool", toolAudience);
+        body(send(post(base + "/agent-exchange/brokers/" + brokerId + "/targets"), tenant.admin,
+                Map.of("audience", toolAudience, "destinationType", "RESOURCE", "scopes", List.of(WRITE),
+                        "purpose", "Shared CIMD target")), 201);
+        String toolToken = token(exchange(broker, gatewayTokens.path("access_token").asText(), toolAudience, WRITE, Map.of()));
+        assertThat(claims(toolToken)).containsEntry("sub", mcp.person)
+                .containsEntry("source_gateway_route_id", routeId);
+        assertThat(authorization(gateway, client, CALLBACK, "openid " + READ, gatewayResource + "tools",
+                challenge(), "S256", new MockHttpSession()).getResponse().getHeader("Location"))
+                .contains("error=invalid_scope");
+        denied(mvc.perform(post("/oauth/token").contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .param("client_id", client).param("grant_type", "refresh_token")
+                .param("refresh_token", mcpTokens.path("refresh_token").asText())
+                .param("resource", gatewayResource + "tools")).andReturn(), "invalid_target");
+        JsonNode rotated = body(mvc.perform(post("/oauth/token").contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .param("client_id", client).param("grant_type", "refresh_token")
+                .param("refresh_token", mcpTokens.path("refresh_token").asText())
+                .param("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+                .param("client_assertion", assertion(key, client, issuer, UUID.randomUUID().toString()))).andReturn(), 200);
+        assertThat(audiences(claims(rotated.path("access_token").asText()))).containsExactly(mcp.audience);
+        assertThat(send(delete(base + "/applications/" + gatewayApp + "/trusted-clients/"
+                + secondApproval.path("id").asText()).param("expectedRevision", secondApproval.path("revision").asText()),
+                tenant.admin, null).getResponse().getStatus()).isEqualTo(204);
+        assertThat(jdbc.queryForObject("select status from agent_exchange_routes where id=?::uuid", String.class, routeId))
+                .isEqualTo("REVOKED");
+        assertThat(jdbc.queryForObject("select status from agent_workload_identities where id=?::uuid", String.class, workloadId))
+                .isEqualTo("ACTIVE");
+        JsonNode remaining = body(send(get(base + "/applications/" + mcp.app + "/trusted-clients"),
+                tenant.admin, null), 200).get(0);
+        assertThat(send(delete(base + "/applications/" + mcp.app + "/trusted-clients/"
+                + remaining.path("id").asText()).param("expectedRevision", remaining.path("revision").asText()),
+                tenant.admin, null).getResponse().getStatus()).isEqualTo(204);
+        assertThat(jdbc.queryForObject("select status from agent_workload_identities where id=?::uuid", String.class, workloadId))
+                .isEqualTo("RETIRED");
     }
     @Test void ambiguousResourceAcrossTenantsIsRejectedWithoutAnyFetch() throws Exception {
         Fixture a=fixture("mcp-a"),b=fixture("mcp-b");
         String app=app(b.tenant,"same-resource",a.audience);
         Fixture ambiguous=new Fixture(b.tenant,app,a.audience,b.person);String id=url();
         trust(a,id,"none",List.of("http://127.0.0.1/callback"));trust(ambiguous,id,"none",List.of("http://127.0.0.1/callback"));
-        denied(authorization(a,id,CALLBACK,"openid",a.audience,challenge(),"S256",new MockHttpSession()),"invalid_request");
+        denied(authorization(a,id,CALLBACK,"openid",a.audience,challenge(),"S256",new MockHttpSession()),"invalid_target");
+        verifyNoInteractions(fetcher);
+    }
+    @Test void oneClientResourceMatchingTwoApplicationsIsRejectedBeforeMetadataFetch() throws Exception {
+        Fixture first = fixture("mcp-a");
+        String second = app(first.tenant, "ambiguous", "ambiguous-" + first.tenant.s);
+        // Simulate a conflicting pre-existing registration; the admin API normally blocks overlap.
+        jdbc.update("update tenant_applications set resource_uris=?::jsonb where id=?::uuid",
+                json.writeValueAsString(List.of(first.audience)), second);
+        String client = url();
+        trust(first, client, "none", List.of("http://127.0.0.1/callback"));
+        body(send(post(base(first.tenant) + "/applications/" + second + "/trusted-clients"), first.tenant.admin,
+                Map.of("clientId", client, "redirectUris", List.of("http://127.0.0.1/callback"),
+                        "tokenEndpointAuthMethod", "none", "scopes", List.of("openid", READ),
+                        "refreshTokens", true)), 201);
+        denied(authorization(first, client, CALLBACK, "openid", first.audience,
+                challenge(), "S256", new MockHttpSession()), "invalid_target");
         verifyNoInteractions(fetcher);
     }
     @Test void rememberedConsentNeverSkipsTheCimdScreenAndDenialCarriesIssuer() throws Exception {

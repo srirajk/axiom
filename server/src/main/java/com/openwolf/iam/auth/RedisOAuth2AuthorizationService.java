@@ -1,4 +1,5 @@
 package com.openwolf.iam.auth;
+import com.openwolf.iam.service.TenantApplicationService;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -140,6 +141,8 @@ public class RedisOAuth2AuthorizationService implements OAuth2AuthorizationServi
         var binding = CimdClientContext.current();
         if (binding != null) {
             var enriched = OAuth2Authorization.from(authorization).attribute(CimdRegisteredClientRepository.CLIENT_ID, binding.clientId());
+            if (binding.applicationId() != null) enriched.attribute(TenantApplicationService.TRUSTED_APPLICATION_ATTRIBUTE,
+                    binding.applicationId().toString());
             if (binding.validatedClient() != null) enriched.attribute(CimdRegisteredClientRepository.DOCUMENT_NAME,
                     binding.validatedClient().getClientSettings().getSetting(CimdRegisteredClientRepository.DOCUMENT_NAME));
             authorization = enriched.build();

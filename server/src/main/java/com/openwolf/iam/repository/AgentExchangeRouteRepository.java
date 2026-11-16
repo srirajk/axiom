@@ -11,5 +11,7 @@ public interface AgentExchangeRouteRepository extends JpaRepository<AgentExchang
     Optional<AgentExchangeRoute> findByTenantIdAndId(String tenantId, UUID id);
     List<AgentExchangeRoute> findByTenantIdAndSourceWorkloadIdAndAudienceAndStatus(
             String tenantId, UUID sourceWorkloadId, String audience, AgentExchangeRoute.Status status);
+    List<AgentExchangeRoute> findByTenantIdAndSourceWorkloadIdAndStatus(
+            String tenantId, UUID sourceWorkloadId, AgentExchangeRoute.Status status);
     List<AgentExchangeRoute> findByTenantIdOrderByCreatedAtAsc(String tenantId);
 }

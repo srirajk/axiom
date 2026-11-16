@@ -13,6 +13,8 @@ import org.hibernate.type.SqlTypes;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.UUID;
 
 @Entity
@@ -38,8 +40,27 @@ public class TenantApplicationClient {
     @Column(name = "application_id", nullable = false) private UUID applicationId;
     @Column(name = "client_id", nullable = false) private String clientId;
     @Column(name = "external_client_id") private String externalClientId;
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "trusted_application_scopes", nullable = false, columnDefinition = "jsonb")
+    private Map<String, List<String>> trustedApplicationScopes = new LinkedHashMap<>();
     public String getExternalClientId() { return externalClientId; }
     public void trustExternalClient(String clientId) { this.externalClientId = clientId; }
+    public Map<String, List<String>> getTrustedApplicationScopes() { return Map.copyOf(trustedApplicationScopes); }
+    public List<String> trustedScopes(UUID applicationId) { return trustedApplicationScopes.get(applicationId.toString()); }
+    public void grantTrustedApplication(UUID applicationId, List<String> scopes) {
+        trustedApplicationScopes = new LinkedHashMap<>(trustedApplicationScopes);
+        trustedApplicationScopes.put(applicationId.toString(), List.copyOf(scopes));
+        refreshTrustedScopeCeiling(); updatedAt = Instant.now();
+    }
+    public void removeTrustedApplication(UUID applicationId) {
+        trustedApplicationScopes = new LinkedHashMap<>(trustedApplicationScopes);
+        trustedApplicationScopes.remove(applicationId.toString());
+        refreshTrustedScopeCeiling(); updatedAt = Instant.now();
+    }
+    private void refreshTrustedScopeCeiling() {
+        this.allowedScopes = trustedApplicationScopes.values().stream().flatMap(List::stream)
+                .distinct().sorted().toList();
+    }
     @Enumerated(EnumType.STRING) @Column(name = "client_type", nullable = false) private Type clientType;
     @Enumerated(EnumType.STRING) @Column(nullable = false) private Status status;
     @JdbcTypeCode(SqlTypes.JSON)
