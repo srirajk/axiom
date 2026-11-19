@@ -153,6 +153,7 @@ public class JwtClaimsCustomizer {
                         : applications.activeAuthority(clientId);
                 if (applicationAuthority.isPresent()) {
                     TenantApplicationService.ClientAuthority authority = applicationAuthority.get();
+                    java.util.List<String> audience = java.util.List.of(authority.audience());
                     if (AuthorizationGrantType.CLIENT_CREDENTIALS.equals(context.getAuthorizationGrantType())) {
                         if (authority.clientType() != TenantApplicationClient.Type.CONFIDENTIAL_SERVICE) {
                             throw new IllegalStateException("public application client cannot use client credentials");
@@ -199,12 +200,16 @@ public class JwtClaimsCustomizer {
                         // IDP-04: a business scope is issued only where the person holds the matching application
                         // permission now (re-evaluated at every issuance, including refresh); OIDC scopes pass through.
                         narrowToEntitlement(context, String.valueOf(humanClaims.get("tenant_id")), humanClaims.get("permissions"));
+                        // RFC 8707: a resource below a registered prefix of this application (one MCP server on its
+                        // host) is named first; the application audience stays second (ResourceAudience).
+                        audience = ResourceAudience.of(ResourceAudience.requested(context), authority.audience(),
+                                authority.resourceUris());
                     }
                     TenantClaims.requireTenant(String.valueOf(enriched.get("tenant_id")));
                     enriched.forEach((key, value) -> context.getClaims().claim(key, value));
                     addAssurance(context);
                     context.getClaims().claim("client_id", clientId);
-                    context.getClaims().audience(java.util.List.of(authority.audience()));
+                    context.getClaims().audience(audience);
                     addSession(context, authority.tenantId(), authority.applicationId(), clientId, subject, true,
                             !AuthorizationGrantType.CLIENT_CREDENTIALS.equals(context.getAuthorizationGrantType())
                                     && !authority.customerSignIn());

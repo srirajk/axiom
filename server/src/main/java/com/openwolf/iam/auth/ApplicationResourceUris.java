@@ -38,6 +38,30 @@ public final class ApplicationResourceUris {
         return false;
     }
 
+    /**
+     * True when the resource lies strictly below a registered prefix (a registration ending in /): a resource of its
+     * own under the application, such as one MCP server on a shared host. The prefix itself, an exact registration, a
+     * resource with a query and anything unparseable are false.
+     */
+    public static boolean below(String resource, List<String> registrations) {
+        if (registrations == null) return false;
+        URI requested;
+        try { requested = parse(resource); }
+        catch (IllegalArgumentException invalid) { return false; }
+        if (requested.getRawQuery() != null) return false;
+        for (String registration : registrations) {
+            URI allowed;
+            try { allowed = parse(registration); }
+            catch (IllegalArgumentException invalid) { continue; }
+            String prefix = allowed.getRawPath();
+            if (!prefix.endsWith("/") || allowed.getRawQuery() != null) continue;
+            if (!requested.getHost().equalsIgnoreCase(allowed.getHost()) || requested.getPort() != allowed.getPort()) continue;
+            String path = requested.getRawPath();
+            if (path.startsWith(prefix) && path.length() > prefix.length()) return true;
+        }
+        return false;
+    }
+
     public static boolean overlaps(String first, String second) {
         URI a = parse(first), b = parse(second);
         if (!a.getHost().equalsIgnoreCase(b.getHost()) || a.getPort() != b.getPort()) return false;

@@ -1,6 +1,7 @@
 package com.openwolf.iam.service;
 
 import com.openwolf.iam.auth.BusinessScopeRegistry;
+import com.openwolf.iam.auth.ResourceAudience;
 import com.openwolf.iam.auth.TokenExchangeConstants;
 import com.openwolf.iam.dto.AgentExchangeContracts.AgentExchangeRouteResponse;
 import com.openwolf.iam.dto.AgentExchangeContracts.CreateAgentExchangeRouteRequest;
@@ -308,7 +309,7 @@ public class AgentExchangeAuthorityService {
                     .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
             if ("workforce".equals(identityKind)) {
                 if (!client.workforceSignIn()
-                        || !singleAudience(subject, client.audience())
+                        || !ResourceAudience.issuedFor(subject, client.audience(), client.resourceUris())
                         || applicationAccess.decisionAuthority(tenantId, client.applicationId(), subject.getSubject()).isEmpty()) {
                     fail(INVALID_GRANT);
                 }
@@ -536,7 +537,7 @@ public class AgentExchangeAuthorityService {
                 .filter(TenantApplicationService.ClientAuthority::workforceSignIn)
                 .filter(value -> value.tenantId().equals(requester.getTenantId()))
                 .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
-        if (!singleAudience(subject, sourceClient.audience())) fail(INVALID_GRANT);
+        if (!ResourceAudience.issuedFor(subject, sourceClient.audience(), sourceClient.resourceUris())) fail(INVALID_GRANT);
         // A human token from another application cannot borrow this workload's entitlements.
         if (!sourceClient.applicationId().equals(actorClient.applicationId())) fail(INVALID_GRANT);
         var workforce = applicationAccess.decisionAuthority(requester.getTenantId(),
@@ -731,11 +732,15 @@ public class AgentExchangeAuthorityService {
 
     private ResolvedAuthority resolveGateway(Jwt subject, TrustedExchangeBroker broker,
                                              String audience, Set<String> scopes) {
+        boolean nativeEntry = !exchanged(subject);
+        // A person's own sign-in token may also name one resource below the Gateway application's prefix (an MCP
+        // server on its assistants host, ResourceAudience); nativeGatewayEntry checks that resource. Every exchanged
+        // token keeps exactly the Gateway audience.
         if (!broker.getTenantId().equals(required(subject, "tenant_id"))
-                || !singleAudience(subject, broker.getGatewayAudience())) fail(INVALID_GRANT);
+                || !(nativeEntry ? broker.getGatewayAudience().equals(ResourceAudience.applicationAudience(subject.getAudience()))
+                        : singleAudience(subject, broker.getGatewayAudience()))) fail(INVALID_GRANT);
         AgentWorkloadIdentity source;
         AgentExchangeRoute gatewayRoute;
-        boolean nativeEntry = !exchanged(subject);
         if (nativeEntry) {
             GatewayEntry entry = nativeGatewayEntry(subject, broker, scopes);
             source = entry.source();
@@ -803,6 +808,7 @@ public class AgentExchangeAuthorityService {
                 .filter(value -> value.clientType() == TenantApplicationClient.Type.PUBLIC_BROWSER)
                 .filter(TenantApplicationService.ClientAuthority::workforceSignIn)
                 .filter(value -> value.audience().equals(broker.getGatewayAudience()))
+                .filter(value -> ResourceAudience.issuedFor(subject, value.audience(), value.resourceUris()))
                 .orElseThrow(() -> new OAuth2AuthenticationException(INVALID_GRANT));
         if (applicationAccess.decisionAuthority(tenantId, client.applicationId(), subject.getSubject()).isEmpty())
             fail(INVALID_GRANT);
@@ -1061,7 +1067,7 @@ public class AgentExchangeAuthorityService {
 
     private java.util.Optional<TenantApplicationService.ClientAuthority> sourceClientAuthority(String clientId, String tenantId, Jwt subject) {
         return clientId.startsWith("https://")
-                ? applications.activeAuthority(clientId, tenantId, subject.getAudience().size() == 1 ? subject.getAudience().getFirst() : "")
+                ? applications.activeAuthority(clientId, tenantId, ResourceAudience.applicationAudience(subject.getAudience()))
                 : applications.activeAuthority(clientId);
     }
 

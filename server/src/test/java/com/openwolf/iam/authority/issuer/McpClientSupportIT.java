@@ -344,11 +344,31 @@ class McpClientSupportIT extends AuthorityITSupport {
         JsonNode issued = body(mvc.perform(post("/oauth/token").contentType(MediaType.APPLICATION_FORM_URLENCODED)
                 .param("client_id", client).param("grant_type", "authorization_code").param("code", code)
                 .param("redirect_uri", CALLBACK).param("code_verifier", VERIFIER).param("resource", resource)).andReturn(), 200);
-        assertThat(audiences(claims(issued.path("access_token").asText()))).containsExactly(audience);
+        // RFC 8707: a resource below the application's prefix is a protected resource of its own and is named first;
+        // the application audience stays second, the one its existing resource servers validate.
+        assertThat(audiences(claims(issued.path("access_token").asText()))).containsExactly(resource, audience);
         JsonNode renewed = body(mvc.perform(post("/oauth/token").contentType(MediaType.APPLICATION_FORM_URLENCODED)
                 .param("client_id", client).param("grant_type", "refresh_token")
                 .param("refresh_token", issued.path("refresh_token").asText()).param("resource", resource)).andReturn(), 200);
-        assertThat(audiences(claims(renewed.path("access_token").asText()))).containsExactly(audience);
+        assertThat(audiences(claims(renewed.path("access_token").asText()))).containsExactly(resource, audience);
+        // A refresh without resource keeps the resource bound at authorization.
+        JsonNode kept = body(mvc.perform(post("/oauth/token").contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .param("client_id", client).param("grant_type", "refresh_token")
+                .param("refresh_token", renewed.path("refresh_token").asText())).andReturn(), 200);
+        assertThat(audiences(claims(kept.path("access_token").asText()))).containsExactly(resource, audience);
+        // A token request cannot move the grant to another resource of the same application.
+        denied(mvc.perform(post("/oauth/token").contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .param("client_id", client).param("grant_type", "refresh_token")
+                .param("refresh_token", kept.path("refresh_token").asText())
+                .param("resource", prefix + "v1/tools/other")).andReturn(), "invalid_target");
+        // The prefix itself names the whole host, which is the application: its audience alone.
+        MockHttpSession hostSession = new MockHttpSession();
+        String hostCode = query(authorization(fixture, client, CALLBACK, "openid " + READ, prefix, challenge(), "S256",
+                hostSession).getResponse().getHeader("Location"), "code");
+        JsonNode host = body(mvc.perform(post("/oauth/token").contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .param("client_id", client).param("grant_type", "authorization_code").param("code", hostCode)
+                .param("redirect_uri", CALLBACK).param("code_verifier", VERIFIER).param("resource", prefix)).andReturn(), 200);
+        assertThat(audiences(claims(host.path("access_token").asText()))).containsExactly(audience);
         denied(authorization(fixture, client, CALLBACK, "openid", "https://other.example.test/", challenge(), "S256",
                 new MockHttpSession()), "invalid_target");
         denied(mvc.perform(post("/oauth/token").contentType(MediaType.APPLICATION_FORM_URLENCODED)
@@ -449,7 +469,7 @@ class McpClientSupportIT extends AuthorityITSupport {
         Map<String, Object> mcpClaims = claims(mcpTokens.path("access_token").asText());
         Map<String, Object> gatewayClaims = claims(gatewayTokens.path("access_token").asText());
         assertThat(audiences(mcpClaims)).containsExactly(mcp.audience);
-        assertThat(audiences(gatewayClaims)).containsExactly(gatewayAudience);
+        assertThat(audiences(gatewayClaims)).containsExactly(gatewayResource + "tools", gatewayAudience);
         assertThat(mcpClaims.get("scope").toString()).contains(READ).doesNotContain(WRITE);
         assertThat(gatewayClaims.get("scope").toString()).contains(WRITE).doesNotContain(READ);
         var broker = confidential(tenant, gatewayApp, gatewayAudience, tenant.s + "-shared-broker", List.of(WRITE));
